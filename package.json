@@ -1,0 +1,22 @@
+{
+  "name": "terra-jewel",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "node --test test/cloud-mask.test.js",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "three": "^0.167.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/three": "^0.167.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}
