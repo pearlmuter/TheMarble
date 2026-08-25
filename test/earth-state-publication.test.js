@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createEarthStateActivator } from '../src/earth-state.js';
+import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 
 const encoder = new TextEncoder();
@@ -88,16 +92,18 @@ function memoryStore() {
   };
 }
 
+const loadSourceFixture = source => async url => {
+  const loaded = source.get(url);
+  if (!loaded) throw new Error(`missing fixture: ${url}`);
+  return { ...loaded, bytes: Uint8Array.from(loaded.bytes) };
+};
+
 test('an explicit fixture source publishes the same complete immutable Earth state repeatedly', async () => {
   const source = sourceFixture();
   const publishOnce = async () => {
     const store = memoryStore();
     const publisher = createEarthStatePublisher({
-      async loadSource(url) {
-        const loaded = source.get(url);
-        if (!loaded) throw new Error(`missing fixture: ${url}`);
-        return { ...loaded, bytes: Uint8Array.from(loaded.bytes) };
-      },
+      loadSource: loadSourceFixture(source),
       store: store.adapter,
     });
     const publication = await publisher.publish({
@@ -141,11 +147,7 @@ test('latest remains unchanged when any immutable publication fails read-back ve
     },
   };
   const publisher = createEarthStatePublisher({
-    async loadSource(url) {
-      const loaded = source.get(url);
-      if (!loaded) throw new Error(`missing fixture: ${url}`);
-      return { ...loaded, bytes: Uint8Array.from(loaded.bytes) };
-    },
+    loadSource: loadSourceFixture(source),
     store: corruptingStore,
   });
 
@@ -163,11 +165,7 @@ test('a published fixture is loadable through the same latest-pointer contract u
   const source = sourceFixture();
   const store = memoryStore();
   const publisher = createEarthStatePublisher({
-    async loadSource(url) {
-      const loaded = source.get(url);
-      if (!loaded) throw new Error(`missing fixture: ${url}`);
-      return { ...loaded, bytes: Uint8Array.from(loaded.bytes) };
-    },
+    loadSource: loadSourceFixture(source),
     store: store.adapter,
   });
   const publication = await publisher.publish({
@@ -191,4 +189,40 @@ test('a published fixture is loadable through the same latest-pointer contract u
   assert.equal(active.manifest.bundleId, publication.manifest.bundleId);
   assert.equal(activator.current, active);
   assert.match(active.layers.cloudOpacity, /layer-cloudOpacity-[a-f0-9]{16}\.png$/);
+});
+
+test('filesystem publication exposes only the old or new complete latest pointer during replacement', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'themarble-publication-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = sourceFixture();
+  const store = createFilePublicationStore(directory);
+  const publisher = createEarthStatePublisher({ loadSource: loadSourceFixture(source), store });
+  const first = await publisher.publish({
+    targetTime: '2026-08-25T12:00:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+  const observedBundleIds = [first.manifest.bundleId];
+  let replacementFinished = false;
+  const observeLatest = (async () => {
+    while (!replacementFinished) {
+      const latest = JSON.parse(await readFile(join(directory, 'latest.json'), 'utf8'));
+      observedBundleIds.push(latest.bundleId);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  })();
+
+  const second = await publisher.publish({
+    targetTime: '2026-08-25T13:00:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+  replacementFinished = true;
+  await observeLatest;
+  const finalLatest = JSON.parse(await readFile(join(directory, 'latest.json'), 'utf8'));
+  observedBundleIds.push(finalLatest.bundleId);
+
+  assert.notEqual(first.manifest.bundleId, second.manifest.bundleId);
+  assert.equal(finalLatest.bundleId, second.manifest.bundleId);
+  assert.equal(observedBundleIds.includes(first.manifest.bundleId), true);
+  assert.equal(observedBundleIds.includes(second.manifest.bundleId), true);
+  assert.equal(observedBundleIds.every(bundleId => [first.manifest.bundleId, second.manifest.bundleId].includes(bundleId)), true);
 });

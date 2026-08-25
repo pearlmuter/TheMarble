@@ -2,12 +2,32 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { loadEarthStateJsonDocument } from '../src/earth-state-document.js';
 import { createEarthStateActivator } from '../src/earth-state.js';
 
 const fixtureBytes = new TextEncoder().encode('fixture asset');
 const checksum = 'dc9905c9a7e70f6485604c96e9a3ff0f5fc0b8ae936ef644a6ae31afbc10acd4';
 const loaded = value => ({ value, bytes: fixtureBytes });
-const document = value => ({ value, bytes: new TextEncoder().encode(JSON.stringify(value)), mediaType: 'application/json' });
+const jsonDocumentFixture = value => ({ value, bytes: new TextEncoder().encode(JSON.stringify(value)), mediaType: 'application/json' });
+
+function latestPointerForBytes(bundleId, href, manifestBytes) {
+  return {
+    schemaVersion: 1,
+    bundleId,
+    manifest: {
+      href,
+      mediaType: 'application/json',
+      byteLength: manifestBytes.byteLength,
+      immutable: true,
+      checksum: { algorithm: 'sha256', value: createHash('sha256').update(manifestBytes).digest('hex') },
+    },
+  };
+}
+
+function latestPointerFixture(manifest, href) {
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  return { manifestBytes, latest: latestPointerForBytes(manifest.bundleId, href, manifestBytes) };
+}
 
 function fixtureManifest() {
   const textureDescriptor = (href, datasetId = 'earth') => ({
@@ -65,7 +85,7 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   const manifest = fixtureManifest();
   const loadedUrls = [];
   const activator = createEarthStateActivator({
-    loadDocument: async () => document(manifest),
+    loadDocument: async () => jsonDocumentFixture(manifest),
     loadAsset: async ({ url }) => {
       loadedUrls.push(url);
       return loaded(`loaded:${url}`);
@@ -88,7 +108,7 @@ test('an incomplete manifest is rejected without replacing the active Earth stat
   delete incomplete.layers.cloudOpacity;
   let nextManifest = complete;
   const activator = createEarthStateActivator({
-    loadDocument: async () => document(nextManifest),
+    loadDocument: async () => jsonDocumentFixture(nextManifest),
     loadAsset: async ({ url }) => loaded(`loaded:${url}`),
   });
   const active = await activator.activate('https://example.test/states/current/manifest.json');
@@ -106,7 +126,7 @@ test('an asset-loading failure leaves the previous coherent Earth state active',
   const manifest = fixtureManifest();
   let failClouds = false;
   const activator = createEarthStateActivator({
-    loadDocument: async () => document(manifest),
+    loadDocument: async () => jsonDocumentFixture(manifest),
     loadAsset: async ({ name, url }) => {
       if (failClouds && name === 'cloudOpacity') throw new Error('cloud texture unavailable');
       return loaded(`loaded:${url}`);
@@ -143,7 +163,7 @@ test('malformed Earth-state contract metadata is rejected before assets load', a
     mutate(manifest);
     let loads = 0;
     const activator = createEarthStateActivator({
-      loadDocument: async () => document(manifest),
+      loadDocument: async () => jsonDocumentFixture(manifest),
       loadAsset: async () => { loads += 1; return loaded(undefined); },
     });
 
@@ -160,15 +180,8 @@ test('the bundled manifest activates every asset required by the current scene',
     new URL('../public/earth-state/bundled-v1.json', import.meta.url),
   );
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
-  const latest = JSON.parse(await readFile(
-    new URL('../public/earth-state/latest.json', import.meta.url),
-    'utf8',
-  ));
-  assert.equal(latest.bundleId, manifest.bundleId);
-  assert.equal(latest.manifest.byteLength, manifestBytes.byteLength);
-  assert.equal(latest.manifest.checksum.value, createHash('sha256').update(manifestBytes).digest('hex'));
   const activator = createEarthStateActivator({
-    loadDocument: async () => document(manifest),
+    loadDocument: async () => jsonDocumentFixture(manifest),
     loadAsset: async ({ descriptor, url }) => {
       const bytes = await readFile(new URL(`../public${new URL(url).pathname}`, import.meta.url));
       assert.equal(bytes.byteLength, descriptor.asset.byteLength);
@@ -194,7 +207,7 @@ test('a late checksum failure cannot expose or replace a partial Earth state', a
   let corruptStarCatalog = false;
   const loadedAssets = [];
   const activator = createEarthStateActivator({
-    loadDocument: async () => document(manifest),
+    loadDocument: async () => jsonDocumentFixture(manifest),
     loadAsset: async ({ name, url }) => {
       loadedAssets.push(name);
       return {
@@ -223,18 +236,7 @@ test('a verified latest pointer replaces the active Earth state as one complete 
   const replacement = fixtureManifest();
   replacement.bundleId = 'fixture-2026-08-25T13:00:00Z';
   replacement.times.validAt = '2026-08-25T13:00:00Z';
-  const replacementBytes = new TextEncoder().encode(JSON.stringify(replacement));
-  const latest = {
-    schemaVersion: 1,
-    bundleId: replacement.bundleId,
-    manifest: {
-      href: './bundles/13/manifest.json',
-      mediaType: 'application/json',
-      byteLength: replacementBytes.byteLength,
-      immutable: true,
-      checksum: { algorithm: 'sha256', value: createHash('sha256').update(replacementBytes).digest('hex') },
-    },
-  };
+  const { latest, manifestBytes: replacementBytes } = latestPointerFixture(replacement, './bundles/13/manifest.json');
   const documents = new Map([
     ['https://example.test/bundled.json', bundled],
     ['https://example.test/earth-state/latest.json', latest],
@@ -261,18 +263,7 @@ test('a replacement timeout leaves the previous coherent Earth state active', as
   const bundled = fixtureManifest();
   const replacement = fixtureManifest();
   replacement.bundleId = 'fixture-timeout';
-  const replacementBytes = new TextEncoder().encode(JSON.stringify(replacement));
-  const latest = {
-    schemaVersion: 1,
-    bundleId: replacement.bundleId,
-    manifest: {
-      href: './bundles/timeout/manifest.json',
-      mediaType: 'application/json',
-      byteLength: replacementBytes.byteLength,
-      immutable: true,
-      checksum: { algorithm: 'sha256', value: createHash('sha256').update(replacementBytes).digest('hex') },
-    },
-  };
+  const { latest, manifestBytes: replacementBytes } = latestPointerFixture(replacement, './bundles/timeout/manifest.json');
   const activator = createEarthStateActivator({
     timeoutMs: 10,
     loadDocument: async url => ({
@@ -303,25 +294,14 @@ test('a corrupt published manifest cannot replace the current Earth state', asyn
   const bundled = fixtureManifest();
   const replacement = fixtureManifest();
   replacement.bundleId = 'fixture-corrupt-manifest';
-  const replacementBytes = new TextEncoder().encode(JSON.stringify(replacement));
+  const { latest, manifestBytes: replacementBytes } = latestPointerFixture(replacement, './bundles/corrupt/manifest.json');
   const corruptBytes = Uint8Array.from(replacementBytes);
   corruptBytes[0] ^= 1;
-  const latest = {
-    schemaVersion: 1,
-    bundleId: replacement.bundleId,
-    manifest: {
-      href: './bundles/corrupt/manifest.json',
-      mediaType: 'application/json',
-      byteLength: replacementBytes.byteLength,
-      immutable: true,
-      checksum: { algorithm: 'sha256', value: createHash('sha256').update(replacementBytes).digest('hex') },
-    },
-  };
   let assetLoads = 0;
   const activator = createEarthStateActivator({
     loadDocument: async url => {
-      if (url.endsWith('bundled.json')) return document(bundled);
-      if (url.endsWith('latest.json')) return document(latest);
+      if (url.endsWith('bundled.json')) return jsonDocumentFixture(bundled);
+      if (url.endsWith('latest.json')) return jsonDocumentFixture(latest);
       return { value: replacement, bytes: corruptBytes, mediaType: 'application/json' };
     },
     loadAsset: async ({ url }) => {
@@ -337,5 +317,66 @@ test('a corrupt published manifest cannot replace the current Earth state', asyn
     /checksum mismatch/,
   );
   assert.equal(assetLoads, 0);
+  assert.equal(activator.current, active);
+});
+
+test('an incomplete or checksum-corrupt latest asset leaves the current Earth state active', async () => {
+  for (const failure of ['incomplete download', 'asset checksum']) {
+    const bundled = fixtureManifest();
+    const replacement = fixtureManifest();
+    replacement.bundleId = `fixture-${failure.replace(' ', '-')}`;
+    const href = `./bundles/${failure.replace(' ', '-')}/manifest.json`;
+    const { latest, manifestBytes } = latestPointerFixture(replacement, href);
+    const activator = createEarthStateActivator({
+      loadDocument: async url => {
+        if (url.endsWith('bundled.json')) return jsonDocumentFixture(bundled);
+        if (url.endsWith('latest.json')) return jsonDocumentFixture(latest);
+        return { value: replacement, bytes: manifestBytes, mediaType: 'application/json' };
+      },
+      loadAsset: async ({ name, url }) => {
+        const isReplacement = url.includes('/bundles/');
+        if (isReplacement && failure === 'incomplete download' && name === 'cloudOpacity') {
+          throw new Error('replacement asset unavailable');
+        }
+        return {
+          value: `loaded:${url}`,
+          bytes: isReplacement && failure === 'asset checksum' && name === 'starCatalog'
+            ? new TextEncoder().encode('corrupt asset')
+            : fixtureBytes,
+        };
+      },
+    });
+    const active = await activator.activate('https://example.test/bundled.json');
+
+    await assert.rejects(
+      activator.activateLatest('https://example.test/earth-state/latest.json'),
+      failure === 'incomplete download' ? /asset unavailable/ : /checksum mismatch/,
+    );
+    assert.equal(activator.current, active);
+  }
+});
+
+test('malformed published JSON from the browser document loader leaves the current Earth state active', async () => {
+  const bundled = fixtureManifest();
+  const malformedManifestBytes = new TextEncoder().encode('{"schemaVersion":');
+  const latest = latestPointerForBytes('fixture-malformed-json', './bundles/malformed/manifest.json', malformedManifestBytes);
+  const responses = new Map([
+    ['https://example.test/bundled.json', JSON.stringify(bundled)],
+    ['https://example.test/earth-state/latest.json', JSON.stringify(latest)],
+    ['https://example.test/earth-state/bundles/malformed/manifest.json', new TextDecoder().decode(malformedManifestBytes)],
+  ]);
+  const activator = createEarthStateActivator({
+    loadDocument: (url, options) => loadEarthStateJsonDocument(url, options, async requestedUrl => new Response(
+      responses.get(requestedUrl),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+  const active = await activator.activate('https://example.test/bundled.json');
+
+  await assert.rejects(
+    activator.activateLatest('https://example.test/earth-state/latest.json'),
+    /malformed JSON/,
+  );
   assert.equal(activator.current, active);
 });

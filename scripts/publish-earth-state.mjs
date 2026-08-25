@@ -1,15 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
-
-const MEDIA_TYPES = new Map([
-  ['.jpg', 'image/jpeg'],
-  ['.jpeg', 'image/jpeg'],
-  ['.json', 'application/json'],
-  ['.png', 'image/png'],
-]);
+import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
 
 function parseArguments(argv) {
   const options = {};
@@ -29,55 +23,9 @@ function mediaTypeFor(url, header) {
   const declared = header?.split(';', 1)[0];
   if (declared && declared !== 'application/octet-stream') return declared;
   const pathname = new URL(url).pathname;
-  const mediaType = MEDIA_TYPES.get(extname(pathname).toLowerCase());
+  const mediaType = earthStateMediaTypeForPath(pathname);
   if (!mediaType) throw new Error(`Cannot determine media type for ${url}`);
   return mediaType;
-}
-
-function createFilePublicationStore(rootDirectory) {
-  const root = resolve(rootDirectory);
-  const pathInRoot = publicationPath => {
-    if (isAbsolute(publicationPath)) throw new Error(`Publication path must be relative: ${publicationPath}`);
-    const path = resolve(root, publicationPath);
-    if (path !== root && !path.startsWith(`${root}${sep}`)) throw new Error(`Publication path escapes output root: ${publicationPath}`);
-    return path;
-  };
-
-  return {
-    async writeImmutable(publicationPath, bytes) {
-      const destination = pathInRoot(publicationPath);
-      await mkdir(dirname(destination), { recursive: true });
-      const temporary = `${destination}.tmp-${process.pid}-${randomUUID()}`;
-      await writeFile(temporary, bytes, { flag: 'wx' });
-      try {
-        try {
-          await link(temporary, destination);
-        } catch (error) {
-          if (error?.code !== 'EEXIST') throw error;
-          const existing = await readFile(destination);
-          if (!existing.equals(bytes)) throw new Error(`Immutable publication conflict: ${publicationPath}`);
-        }
-      } finally {
-        await unlink(temporary).catch(() => undefined);
-      }
-    },
-
-    async read(publicationPath) {
-      return readFile(pathInRoot(publicationPath));
-    },
-
-    async replaceLatest(publicationPath, bytes) {
-      const destination = pathInRoot(publicationPath);
-      await mkdir(dirname(destination), { recursive: true });
-      const temporary = `${destination}.tmp-${process.pid}-${randomUUID()}`;
-      await writeFile(temporary, bytes, { flag: 'wx' });
-      try {
-        await rename(temporary, destination);
-      } finally {
-        await unlink(temporary).catch(() => undefined);
-      }
-    },
-  };
 }
 
 const options = parseArguments(process.argv.slice(2));

@@ -1,12 +1,8 @@
 import { validateEarthStateManifest } from './earth-state.js';
+import { earthStateExtensionForMediaType } from './earth-state-media-types.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const MEDIA_TYPE_EXTENSIONS = new Map([
-  ['application/json', 'json'],
-  ['image/jpeg', 'jpg'],
-  ['image/png', 'png'],
-]);
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -99,7 +95,7 @@ export function createEarthStatePublisher({ loadSource, store }) {
       manifest.times.retrievedAt = targetIso;
 
       for (const entry of sourceEntries) {
-        const extension = MEDIA_TYPE_EXTENSIONS.get(entry.descriptor.asset.mediaType);
+        const extension = earthStateExtensionForMediaType(entry.descriptor.asset.mediaType);
         if (!extension) throw new Error(`Unsupported Earth-state publication media type: ${entry.descriptor.asset.mediaType}`);
         const filename = `${entry.role}-${entry.name}-${entry.checksum.slice(0, 16)}.${extension}`;
         const path = `${bundleDirectory}/assets/${filename}`;

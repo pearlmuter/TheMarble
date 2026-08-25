@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { loadEarthStateJsonDocument } from './earth-state-document.js';
 import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateLayerName, EarthStateResourceName } from './earth-state.js';
 import './style.css';
@@ -80,23 +81,8 @@ let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => 
 let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
 let weatherFeed = 'loading bundled Earth state';
 
-async function loadJsonDocument(url: string, { signal }: { signal: AbortSignal }) {
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`Earth-state document unavailable (${response.status}): ${url}`);
-  const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? 'application/octet-stream';
-  if (mediaType !== 'application/json') throw new Error(`Earth-state document media type mismatch: ${url}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    throw new Error(`Earth-state document is malformed JSON: ${url}`);
-  }
-  return { value, bytes, mediaType };
-}
-
 const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
-  loadDocument: loadJsonDocument,
+  loadDocument: loadEarthStateJsonDocument,
   async loadAsset({ name, descriptor, url }, { signal }) {
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
@@ -166,8 +152,8 @@ async function refreshLatestEarthState() {
     const previous = earthStateActivator.current;
     const activeEarthState = await earthStateActivator.activateLatest(latestEarthStateUrl);
     if (activeEarthState !== previous) applyActivatedEarthState(activeEarthState);
-  } catch (error) {
-    console.info('TheMarble retained its current coherent Earth state.', error);
+  } catch {
+    // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
   } finally {
     latestRefreshInFlight = false;
   }

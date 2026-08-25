@@ -18,6 +18,15 @@ export interface EarthStateAssetReference {
   checksum: EarthStateChecksum;
 }
 
+export interface EarthStateLoadedBytes {
+  bytes: Uint8Array;
+  mediaType: string;
+}
+
+export interface EarthStateLoadedDocument extends EarthStateLoadedBytes {
+  value: unknown;
+}
+
 export interface EarthStateDataset {
   id: string;
   version: string;
@@ -104,7 +113,7 @@ export interface EarthStateActivator<LoadedAsset> {
 }
 
 export function createEarthStateActivator<LoadedAsset>(adapters: {
-  loadDocument(url: string, options: { signal: AbortSignal }): Promise<{ value: unknown; bytes: Uint8Array; mediaType: string }>;
+  loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
   loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
   timeoutMs?: number;
 }): EarthStateActivator<LoadedAsset>;

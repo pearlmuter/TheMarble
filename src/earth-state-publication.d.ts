@@ -1,4 +1,4 @@
-import type { EarthStateManifest } from './earth-state.js';
+import type { EarthStateLoadedBytes, EarthStateManifest } from './earth-state.js';
 
 export interface EarthStatePublicationStore {
   writeImmutable(path: string, bytes: Uint8Array): Promise<void>;
@@ -17,7 +17,7 @@ export interface EarthStatePublication {
 }
 
 export function createEarthStatePublisher(adapters: {
-  loadSource(url: string): Promise<{ bytes: Uint8Array; mediaType: string }>;
+  loadSource(url: string): Promise<EarthStateLoadedBytes>;
   store: EarthStatePublicationStore;
 }): {
   publish(request: { targetTime: string; sourceManifestUrl: string }): Promise<EarthStatePublication>;
