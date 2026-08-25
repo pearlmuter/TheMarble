@@ -1,18 +1,22 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { activateEarthStateAtStartup, createEarthStateBundleCache } from './earth-state-cache.js';
+import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
+import { parseEarthStateJson } from './earth-state-codec.js';
 import { loadEarthStateJsonDocument } from './earth-state-document.js';
+import { createIndexedDbEarthStateStorage } from './earth-state-indexeddb.js';
+import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene.js';
+import type { HipparcosPayload } from './earth-state-scene.js';
 import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
-import type { ActivatedEarthState, EarthStateLayerName, EarthStateResourceName } from './earth-state.js';
+import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
 import './style.css';
 
-type HipparcosPayload = { stars: Array<[number, number, number, number]> };
 type CloudDensityPayload = { width: number; height: number; rgba: number[] };
 type LoadedSceneAsset = THREE.Texture | HipparcosPayload;
-
-function isHipparcosPayload(value: unknown): value is HipparcosPayload {
-  if (typeof value !== 'object' || value === null || !('stars' in value) || !Array.isArray(value.stars)) return false;
-  return value.stars.every(star => Array.isArray(star) && star.length === 4 && star.every(Number.isFinite));
-}
+type SceneEarthStateLoaders = {
+  loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
+  loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
+};
 
 function isCloudDensityPayload(value: unknown): value is CloudDensityPayload {
   if (typeof value !== 'object' || value === null || !('width' in value) || !('height' in value) || !('rgba' in value)) return false;
@@ -80,57 +84,122 @@ const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
 let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => void = () => undefined;
 let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
 let weatherFeed = 'loading bundled Earth state';
+let activeBundleId: string | undefined;
 
-const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
-  loadDocument: loadEarthStateJsonDocument,
-  async loadAsset({ name, descriptor, url }, { signal }) {
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
-    const responseMediaType = response.headers.get('content-type')?.split(';', 1)[0];
-    if (responseMediaType && responseMediaType !== descriptor.asset.mediaType) {
-      throw new Error(`Earth-state asset media type mismatch for ${name}`);
+async function decodeSceneAsset(
+  { name, descriptor }: EarthStateAssetRequest,
+  bytes: Uint8Array,
+  mediaType: string,
+) {
+  if (mediaType !== descriptor.asset.mediaType) {
+    throw new Error(`Earth-state asset media type mismatch for ${name}`);
+  }
+  if (descriptor.asset.mediaType.includes('json')) {
+    const payload: unknown = parseEarthStateJson(bytes, `Earth-state JSON asset is malformed: ${name}`);
+    if (name === 'starCatalog') {
+      if (!isHipparcosPayload(payload)) throw new Error('Earth-state starCatalog is invalid');
+      return { value: payload, bytes };
     }
-    const buffer = await response.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    if (descriptor.asset.mediaType.includes('json')) {
-      const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
-      if (name === 'starCatalog') {
-        if (!isHipparcosPayload(payload)) throw new Error('Earth-state starCatalog is invalid');
-        return { value: payload, bytes };
-      }
-      if (name === 'cloudDensity') {
-        if (!isCloudDensityPayload(payload)) throw new Error('Earth-state cloudDensity is invalid');
-        const map = new THREE.DataTexture(new Uint8Array(payload.rgba), payload.width, payload.height, THREE.RGBAFormat);
-        map.minFilter = THREE.NearestFilter;
-        map.magFilter = THREE.NearestFilter;
-        map.needsUpdate = true;
-        verifyTextureDimensions(map, descriptor, name);
-        return { value: map, bytes };
-      }
-      throw new Error(`Unsupported Earth-state JSON asset: ${name}`);
-    }
-    const objectUrl = URL.createObjectURL(new Blob([buffer], { type: descriptor.asset.mediaType }));
-    try {
-      const map = await loader.loadAsync(objectUrl);
+    if (name === 'cloudDensity') {
+      if (!isCloudDensityPayload(payload)) throw new Error('Earth-state cloudDensity is invalid');
+      const map = new THREE.DataTexture(new Uint8Array(payload.rgba), payload.width, payload.height, THREE.RGBAFormat);
+      map.minFilter = THREE.NearestFilter;
+      map.magFilter = THREE.NearestFilter;
+      map.needsUpdate = true;
       verifyTextureDimensions(map, descriptor, name);
-      if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
-      if ('textureSemantics' in descriptor && descriptor.textureSemantics.sampling === 'nearest') {
-        map.minFilter = THREE.NearestFilter;
-        map.magFilter = THREE.NearestFilter;
-      }
-      map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
       return { value: map, bytes };
-    } finally {
-      URL.revokeObjectURL(objectUrl);
     }
-  },
+    throw new Error(`Unsupported Earth-state JSON asset: ${name}`);
+  }
+  const imageBytes = bytes.buffer instanceof ArrayBuffer
+    ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) as Uint8Array<ArrayBuffer>
+    : Uint8Array.from(bytes);
+  const objectUrl = URL.createObjectURL(new Blob([imageBytes], { type: descriptor.asset.mediaType }));
+  try {
+    const map = await loader.loadAsync(objectUrl);
+    verifyTextureDimensions(map, descriptor, name);
+    if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
+    if ('textureSemantics' in descriptor && descriptor.textureSemantics.sampling === 'nearest') {
+      map.minFilter = THREE.NearestFilter;
+      map.magFilter = THREE.NearestFilter;
+    }
+    map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return { value: map, bytes };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
+  const { descriptor, url } = request;
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const loaded = await decodeSceneAsset(request, bytes, mediaType);
+  return { ...loaded, mediaType };
+}
+
+function createNetworkEarthStateLoaders(onLoaded?: (entry: EarthStateCacheEntry) => void): SceneEarthStateLoaders {
+  return {
+    async loadDocument(url, options) {
+      const document = await loadEarthStateJsonDocument(url, options);
+      onLoaded?.({ url, mediaType: document.mediaType, bytes: document.bytes });
+      return document;
+    },
+    async loadAsset(request, { signal }) {
+      const loaded = await loadNetworkSceneAsset(request, signal);
+      onLoaded?.({ url: request.url, mediaType: loaded.mediaType, bytes: loaded.bytes });
+      return loaded;
+    },
+  };
+}
+
+function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): SceneEarthStateLoaders {
+  return {
+    async loadDocument(url) {
+      const entry = candidate.read(url);
+      if (entry.mediaType !== 'application/json') throw new Error(`Cached Earth-state document media type mismatch: ${url}`);
+      return {
+        ...entry,
+        value: parseEarthStateJson(entry.bytes, `Cached Earth-state document is malformed JSON: ${url}`),
+      };
+    },
+    async loadAsset(request) {
+      const entry = candidate.read(request.url);
+      return decodeSceneAsset(request, entry.bytes, entry.mediaType);
+    },
+  };
+}
+
+const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+const desktopEarthStateCache: EarthStateBundleCache | undefined = isTauriRuntime && 'indexedDB' in globalThis
+  ? createEarthStateBundleCache({ storage: createIndexedDbEarthStateStorage() })
+  : undefined;
+const bundledEarthStateLoaders = createNetworkEarthStateLoaders();
+let latestCapture: Map<string, EarthStateCacheEntry> | undefined;
+const remoteEarthStateLoaders = createNetworkEarthStateLoaders(entry => latestCapture?.set(entry.url, entry));
+let currentEarthStateLoaders = bundledEarthStateLoaders;
+const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
+  loadDocument: (url, options) => currentEarthStateLoaders.loadDocument(url, options),
+  loadAsset: (request, options) => currentEarthStateLoaders.loadAsset(request, options),
 });
+
+async function activateWithLoaders<Result>(loaders: SceneEarthStateLoaders, activate: () => Promise<Result>) {
+  currentEarthStateLoaders = loaders;
+  return activate();
+}
+
+function validateRenderableEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+  return validateEarthStateScene(activeEarthState, asset => asset instanceof THREE.Texture);
+}
 
 function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
   for (const name of EARTH_STATE_REQUIRED_LAYERS) applyVerifiedLayer(name, activeEarthState.layers[name]);
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
   weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
+  activeBundleId = activeEarthState.manifest.bundleId;
 }
 
 let updateFrame: () => void = () => undefined;
@@ -143,25 +212,50 @@ function animate() {
 animate();
 
 startScene();
-const latestEarthStateUrl = new URL('/earth-state/latest.json', window.location.href).href;
+const configuredLatestEarthStateUrl = import.meta.env.VITE_EARTH_STATE_LATEST_URL as string | undefined;
+const latestEarthStateUrl = new URL(configuredLatestEarthStateUrl ?? '/earth-state/latest.json', window.location.href).href;
 let latestRefreshInFlight = false;
 async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
   latestRefreshInFlight = true;
+  latestCapture = new Map();
   try {
     const previous = earthStateActivator.current;
-    const activeEarthState = await earthStateActivator.activateLatest(latestEarthStateUrl);
-    if (activeEarthState !== previous) applyActivatedEarthState(activeEarthState);
+    const activeEarthState = validateRenderableEarthState(await activateWithLoaders(
+      remoteEarthStateLoaders,
+      () => earthStateActivator.activateLatest(latestEarthStateUrl),
+    ));
+    if (activeEarthState.manifest.bundleId !== activeBundleId) applyActivatedEarthState(activeEarthState);
+    if (activeEarthState !== previous && desktopEarthStateCache) {
+      const snapshot = {
+        bundleId: activeEarthState.manifest.bundleId,
+        validAt: activeEarthState.manifest.times.validAt,
+        latestUrl: latestEarthStateUrl,
+        entries: [...latestCapture.values()],
+      };
+      void desktopEarthStateCache.remember(snapshot).catch(() => {
+        // Storage quota or eviction must not prevent a fully verified online bundle from rendering.
+      });
+    }
   } catch {
     // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
   } finally {
+    latestCapture = undefined;
     latestRefreshInFlight = false;
   }
 }
 
-void earthStateActivator.activate(
-  new URL('/earth-state/bundled-v1.json', window.location.href).href,
-).then(activeEarthState => {
+void activateEarthStateAtStartup({
+  cache: desktopEarthStateCache,
+  activateCached: async candidate => validateRenderableEarthState(await activateWithLoaders(
+    createCachedEarthStateLoaders(candidate),
+    () => earthStateActivator.activateLatest(candidate.latestUrl),
+  )),
+  activateBundled: async () => validateRenderableEarthState(await activateWithLoaders(
+    bundledEarthStateLoaders,
+    () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
+  )),
+}).then(activeEarthState => {
   applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
   void refreshLatestEarthState();
@@ -569,21 +663,44 @@ function updateCelestialScene(now: Date) {
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
+function disposeReplacedTexture(previous: THREE.Texture, replacement: THREE.Texture) {
+  if (previous !== replacement) previous.dispose();
+}
 applyVerifiedLayer = (name, asset) => {
   const map = requireTexture(asset, name);
-  if (name === 'surfaceAlbedo') earthMaterial.uniforms.dayMap.value = map;
-  else if (name === 'nightLights') earthMaterial.uniforms.nightMap.value = map;
+  if (name === 'surfaceAlbedo') {
+    const previous = earthMaterial.uniforms.dayMap.value;
+    earthMaterial.uniforms.dayMap.value = map;
+    disposeReplacedTexture(previous, map);
+  } else if (name === 'nightLights') {
+    const previous = earthMaterial.uniforms.nightMap.value;
+    earthMaterial.uniforms.nightMap.value = map;
+    disposeReplacedTexture(previous, map);
+  }
   else if (name === 'cloudOpacity') {
+    const previous = earthMaterial.uniforms.cloudMap.value;
     earthMaterial.uniforms.cloudMap.value = map;
     cloudMaterial.uniforms.cloudMap.value = map;
+    disposeReplacedTexture(previous, map);
   } else if (name === 'cloudDensity') {
+    const previous = earthMaterial.uniforms.liveWeatherMap.value;
     earthMaterial.uniforms.liveWeatherMap.value = map;
     cloudMaterial.uniforms.liveWeatherMap.value = map;
+    disposeReplacedTexture(previous, map);
   }
 };
 applyVerifiedResource = (name, asset) => {
-  if (name === 'moonAlbedo') moonMaterial.uniforms.moonMap.value = requireTexture(asset, name);
-  else if (name === 'milkyWay') milkyWayMaterial.uniforms.map.value = requireTexture(asset, name);
+  if (name === 'moonAlbedo') {
+    const map = requireTexture(asset, name);
+    const previous = moonMaterial.uniforms.moonMap.value;
+    moonMaterial.uniforms.moonMap.value = map;
+    disposeReplacedTexture(previous, map);
+  } else if (name === 'milkyWay') {
+    const map = requireTexture(asset, name);
+    const previous = milkyWayMaterial.uniforms.map.value;
+    milkyWayMaterial.uniforms.map.value = map;
+    disposeReplacedTexture(previous, map);
+  }
   else if (name === 'starCatalog') loadHipparcosStars(requireStarCatalog(asset));
 };
 updateFrame = () => updateCelestialScene(new Date());

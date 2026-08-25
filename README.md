@@ -29,7 +29,9 @@ npm run publish:earth-state -- \
   --output artifacts/earth-state
 ```
 
-Publishing the same source set for the same target time produces identical asset, manifest, and latest-pointer bytes. A website can serve the output directory at `/earth-state/`; TheMarble checks `/earth-state/latest.json` every ten minutes while retaining its current verified globe through missing, malformed, corrupt, or timed-out replacements.
+Publishing the same source set for the same target time produces identical asset, manifest, and latest-pointer bytes. A website can serve the output directory at `/earth-state/`; TheMarble checks `/earth-state/latest.json` every ten minutes while retaining its current verified globe through missing, malformed, corrupt, or timed-out replacements. Set `VITE_EARTH_STATE_LATEST_URL` when the desktop build should read a production `latest.json` from a separate HTTPS origin.
+
+The Tauri app keeps the two newest successfully activated remote bundles in its private persistent webview store. On startup it re-verifies cached manifests and every asset checksum before applying anything, tries the newest complete cache first, and falls back to the packaged seasonal Earth if storage is missing, evicted, partial, or corrupt. The website uses the same decoder and atomic activation path without the desktop cache.
 
 ## What is live
 
