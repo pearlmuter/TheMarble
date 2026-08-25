@@ -1,8 +1,8 @@
 import { validateEarthStateManifest } from './earth-state.js';
+import { earthStateSha256, parseEarthStateJson } from './earth-state-codec.js';
 import { earthStateExtensionForMediaType } from './earth-state-media-types.js';
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -14,11 +14,6 @@ function canonicalize(value) {
 
 function encodeCanonicalJson(value) {
   return encoder.encode(`${JSON.stringify(canonicalize(value), null, 2)}\n`);
-}
-
-async function sha256(bytes) {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function normalizeTime(value) {
@@ -35,7 +30,7 @@ function requireLoadedSource(loaded, url) {
 
 async function verifyBytes(bytes, reference, path) {
   if (bytes.byteLength !== reference.byteLength) throw new Error(`Earth-state byteLength mismatch: ${path}`);
-  const actual = await sha256(bytes);
+  const actual = await earthStateSha256(bytes);
   if (actual !== reference.checksum.value.toLowerCase()) throw new Error(`Earth-state checksum mismatch: ${path}`);
   return actual;
 }
@@ -61,12 +56,7 @@ export function createEarthStatePublisher({ loadSource, store }) {
       requireLoadedSource(sourceDocument, sourceManifestUrl);
       if (sourceDocument.mediaType !== 'application/json') throw new Error('Earth-state source manifest must be application/json');
 
-      let sourceManifest;
-      try {
-        sourceManifest = JSON.parse(decoder.decode(sourceDocument.bytes));
-      } catch {
-        throw new Error('Earth-state source manifest is malformed JSON');
-      }
+      const sourceManifest = parseEarthStateJson(sourceDocument.bytes, 'Earth-state source manifest is malformed JSON');
       validateEarthStateManifest(sourceManifest);
 
       const sourceEntries = await Promise.all(publicationEntries(sourceManifest).map(async entry => {
@@ -85,7 +75,7 @@ export function createEarthStatePublisher({ loadSource, store }) {
         targetTime: targetIso,
         verifiedAssets: sourceEntries.map(({ role, name, checksum }) => ({ role, name, checksum })),
       });
-      const sourceSetId = (await sha256(sourceSetBytes)).slice(0, 16);
+      const sourceSetId = (await earthStateSha256(sourceSetBytes)).slice(0, 16);
       const timeKey = targetIso.replaceAll(':', '-');
       const bundleDirectory = `bundles/${timeKey}-${sourceSetId}`;
       const manifest = structuredClone(sourceManifest);
@@ -119,7 +109,7 @@ export function createEarthStatePublisher({ loadSource, store }) {
         mediaType: 'application/json',
         byteLength: manifestBytes.byteLength,
         immutable: true,
-        checksum: { algorithm: 'sha256', value: await sha256(manifestBytes) },
+        checksum: { algorithm: 'sha256', value: await earthStateSha256(manifestBytes) },
       };
       await store.writeImmutable(manifestPath, manifestBytes);
       await verifyPublished(store, manifestPath, manifestReference);

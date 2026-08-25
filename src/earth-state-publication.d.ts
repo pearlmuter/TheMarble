@@ -1,4 +1,4 @@
-import type { EarthStateLoadedBytes, EarthStateManifest } from './earth-state.js';
+import type { EarthStateLatest, EarthStateLoadedBytes, EarthStateManifest } from './earth-state.js';
 
 export interface EarthStatePublicationStore {
   writeImmutable(path: string, bytes: Uint8Array): Promise<void>;
@@ -9,11 +9,7 @@ export interface EarthStatePublicationStore {
 export interface EarthStatePublication {
   manifestPath: string;
   manifest: EarthStateManifest;
-  latest: {
-    schemaVersion: 1;
-    bundleId: string;
-    manifest: EarthStateManifest['layers']['surfaceAlbedo']['asset'];
-  };
+  latest: EarthStateLatest;
 }
 
 export function createEarthStatePublisher(adapters: {

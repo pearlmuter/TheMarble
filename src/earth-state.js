@@ -1,3 +1,5 @@
+import { earthStateSha256 } from './earth-state-codec.js';
+
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
@@ -39,8 +41,7 @@ async function verifyLoadedAsset(loaded, reference, path) {
   if (loaded.bytes.byteLength !== reference.byteLength) {
     throw new Error(`Earth-state asset byteLength mismatch for ${path}`);
   }
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', loaded.bytes);
-  const actualChecksum = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  const actualChecksum = await earthStateSha256(loaded.bytes);
   if (actualChecksum !== reference.checksum.value.toLowerCase()) {
     throw new Error(`Earth-state asset checksum mismatch for ${path}`);
   }
