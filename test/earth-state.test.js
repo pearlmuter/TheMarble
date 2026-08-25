@@ -4,17 +4,19 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createEarthStateActivator } from '../src/earth-state.js';
 
-const checksum = '0123456789abcdef'.repeat(4);
+const fixtureBytes = new TextEncoder().encode('fixture asset');
+const checksum = 'dc9905c9a7e70f6485604c96e9a3ff0f5fc0b8ae936ef644a6ae31afbc10acd4';
+const loaded = value => ({ value, bytes: fixtureBytes });
 
 function fixtureManifest() {
-  const texture = (href, datasetId = 'earth') => ({
+  const textureDescriptor = (href, datasetId = 'earth') => ({
     datasetId,
     units: 'display-referred reflectance',
     dimensions: { width: 4, height: 2 },
     colorSpace: 'srgb',
     channels: { rgb: 'color', a: 'opacity' },
     textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
-    asset: { href, mediaType: 'image/png', byteLength: 16, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
+    asset: { href, mediaType: 'image/png', byteLength: fixtureBytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
   });
 
   return {
@@ -41,17 +43,18 @@ function fixtureManifest() {
       { id: 'sky', version: 'fixture-1', attribution: 'Fixture sky data' },
     ],
     layers: {
-      surfaceAlbedo: texture('./surface.png'),
-      nightLights: texture('./lights.png'),
-      cloudOpacity: texture('./clouds.png'),
+      surfaceAlbedo: textureDescriptor('./surface.png'),
+      nightLights: textureDescriptor('./lights.png'),
+      cloudOpacity: textureDescriptor('./clouds.png'),
+      cloudDensity: textureDescriptor('./cloud-density.json'),
     },
     resources: {
-      moonAlbedo: { ...texture('./moon.png', 'sky'), semantics: 'lunar albedo texture' },
-      milkyWay: { ...texture('./milky-way.jpg', 'sky'), semantics: 'equatorial all-sky panorama' },
+      moonAlbedo: { ...textureDescriptor('./moon.png', 'sky'), semantics: 'lunar albedo texture' },
+      milkyWay: { ...textureDescriptor('./milky-way.jpg', 'sky'), semantics: 'equatorial all-sky panorama' },
       starCatalog: {
         datasetId: 'sky',
         semantics: 'equatorial star catalogue',
-        asset: { href: './stars.json', mediaType: 'application/json', byteLength: 16, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
+        asset: { href: './stars.json', mediaType: 'application/json', byteLength: fixtureBytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
       },
     },
   };
@@ -64,7 +67,7 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
     loadManifest: async () => manifest,
     loadAsset: async ({ url }) => {
       loadedUrls.push(url);
-      return `loaded:${url}`;
+      return loaded(`loaded:${url}`);
     },
   });
 
@@ -73,7 +76,8 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   assert.equal(activated.manifest.bundleId, 'fixture-2026-08-25T00:00:00Z');
   assert.equal(activated.layers.surfaceAlbedo, 'loaded:https://example.test/states/fixture/surface.png');
   assert.equal(activated.resources.starCatalog, 'loaded:https://example.test/states/fixture/stars.json');
-  assert.equal(loadedUrls.length, 6);
+  assert.equal(activated.layerDatasets.surfaceAlbedo.version, 'fixture-1');
+  assert.equal(loadedUrls.length, 7);
   assert.equal(activator.current, activated);
 });
 
@@ -84,7 +88,7 @@ test('an incomplete manifest is rejected without replacing the active Earth stat
   let nextManifest = complete;
   const activator = createEarthStateActivator({
     loadManifest: async () => nextManifest,
-    loadAsset: async ({ url }) => `loaded:${url}`,
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
   });
   const active = await activator.activate('https://example.test/states/current/manifest.json');
 
@@ -104,7 +108,7 @@ test('an asset-loading failure leaves the previous coherent Earth state active',
     loadManifest: async () => manifest,
     loadAsset: async ({ name, url }) => {
       if (failClouds && name === 'cloudOpacity') throw new Error('cloud texture unavailable');
-      return `loaded:${url}`;
+      return loaded(`loaded:${url}`);
     },
   });
   const active = await activator.activate('https://example.test/states/current/manifest.json');
@@ -139,7 +143,7 @@ test('malformed Earth-state contract metadata is rejected before assets load', a
     let loads = 0;
     const activator = createEarthStateActivator({
       loadManifest: async () => manifest,
-      loadAsset: async () => { loads += 1; },
+      loadAsset: async () => { loads += 1; return loaded(undefined); },
     });
 
     await assert.rejects(
@@ -161,7 +165,7 @@ test('the bundled manifest activates every asset required by the current scene',
       const bytes = await readFile(new URL(`../public${new URL(url).pathname}`, import.meta.url));
       assert.equal(bytes.byteLength, descriptor.asset.byteLength);
       assert.equal(createHash('sha256').update(bytes).digest('hex'), descriptor.asset.checksum.value);
-      return url;
+      return { value: url, bytes };
     },
   });
 
@@ -171,7 +175,29 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.layers.surfaceAlbedo, /earth-surface-5400\.png$/);
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
+  assert.match(activated.layers.cloudDensity, /cloud-density-neutral-v1\.json$/);
   assert.match(activated.resources.moonAlbedo, /moon-1024\.jpg$/);
   assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-16k\.jpg$/);
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);
+});
+
+test('bytes that disagree with the declared checksum cannot replace the active Earth state', async () => {
+  const manifest = fixtureManifest();
+  let corrupt = false;
+  const activator = createEarthStateActivator({
+    loadManifest: async () => manifest,
+    loadAsset: async ({ url }) => ({
+      value: `loaded:${url}`,
+      bytes: corrupt ? new TextEncoder().encode('corrupt asset') : fixtureBytes,
+    }),
+  });
+  const active = await activator.activate('https://example.test/states/current/manifest.json');
+
+  corrupt = true;
+
+  await assert.rejects(
+    activator.activate('https://example.test/states/replacement/manifest.json'),
+    /checksum/,
+  );
+  assert.equal(activator.current, active);
 });

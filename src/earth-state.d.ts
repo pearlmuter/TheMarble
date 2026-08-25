@@ -1,5 +1,8 @@
 export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-assisted';
 
+export const EARTH_STATE_REQUIRED_LAYERS: readonly string[];
+export const EARTH_STATE_REQUIRED_RESOURCES: readonly string[];
+
 export interface EarthStateChecksum {
   algorithm: 'sha256';
   value: string;
@@ -59,16 +62,8 @@ export interface EarthStateManifest {
     retrievedAt: string;
   };
   datasets: EarthStateDataset[];
-  layers: Record<string, EarthStateLayer> & {
-    surfaceAlbedo: EarthStateLayer;
-    nightLights: EarthStateLayer;
-    cloudOpacity: EarthStateLayer;
-  };
-  resources: Record<string, EarthStateResource> & {
-    moonAlbedo: EarthStateResource;
-    milkyWay: EarthStateResource;
-    starCatalog: EarthStateResource;
-  };
+  layers: Record<string, EarthStateLayer>;
+  resources: Record<string, EarthStateResource>;
 }
 
 export interface EarthStateAssetRequest {
@@ -80,16 +75,9 @@ export interface EarthStateAssetRequest {
 
 export interface ActivatedEarthState<LoadedAsset> {
   manifest: EarthStateManifest;
-  layers: Record<string, LoadedAsset> & {
-    surfaceAlbedo: LoadedAsset;
-    nightLights: LoadedAsset;
-    cloudOpacity: LoadedAsset;
-  };
-  resources: Record<string, LoadedAsset> & {
-    moonAlbedo: LoadedAsset;
-    milkyWay: LoadedAsset;
-    starCatalog: LoadedAsset;
-  };
+  layers: Record<string, LoadedAsset>;
+  resources: Record<string, LoadedAsset>;
+  layerDatasets: Record<string, EarthStateDataset>;
 }
 
 export interface EarthStateActivator<LoadedAsset> {
@@ -99,5 +87,5 @@ export interface EarthStateActivator<LoadedAsset> {
 
 export function createEarthStateActivator<LoadedAsset>(adapters: {
   loadManifest(manifestUrl: string): Promise<unknown>;
-  loadAsset(request: EarthStateAssetRequest): Promise<LoadedAsset>;
+  loadAsset(request: EarthStateAssetRequest): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
 }): EarthStateActivator<LoadedAsset>;

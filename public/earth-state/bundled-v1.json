@@ -36,6 +36,11 @@
       "attribution": "Bundled TheMarble fair-cloud texture; original source metadata was not recorded"
     },
     {
+      "id": "bundled-cloud-density",
+      "version": "neutral-v1",
+      "attribution": "TheMarble deterministic neutral cloud-density signal"
+    },
+    {
       "id": "threejs-moon-example",
       "version": "sha256-fcb0f1f5548e6e18",
       "attribution": "Three.js example Moon texture"
@@ -95,6 +100,21 @@
         "byteLength": 5033486,
         "immutable": true,
         "checksum": { "algorithm": "sha256", "value": "35c46d8b29651a99e482401f33ed752bf4625837435fb3a89bb0032f72b88a3a" }
+      }
+    },
+    "cloudDensity": {
+      "datasetId": "bundled-cloud-density",
+      "units": "normalized density and observation confidence",
+      "dimensions": { "width": 1, "height": 1 },
+      "colorSpace": "linear",
+      "channels": { "r": "density modulation", "g": "observation confidence", "b": "reserved", "a": "reserved" },
+      "textureSemantics": { "mapping": "constant global value", "sampling": "nearest" },
+      "asset": {
+        "href": "/earth-state/cloud-density-neutral-v1.json",
+        "mediaType": "application/vnd.themarble.rgba8+json",
+        "byteLength": 56,
+        "immutable": true,
+        "checksum": { "algorithm": "sha256", "value": "5e1994bd7be361d9f8d5c9505d731776b8686d0fed49b6085db56a27b443a584" }
       }
     }
   },

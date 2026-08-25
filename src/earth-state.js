@@ -1,5 +1,5 @@
-const REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity'];
-const REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
+export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
+export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
 const CLASSIFICATIONS = new Set(['static-fallback', 'observed', 'model-assisted']);
 
@@ -24,6 +24,27 @@ function validateAsset(asset, path) {
   if (!isRecord(asset.checksum) || asset.checksum.algorithm !== 'sha256' || !/^[0-9a-f]{64}$/i.test(asset.checksum.value ?? '')) {
     fail(`${path}.checksum`);
   }
+}
+
+function validateDatasetBackedDescriptor(descriptor, path, datasetIds) {
+  if (!isRecord(descriptor)) fail(path);
+  if (!datasetIds.has(descriptor.datasetId)) fail(`${path}.datasetId`);
+  validateAsset(descriptor.asset, `${path}.asset`);
+}
+
+async function verifyLoadedAsset(loaded, reference, path) {
+  if (!isRecord(loaded) || !('value' in loaded) || !(loaded.bytes instanceof Uint8Array)) {
+    throw new Error(`Earth-state loader did not return verifiable bytes for ${path}`);
+  }
+  if (loaded.bytes.byteLength !== reference.byteLength) {
+    throw new Error(`Earth-state asset byteLength mismatch for ${path}`);
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', loaded.bytes);
+  const actualChecksum = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  if (actualChecksum !== reference.checksum.value.toLowerCase()) {
+    throw new Error(`Earth-state asset checksum mismatch for ${path}`);
+  }
+  return loaded.value;
 }
 
 function validateManifest(manifest) {
@@ -59,13 +80,12 @@ function validateManifest(manifest) {
     datasetIds.add(dataset.id);
   });
 
-  requireEntries(manifest, 'layers', REQUIRED_LAYERS);
-  requireEntries(manifest, 'resources', REQUIRED_RESOURCES);
+  requireEntries(manifest, 'layers', EARTH_STATE_REQUIRED_LAYERS);
+  requireEntries(manifest, 'resources', EARTH_STATE_REQUIRED_RESOURCES);
 
   for (const [name, layer] of Object.entries(manifest.layers)) {
     const path = `layers.${name}`;
-    if (!isRecord(layer)) fail(path);
-    if (!datasetIds.has(layer.datasetId)) fail(`${path}.datasetId`);
+    validateDatasetBackedDescriptor(layer, path, datasetIds);
     requireString(layer.units, `${path}.units`);
     requireString(layer.colorSpace, `${path}.colorSpace`);
     if (!isRecord(layer.dimensions) || !Number.isSafeInteger(layer.dimensions.width) || layer.dimensions.width <= 0 || !Number.isSafeInteger(layer.dimensions.height) || layer.dimensions.height <= 0) {
@@ -75,15 +95,12 @@ function validateManifest(manifest) {
     if (!isRecord(layer.textureSemantics)) fail(`${path}.textureSemantics`);
     requireString(layer.textureSemantics.mapping, `${path}.textureSemantics.mapping`);
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
-    validateAsset(layer.asset, `${path}.asset`);
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {
     const path = `resources.${name}`;
-    if (!isRecord(resource)) fail(path);
-    if (!datasetIds.has(resource.datasetId)) fail(`${path}.datasetId`);
+    validateDatasetBackedDescriptor(resource, path, datasetIds);
     requireString(resource.semantics, `${path}.semantics`);
-    validateAsset(resource.asset, `${path}.asset`);
   }
 }
 
@@ -112,7 +129,8 @@ export function createEarthStateActivator({ loadManifest, loadAsset }) {
       const loadEntries = async (entries, role) => Object.fromEntries(await Promise.all(
         Object.entries(entries).map(async ([name, descriptor]) => {
           const url = new URL(descriptor.asset.href, baseUrl).href;
-          const asset = await loadAsset({ name, role, descriptor, url });
+          const loaded = await loadAsset({ name, role, descriptor, url });
+          const asset = await verifyLoadedAsset(loaded, descriptor.asset, `${role}.${name}`);
           return [name, asset];
         }),
       ));
@@ -122,7 +140,9 @@ export function createEarthStateActivator({ loadManifest, loadAsset }) {
         loadEntries(manifest.resources, 'resource'),
       ]);
 
-      const activated = { manifest, layers, resources };
+      const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
+      const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
+      const activated = { manifest, layers, resources, layerDatasets };
       current = activated;
       return activated;
     },

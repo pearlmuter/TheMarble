@@ -5,11 +5,20 @@ import type { ActivatedEarthState } from './earth-state.js';
 import './style.css';
 
 type HipparcosPayload = { stars: Array<[number, number, number, number]> };
+type CloudDensityPayload = { width: number; height: number; rgba: number[] };
 type LoadedSceneAsset = THREE.Texture | HipparcosPayload;
 
 function isHipparcosPayload(value: unknown): value is HipparcosPayload {
   if (typeof value !== 'object' || value === null || !('stars' in value) || !Array.isArray(value.stars)) return false;
   return value.stars.every(star => Array.isArray(star) && star.length === 4 && star.every(Number.isFinite));
+}
+
+function isCloudDensityPayload(value: unknown): value is CloudDensityPayload {
+  if (typeof value !== 'object' || value === null || !('width' in value) || !('height' in value) || !('rgba' in value)) return false;
+  const { width, height, rgba } = value;
+  return typeof width === 'number' && typeof height === 'number' && Number.isSafeInteger(width) && Number.isSafeInteger(height) && Array.isArray(rgba)
+    && rgba.length === width * height * 4
+    && rgba.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255);
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
@@ -47,19 +56,46 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
     return response.json();
   },
   async loadAsset({ name, descriptor, url }) {
-    if (descriptor.asset.mediaType === 'application/json') {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
-      const payload: unknown = await response.json();
-      if (name === 'starCatalog' && !isHipparcosPayload(payload)) throw new Error('Earth-state starCatalog is invalid');
-      return payload as HipparcosPayload;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (descriptor.asset.mediaType.includes('json')) {
+      const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
+      if (name === 'starCatalog') {
+        if (!isHipparcosPayload(payload)) throw new Error('Earth-state starCatalog is invalid');
+        return { value: payload, bytes };
+      }
+      if (name === 'cloudDensity') {
+        if (!isCloudDensityPayload(payload)) throw new Error('Earth-state cloudDensity is invalid');
+        const map = new THREE.DataTexture(new Uint8Array(payload.rgba), payload.width, payload.height, THREE.RGBAFormat);
+        map.minFilter = THREE.NearestFilter;
+        map.magFilter = THREE.NearestFilter;
+        map.needsUpdate = true;
+        return { value: map, bytes };
+      }
+      throw new Error(`Unsupported Earth-state JSON asset: ${name}`);
     }
-    const map = await loader.loadAsync(url);
-    if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
-    map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-    return map;
+    const objectUrl = URL.createObjectURL(new Blob([buffer], { type: descriptor.asset.mediaType }));
+    try {
+      const map = await loader.loadAsync(objectUrl);
+      if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
+      map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      return { value: map, bytes };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   },
 });
+
+let updateFrame: () => void = () => undefined;
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  updateFrame();
+  renderer.render(scene, camera);
+}
+animate();
 
 void earthStateActivator.activate(
   new URL('/earth-state/bundled-v1.json', window.location.href).href,
@@ -83,11 +119,11 @@ function requireStarCatalog(asset: LoadedSceneAsset) {
 const dayMap = requireTexture(activeEarthState.layers.surfaceAlbedo, 'surfaceAlbedo');
 const nightMap = requireTexture(activeEarthState.layers.nightLights, 'nightLights');
 const cloudMap = requireTexture(activeEarthState.layers.cloudOpacity, 'cloudOpacity');
+const liveWeatherMap = requireTexture(activeEarthState.layers.cloudDensity, 'cloudDensity');
 const moonMap = requireTexture(activeEarthState.resources.moonAlbedo, 'moonAlbedo');
 const milkyWayMap = requireTexture(activeEarthState.resources.milkyWay, 'milkyWay');
 const starCatalog = requireStarCatalog(activeEarthState.resources.starCatalog);
-const cloudDatasetId = activeEarthState.manifest.layers.cloudOpacity.datasetId;
-const cloudDataset = activeEarthState.manifest.datasets.find(dataset => dataset.id === cloudDatasetId)!;
+const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
 const weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
 loading.classList.add('hidden');
 const celestialSky = new THREE.Group();
@@ -147,12 +183,12 @@ loadHipparcosStars(starCatalog);
 
 const earthMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    dayMap: { value: dayMap }, nightMap: { value: nightMap }, cloudMap: { value: cloudMap },
+    dayMap: { value: dayMap }, nightMap: { value: nightMap }, cloudMap: { value: cloudMap }, liveWeatherMap: { value: liveWeatherMap },
     sunDirection: { value: new THREE.Vector3(1, 0, 0) }
   },
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*vec4(vViewPosition,1.0); }`,
   fragmentShader: `
-    uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D cloudMap; uniform vec3 sunDirection;
+    uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D cloudMap; uniform sampler2D liveWeatherMap; uniform vec3 sunDirection;
     varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition;
     void main() {
       vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float solar=dot(normal,sunView);
@@ -160,7 +196,8 @@ const earthMaterial = new THREE.ShaderMaterial({
       float zenithDegrees=degrees(acos(clamp(solar,0.0,1.0))); float airMass=1.0/(max(solar,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
       vec3 surface=texture2D(dayMap,vUv).rgb; vec3 day=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
-      float cloudShadow=texture2D(cloudMap,vUv+vec2(sunDirection.z,-sunDirection.x)*.0028).a;
+      vec4 weather=texture2D(liveWeatherMap,vUv); float weatherDensity=mix(1.0,mix(.7,1.2,weather.r),weather.g*.26);
+      float cloudShadow=texture2D(cloudMap,vUv+vec2(sunDirection.z,-sunDirection.x)*.0028).a*weatherDensity;
       day*=1.0-cloudShadow*daylight*.18;
       float ocean=smoothstep(.015,.16,surface.b-max(surface.r,surface.g));
       float sunGlint=pow(max(dot(reflect(-sunView,normal),viewDirection),0.0),110.0)*ocean*daylight;
@@ -176,9 +213,9 @@ planet.add(earth);
 
 const cloudMaterial = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
-  uniforms: { cloudMap: { value: cloudMap }, sunDirection: { value: new THREE.Vector3(1, 0, 0) } },
+  uniforms: { cloudMap: { value: cloudMap }, liveWeatherMap: { value: liveWeatherMap }, sunDirection: { value: new THREE.Vector3(1, 0, 0) } },
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*vec4(vViewPosition,1.0); }`,
-  fragmentShader: `uniform sampler2D cloudMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vec4 cloud=texture2D(cloudMap,vUv); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); vec3 viewDirection=normalize(-vViewPosition); float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.11,.17,solarRaw); float zenithDegrees=degrees(acos(clamp(solarRaw,0.0,1.0))); float airMass=1.0/(max(solarRaw,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364)); vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0)); float forward=max(-dot(viewDirection,sunView),0.0); float silver=pow(forward,18.0)*smoothstep(-.08,.25,solarRaw); vec3 litCloud=vec3(1.08,1.02,.93)*mix(vec3(1.0),sunlight,.88); vec3 cloudLight=mix(vec3(.025,.04,.07),litCloud,solar)+vec3(1.0,.56,.2)*silver*.62; gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*.82); }`
+  fragmentShader: `uniform sampler2D cloudMap; uniform sampler2D liveWeatherMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vec4 cloud=texture2D(cloudMap,vUv); vec4 weather=texture2D(liveWeatherMap,vUv); float density=mix(1.0,mix(.7,1.2,weather.r),weather.g*.26); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); vec3 viewDirection=normalize(-vViewPosition); float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.11,.17,solarRaw); float zenithDegrees=degrees(acos(clamp(solarRaw,0.0,1.0))); float airMass=1.0/(max(solarRaw,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364)); vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0)); float forward=max(-dot(viewDirection,sunView),0.0); float silver=pow(forward,18.0)*smoothstep(-.08,.25,solarRaw); vec3 litCloud=vec3(1.08,1.02,.93)*mix(vec3(1.0),sunlight,.88); vec3 cloudLight=mix(vec3(.025,.04,.07),litCloud,solar)+vec3(1.0,.56,.2)*silver*.62; gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.82); }`
 });
 // About 11 km above mean sea level: visibly detached at the limb, but still inside the atmosphere.
 const clouds = new THREE.Mesh(new THREE.SphereGeometry(1.00173, 192, 192), cloudMaterial);
@@ -463,7 +500,5 @@ function updateCelestialScene(now: Date) {
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
-window.setTimeout(()=>loading.classList.add('hidden'),2200);
-function animate(){requestAnimationFrame(animate);controls.update();updateCelestialScene(new Date());renderer.render(scene,camera);}
-animate();
+updateFrame = () => updateCelestialScene(new Date());
 }
