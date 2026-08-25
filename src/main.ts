@@ -9,10 +9,19 @@ import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene
 import type { HipparcosPayload } from './earth-state-scene.js';
 import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
+import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
+import type { SeasonalPair } from './seasonal-surface-controller.js';
 import './style.css';
 
 type CloudDensityPayload = { width: number; height: number; rgba: number[] };
-type LoadedSceneAsset = THREE.Texture | HipparcosPayload;
+type DeferredSceneTexture = {
+  kind: 'deferred-scene-texture';
+  request: EarthStateAssetRequest;
+  bytes: Uint8Array;
+  mediaType: string;
+};
+type LoadedSceneAsset = THREE.Texture | HipparcosPayload | DeferredSceneTexture;
+type PreparedSeasonalSurface = SeasonalPair<THREE.Texture, LoadedSceneAsset>;
 type SceneEarthStateLoaders = {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
   loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
@@ -26,9 +35,8 @@ function isCloudDensityPayload(value: unknown): value is CloudDensityPayload {
     && rgba.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255);
 }
 
-function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
+function verifyImageDimensions(image: { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
   if (!descriptor.dimensions) return;
-  const image = map.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
   const width = image.naturalWidth ?? image.width;
   const height = image.naturalHeight ?? image.height;
   if (width !== descriptor.dimensions.width || height !== descriptor.dimensions.height) {
@@ -36,10 +44,24 @@ function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: 
   }
 }
 
+function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
+  verifyImageDimensions(map.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }, descriptor, name);
+}
+
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
 const clock = document.querySelector<HTMLElement>('#clock')!;
 const sunStatus = document.querySelector<HTMLElement>('#sun-status')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
+const sceneParameters = new URLSearchParams(window.location.search);
+const fixedSceneTime = sceneParameters.get('time');
+const fixedSceneView = sceneParameters.get('view');
+function sceneNow() {
+  if (fixedSceneTime) {
+    const date = new Date(fixedSceneTime);
+    if (!Number.isNaN(date.valueOf())) return date;
+  }
+  return new Date();
+}
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -83,6 +105,11 @@ const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
 };
 let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => void = () => undefined;
 let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
+let seasonalSurfaceController: {
+  prepare(options: { frames: Array<{ month: number; value: LoadedSceneAsset }>; date: Date; fallbackTexture?: THREE.Texture }): Promise<PreparedSeasonalSurface>;
+  activate(prepared: PreparedSeasonalSurface): void;
+  update(date: Date): void;
+};
 let weatherFeed = 'loading bundled Earth state';
 let activeBundleId: string | undefined;
 
@@ -130,12 +157,42 @@ async function decodeSceneAsset(
   }
 }
 
+async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes: Uint8Array, mediaType: string) {
+  const { name, descriptor } = request;
+  if (mediaType !== descriptor.asset.mediaType) throw new Error(`Earth-state asset media type mismatch for ${name}`);
+  const imageBytes = bytes.buffer instanceof ArrayBuffer
+    ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) as Uint8Array<ArrayBuffer>
+    : Uint8Array.from(bytes);
+  const blob = new Blob([imageBytes], { type: mediaType });
+  if ('createImageBitmap' in globalThis) {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      verifyImageDimensions(bitmap, descriptor, `${name} deferred image`);
+    } finally {
+      bitmap.close();
+    }
+  } else {
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const map = await loader.loadAsync(objectUrl);
+      verifyTextureDimensions(map, descriptor, `${name} deferred image`);
+      map.dispose();
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+  return { kind: 'deferred-scene-texture', request, bytes, mediaType } satisfies DeferredSceneTexture;
+}
+
 async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
   const { descriptor, url } = request;
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
+  if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle)) {
+    return { value: await createDeferredSceneTexture(request, bytes, mediaType), bytes, mediaType };
+  }
   const loaded = await decodeSceneAsset(request, bytes, mediaType);
   return { ...loaded, mediaType };
 }
@@ -167,6 +224,12 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
     },
     async loadAsset(request) {
       const entry = candidate.read(request.url);
+      if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle)) {
+        return {
+          value: await createDeferredSceneTexture(request, entry.bytes, entry.mediaType),
+          bytes: entry.bytes,
+        };
+      }
       return decodeSceneAsset(request, entry.bytes, entry.mediaType);
     },
   };
@@ -191,12 +254,33 @@ async function activateWithLoaders<Result>(loaders: SceneEarthStateLoaders, acti
 }
 
 function validateRenderableEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
-  return validateEarthStateScene(activeEarthState, asset => asset instanceof THREE.Texture);
+  return validateEarthStateScene(
+    activeEarthState,
+    asset => asset instanceof THREE.Texture,
+    { isSeasonalSurfaceSource: asset => isDeferredSceneTexture(asset) },
+  );
 }
 
-function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
-  for (const name of EARTH_STATE_REQUIRED_LAYERS) applyVerifiedLayer(name, activeEarthState.layers[name]);
+function requireLoadedTexture(asset: LoadedSceneAsset, name: string) {
+  if (!(asset instanceof THREE.Texture)) throw new Error(`Earth-state asset ${name} is not a texture`);
+  return asset;
+}
+
+function isDeferredSceneTexture(asset: LoadedSceneAsset): asset is DeferredSceneTexture {
+  return typeof asset === 'object' && asset !== null && 'kind' in asset && asset.kind === 'deferred-scene-texture';
+}
+
+async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+  const frames = activeEarthState.seasonalLayers.surfaceAlbedo ?? [];
+  const fallbackSurface = frames.length === 0
+    ? requireLoadedTexture(activeEarthState.layers.surfaceAlbedo, 'surfaceAlbedo')
+    : undefined;
+  const seasonalSurface = await seasonalSurfaceController.prepare({ frames, date: sceneNow(), fallbackTexture: fallbackSurface });
+  for (const name of EARTH_STATE_REQUIRED_LAYERS) {
+    if (name !== 'surfaceAlbedo') applyVerifiedLayer(name, activeEarthState.layers[name]);
+  }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
+  seasonalSurfaceController.activate(seasonalSurface);
   const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
   weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
   activeBundleId = activeEarthState.manifest.bundleId;
@@ -225,7 +309,7 @@ async function refreshLatestEarthState() {
       remoteEarthStateLoaders,
       () => earthStateActivator.activateLatest(latestEarthStateUrl),
     ));
-    if (activeEarthState.manifest.bundleId !== activeBundleId) applyActivatedEarthState(activeEarthState);
+    if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
     if (activeEarthState !== previous && desktopEarthStateCache) {
       const snapshot = {
         bundleId: activeEarthState.manifest.bundleId,
@@ -255,8 +339,8 @@ void activateEarthStateAtStartup({
     bundledEarthStateLoaders,
     () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
   )),
-}).then(activeEarthState => {
-  applyActivatedEarthState(activeEarthState);
+}).then(async activeEarthState => {
+  await applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
   void refreshLatestEarthState();
   window.setInterval(refreshLatestEarthState, 10 * 60 * 1000);
@@ -346,25 +430,41 @@ function loadHipparcosStars({ stars }: HipparcosPayload) {
 
 const earthMaterial = new THREE.ShaderMaterial({
   uniforms: {
-    dayMap: { value: dayMap }, nightMap: { value: nightMap }, cloudMap: { value: cloudMap }, liveWeatherMap: { value: liveWeatherMap },
+    dayMapFrom: { value: dayMap }, dayMapTo: { value: dayMap }, seasonalMix: { value: 0 },
+    nightMap: { value: nightMap }, cloudMap: { value: cloudMap }, liveWeatherMap: { value: liveWeatherMap },
     sunDirection: { value: new THREE.Vector3(1, 0, 0) }
   },
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*vec4(vViewPosition,1.0); }`,
   fragmentShader: `
-    uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D cloudMap; uniform sampler2D liveWeatherMap; uniform vec3 sunDirection;
+    uniform sampler2D dayMapFrom; uniform sampler2D dayMapTo; uniform float seasonalMix;
+    uniform sampler2D nightMap; uniform sampler2D cloudMap; uniform sampler2D liveWeatherMap; uniform vec3 sunDirection;
     varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition;
     void main() {
-      vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float solar=dot(normal,sunView);
+      vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz);
+      float solar=dot(normal,sunView); float nDotL=max(solar,0.0); float nDotV=max(dot(normal,viewDirection),.001);
       float daylight=smoothstep(-.075,.14,solar); float directLight=.48+1.22*smoothstep(-.08,.72,solar);
       float zenithDegrees=degrees(acos(clamp(solar,0.0,1.0))); float airMass=1.0/(max(solar,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
-      vec3 surface=texture2D(dayMap,vUv).rgb; vec3 day=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
+      vec3 surface=mix(texture2D(dayMapFrom,vUv).rgb,texture2D(dayMapTo,vUv).rgb,seasonalMix);
+      float luminance=dot(surface,vec3(.2126,.7152,.0722));
+      float blueDominance=surface.b-max(surface.r,surface.g);
+      float ocean=smoothstep(.0006,.006,blueDominance)*(1.0-smoothstep(.12,.36,luminance));
+      vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
+      vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
+      float roughness=.19; float alpha2=roughness*roughness; alpha2*=alpha2;
+      float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
+      float k=roughness*roughness*.5; float geometryView=nDotV/(nDotV*(1.0-k)+k); float geometryLight=nDotL/(nDotL*(1.0-k)+k);
+      float fresnel=.0204+(1.0-.0204)*pow(1.0-vDotH,5.0);
+      float specular=distribution*geometryView*geometryLight*fresnel/(4.0*nDotV*max(nDotL,.001)+.0001);
+      float horizonFresnel=.0204+(1.0-.0204)*pow(1.0-nDotV,5.0);
+      vec3 deepWater=vec3(.0022,.012,.026); vec3 waterDiffuse=deepWater*(.13+.48*nDotL)*mix(vec3(1.0),sunlight,.7);
+      vec3 atmosphericReflection=vec3(.018,.075,.15)*horizonFresnel*(.3+.7*daylight);
+      vec3 sunGlint=vec3(1.0,.78,.5)*specular*nDotL*1.3;
+      vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
+      vec3 day=mix(land,oceanLight,ocean);
       vec4 weather=texture2D(liveWeatherMap,vUv); float weatherDensity=mix(1.0,mix(.7,1.2,weather.r),weather.g*.26);
       float cloudShadow=texture2D(cloudMap,vUv+vec2(sunDirection.z,-sunDirection.x)*.0028).a*weatherDensity;
       day*=1.0-cloudShadow*daylight*.18;
-      float ocean=smoothstep(.015,.16,surface.b-max(surface.r,surface.g));
-      float sunGlint=pow(max(dot(reflect(-sunView,normal),viewDirection),0.0),110.0)*ocean*daylight;
-      day+=vec3(1.0,.72,.38)*sunGlint*2.4;
       float nightFalloff=1.0-smoothstep(-.12,.025,solar);
       vec3 night=texture2D(nightMap,vUv).rgb*nightFalloff*1.8;
       gl_FragColor=vec4(mix(night,day,daylight),1.0);
@@ -614,7 +714,11 @@ function updateCelestialScene(now: Date) {
     const tangent = rightTangent.multiplyScalar(.72).addScaledVector(upTangent, .69).normalize();
     const observerDistance = 7;
     const solarSeparation = Math.asin(1 / observerDistance) + radians(.36);
-    const observerDirection = sunDirection.clone().multiplyScalar(-Math.cos(solarSeparation)).addScaledVector(tangent, Math.sin(solarSeparation));
+    const observerDirection = fixedSceneView === 'day'
+      ? sunDirection.clone()
+      : fixedSceneView === 'terminator'
+        ? tangent
+        : sunDirection.clone().multiplyScalar(-Math.cos(solarSeparation)).addScaledVector(tangent, Math.sin(solarSeparation));
     camera.position.copy(observerDirection.multiplyScalar(observerDistance));
     camera.lookAt(0, 0, 0);
     controls.target.set(0, 0, 0);
@@ -666,13 +770,29 @@ window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.inn
 function disposeReplacedTexture(previous: THREE.Texture, replacement: THREE.Texture) {
   if (previous !== replacement) previous.dispose();
 }
+
+async function decodeSeasonalFrame(frame: { month: number; value: LoadedSceneAsset }) {
+  if (frame.value instanceof THREE.Texture) return frame.value;
+  if (!isDeferredSceneTexture(frame.value)) throw new Error(`Earth-state seasonal frame ${frame.month} is not a texture source`);
+  const loaded = await decodeSceneAsset(frame.value.request, frame.value.bytes, frame.value.mediaType);
+  return requireTexture(loaded.value, `surfaceAlbedo month ${frame.month}`);
+}
+
+seasonalSurfaceController = createSeasonalSurfaceController<THREE.Texture, LoadedSceneAsset>({
+  initialTextures: [dayMap],
+  decodeFrame: decodeSeasonalFrame,
+  installPair({ from, to, mix }) {
+    earthMaterial.uniforms.dayMapFrom.value = from;
+    earthMaterial.uniforms.dayMapTo.value = to;
+    earthMaterial.uniforms.seasonalMix.value = mix;
+  },
+  disposeTexture(texture) { texture.dispose(); },
+  onError(error) { console.warn('TheMarble retained the previous seasonal surface after a rollover decode failure.', error); },
+});
+
 applyVerifiedLayer = (name, asset) => {
   const map = requireTexture(asset, name);
-  if (name === 'surfaceAlbedo') {
-    const previous = earthMaterial.uniforms.dayMap.value;
-    earthMaterial.uniforms.dayMap.value = map;
-    disposeReplacedTexture(previous, map);
-  } else if (name === 'nightLights') {
+  if (name === 'nightLights') {
     const previous = earthMaterial.uniforms.nightMap.value;
     earthMaterial.uniforms.nightMap.value = map;
     disposeReplacedTexture(previous, map);
@@ -703,5 +823,9 @@ applyVerifiedResource = (name, asset) => {
   }
   else if (name === 'starCatalog') loadHipparcosStars(requireStarCatalog(asset));
 };
-updateFrame = () => updateCelestialScene(new Date());
+updateFrame = () => {
+  const now = sceneNow();
+  seasonalSurfaceController.update(now);
+  updateCelestialScene(now);
+};
 }

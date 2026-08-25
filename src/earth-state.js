@@ -34,6 +34,37 @@ function validateDatasetBackedDescriptor(descriptor, path, datasetIds) {
   validateAsset(descriptor.asset, `${path}.asset`);
 }
 
+function sameAssetReference(left, right) {
+  return left.href === right.href
+    && left.mediaType === right.mediaType
+    && left.byteLength === right.byteLength
+    && left.checksum.value.toLowerCase() === right.checksum.value.toLowerCase();
+}
+
+function validateSeasonalCycle(layer, path, datasetIds) {
+  const cycle = layer.seasonalCycle;
+  if (cycle === undefined) return;
+  if (!isRecord(cycle)) fail(`${path}.seasonalCycle`);
+  if (cycle.interpolation !== 'linear') fail(`${path}.seasonalCycle.interpolation`);
+  if (!Array.isArray(cycle.frames) || cycle.frames.length !== 12) fail(`${path}.seasonalCycle.frames`);
+
+  const months = new Set();
+  cycle.frames.forEach((frame, index) => {
+    const framePath = `${path}.seasonalCycle.frames.${index}`;
+    if (!isRecord(frame)) fail(framePath);
+    if (!Number.isSafeInteger(frame.month) || frame.month < 1 || frame.month > 12 || months.has(frame.month)) {
+      fail(`${path}.seasonalCycle.frames`);
+    }
+    months.add(frame.month);
+    if (!datasetIds.has(frame.datasetId)) fail(`${framePath}.datasetId`);
+    validateAsset(frame.asset, `${framePath}.asset`);
+  });
+  if (months.size !== 12) fail(`${path}.seasonalCycle.frames`);
+
+  const january = cycle.frames.find(frame => frame.month === 1);
+  if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
+}
+
 async function verifyLoadedAsset(loaded, reference, path) {
   if (!isRecord(loaded) || !('value' in loaded) || !(loaded.bytes instanceof Uint8Array)) {
     throw new Error(`Earth-state loader did not return verifiable bytes for ${path}`);
@@ -96,6 +127,8 @@ export function validateEarthStateManifest(manifest) {
     if (!isRecord(layer.textureSemantics)) fail(`${path}.textureSemantics`);
     requireString(layer.textureSemantics.mapping, `${path}.textureSemantics.mapping`);
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
+    if (name === 'surfaceAlbedo') validateSeasonalCycle(layer, path, datasetIds);
+    else if (layer.seasonalCycle !== undefined) fail(`${path}.seasonalCycle`);
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {
@@ -163,9 +196,29 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       loadEntries(manifest.resources, 'resource'),
     ]);
 
+    const seasonalLayers = {};
+    const seasonalSurface = manifest.layers.surfaceAlbedo;
+    if (seasonalSurface.seasonalCycle) {
+      const frames = [];
+      for (const frame of seasonalSurface.seasonalCycle.frames) {
+        if (sameAssetReference(seasonalSurface.asset, frame.asset)) {
+          frames.push({ month: frame.month, value: layers.surfaceAlbedo });
+          continue;
+        }
+        const descriptor = { ...seasonalSurface, datasetId: frame.datasetId, asset: frame.asset };
+        delete descriptor.seasonalCycle;
+        const url = new URL(frame.asset.href, baseUrl).href;
+        const request = { name: 'surfaceAlbedo', role: 'seasonal-layer-frame', month: frame.month, descriptor, url };
+        const loaded = await loadAsset(request, { signal });
+        const value = await verifyLoadedAsset(loaded, frame.asset, `seasonalLayers.surfaceAlbedo.${frame.month}`);
+        frames.push({ month: frame.month, value });
+      }
+      seasonalLayers.surfaceAlbedo = frames;
+    }
+
     const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
     const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
-    const activated = { manifest, layers, resources, layerDatasets };
+    const activated = { manifest, layers, resources, seasonalLayers, layerDatasets };
     if (signal.aborted) throw new Error('Earth-state activation was aborted');
     current = activated;
     return activated;

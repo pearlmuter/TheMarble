@@ -33,3 +33,28 @@ test('scene semantics reject a checksum-valid bundle before any renderer mutatio
   );
   assert.equal(rendererMutations, 0);
 });
+
+test('scene semantics allow a verified deferred surface only when the manifest supplies a seasonal cycle', () => {
+  const active = activatedScene();
+  active.manifest = { layers: { surfaceAlbedo: { seasonalCycle: { frames: Array(12).fill(null) } } } };
+  active.layers.surfaceAlbedo = { kind: 'deferred-surface' };
+
+  assert.equal(
+    validateEarthStateScene(
+      active,
+      asset => asset?.kind === 'texture',
+      { isSeasonalSurfaceSource: asset => asset?.kind === 'deferred-surface' },
+    ),
+    active,
+  );
+
+  delete active.manifest.layers.surfaceAlbedo.seasonalCycle;
+  assert.throws(
+    () => validateEarthStateScene(
+      active,
+      asset => asset?.kind === 'texture',
+      { isSeasonalSurfaceSource: asset => asset?.kind === 'deferred-surface' },
+    ),
+    /surfaceAlbedo/,
+  );
+});

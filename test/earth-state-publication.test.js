@@ -39,6 +39,15 @@ function sourceFixture() {
     semantics: `fixture ${name}`,
     asset: assetReference(name, mediaType),
   });
+  const surfaceAlbedo = layer('surface-01');
+  surfaceAlbedo.seasonalCycle = {
+    interpolation: 'linear',
+    frames: Array.from({ length: 12 }, (_, index) => ({
+      month: index + 1,
+      datasetId: 'fixture-earth',
+      asset: index === 0 ? surfaceAlbedo.asset : assetReference(`surface-${String(index + 1).padStart(2, '0')}`),
+    })),
+  };
   const manifest = {
     schemaVersion: 1,
     bundleId: 'source-fixture',
@@ -54,7 +63,7 @@ function sourceFixture() {
       { id: 'fixture-sky', version: 'fixture-1', attribution: 'Fixture sky' },
     ],
     layers: {
-      surfaceAlbedo: layer('surface'),
+      surfaceAlbedo,
       nightLights: layer('lights'),
       cloudOpacity: layer('clouds'),
       cloudDensity: layer('density'),
@@ -121,6 +130,12 @@ test('an explicit fixture source publishes the same complete immutable Earth sta
   assert.equal(first.files.has('latest.json'), true);
   assert.match(first.publication.manifestPath, /^bundles\/2026-08-25T12-00-00Z-[a-f0-9]{16}\/manifest\.json$/);
   assert.equal(first.publication.manifest.bundleId, first.publication.latest.bundleId);
+  assert.equal(first.publication.manifest.layers.surfaceAlbedo.seasonalCycle.frames.length, 12);
+  for (const frame of first.publication.manifest.layers.surfaceAlbedo.seasonalCycle.frames) {
+    if (frame.month === 1) assert.match(frame.asset.href, /^\.\/assets\/layer-surfaceAlbedo-[a-f0-9]{16}\.png$/);
+    else assert.match(frame.asset.href, /^\.\/assets\/seasonal-layer-frame-surfaceAlbedo-[0-9]{2}-[a-f0-9]{16}\.png$/);
+    assert.equal(first.files.has(new URL(frame.asset.href, `https://published.test/${first.publication.manifestPath}`).pathname.slice(1)), true);
+  }
   for (const descriptor of [
     ...Object.values(first.publication.manifest.layers),
     ...Object.values(first.publication.manifest.resources),

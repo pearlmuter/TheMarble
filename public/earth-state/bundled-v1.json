@@ -12,18 +12,18 @@
   },
   "times": {
     "observedFrom": "2004-01-01T00:00:00Z",
-    "observedTo": "2004-01-31T23:59:59Z",
+    "observedTo": "2004-12-31T23:59:59Z",
     "validAt": "2026-08-25T00:00:00Z",
     "producedAt": "2026-08-25T00:00:00Z",
     "retrievedAt": "2026-08-25T00:00:00Z"
   },
   "datasets": [
     {
-      "id": "blue-marble-next-generation-2004-01",
-      "version": "2004-01",
+      "id": "blue-marble-next-generation-2004-monthly",
+      "version": "2004-monthly-global-5400",
       "attribution": "NASA Earth Observatory, Blue Marble Next Generation",
       "observedFrom": "2004-01-01T00:00:00Z",
-      "observedTo": "2004-01-31T23:59:59Z"
+      "observedTo": "2004-12-31T23:59:59Z"
     },
     {
       "id": "bundled-night-lights",
@@ -60,18 +60,35 @@
   ],
   "layers": {
     "surfaceAlbedo": {
-      "datasetId": "blue-marble-next-generation-2004-01",
+      "datasetId": "blue-marble-next-generation-2004-monthly",
       "units": "display-referred reflectance",
       "dimensions": { "width": 5400, "height": 2700 },
       "colorSpace": "srgb",
       "channels": { "r": "red", "g": "green", "b": "blue" },
       "textureSemantics": { "mapping": "equirectangular", "sampling": "linear" },
       "asset": {
-        "href": "/earth-surface-5400.png",
-        "mediaType": "image/png",
-        "byteLength": 15413132,
+        "href": "/earth-state/surface-seasonal/bmng-2004-01-5400.jpg",
+        "mediaType": "image/jpeg",
+        "byteLength": 1884678,
         "immutable": true,
-        "checksum": { "algorithm": "sha256", "value": "edf878366c0f9767098b3a4cc37a502dbbfa78c726a78fac9ee556619fc1f058" }
+        "checksum": { "algorithm": "sha256", "value": "99f5faad74efe985fbf1714c8be7296ca9999759a1215b65f99b7f1df278dde5" }
+      },
+      "seasonalCycle": {
+        "interpolation": "linear",
+        "frames": [
+          { "month": 1, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-01-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1884678, "immutable": true, "checksum": { "algorithm": "sha256", "value": "99f5faad74efe985fbf1714c8be7296ca9999759a1215b65f99b7f1df278dde5" } } },
+          { "month": 2, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-02-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1865311, "immutable": true, "checksum": { "algorithm": "sha256", "value": "252444b224c7dc10289616fb5e3cd85c3738fca9ddbdc267775cd22a748bbfbe" } } },
+          { "month": 3, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-03-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1830489, "immutable": true, "checksum": { "algorithm": "sha256", "value": "0d9967be048b5e2ba62195dd610042c9e0926b4eb9d1e9ae53dbf20eaadd9228" } } },
+          { "month": 4, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-04-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1774173, "immutable": true, "checksum": { "algorithm": "sha256", "value": "8db8d5e545b31cde0e4e5dfa46cb116bf485243a0200c2d6e4b04b4e6937f669" } } },
+          { "month": 5, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-05-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1735263, "immutable": true, "checksum": { "algorithm": "sha256", "value": "d9a8dfc0a3e54775c3a4aeb547c729f710bb588d82d4602252d7cd7bf43a38ef" } } },
+          { "month": 6, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-06-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1692239, "immutable": true, "checksum": { "algorithm": "sha256", "value": "dc059529b8ed1cfcdd59747a7c3f259c93c1322bf88ca1ec8bab1dd71fcc57f5" } } },
+          { "month": 7, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-07-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1617810, "immutable": true, "checksum": { "algorithm": "sha256", "value": "f55226d46d27e05511f2118dc6aa24f5dbf9b6b2cddc87cc6e0e7dd067c00b11" } } },
+          { "month": 8, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-08-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1616254, "immutable": true, "checksum": { "algorithm": "sha256", "value": "2048023ccc62250c677c0f4b03d4362f997b130eb0154a6cad00aa1b27c390b9" } } },
+          { "month": 9, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-09-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1709729, "immutable": true, "checksum": { "algorithm": "sha256", "value": "ed72e87674861f72e2a6e5df52f0cc6bf3df1edd9b862664cf18ac423e2e9e0e" } } },
+          { "month": 10, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-10-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1766694, "immutable": true, "checksum": { "algorithm": "sha256", "value": "ccfd9b7a5e5ee601e1466556716bba50ea418f3a8e068ab0194ae0425815b1b0" } } },
+          { "month": 11, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-11-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1851209, "immutable": true, "checksum": { "algorithm": "sha256", "value": "d63de0bb4274a7d9df08d2f69eeffc849d0f7aca157c4401f9bd2e41af63b178" } } },
+          { "month": 12, "datasetId": "blue-marble-next-generation-2004-monthly", "asset": { "href": "/earth-state/surface-seasonal/bmng-2004-12-5400.jpg", "mediaType": "image/jpeg", "byteLength": 1878742, "immutable": true, "checksum": { "algorithm": "sha256", "value": "3d38a8ecaceb1cdb51ced7f831e9ac18d261950049616feff6892efcae0dcc26" } } }
+        ]
       }
     },
     "nightLights": {

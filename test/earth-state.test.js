@@ -102,6 +102,82 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   assert.equal(activator.current, activated);
 });
 
+test('a seasonal surface contract activates all 12 immutable monthly states coherently', async () => {
+  const manifest = fixtureManifest();
+  manifest.layers.surfaceAlbedo.seasonalCycle = {
+    interpolation: 'linear',
+    frames: Array.from({ length: 12 }, (_, index) => ({
+      month: index + 1,
+      datasetId: 'earth',
+      asset: index === 0
+        ? manifest.layers.surfaceAlbedo.asset
+        : { ...manifest.layers.surfaceAlbedo.asset, href: `./surface-${String(index + 1).padStart(2, '0')}.png` },
+    })),
+  };
+  const loadedUrls = [];
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => {
+      loadedUrls.push(url);
+      return loaded(`loaded:${url}`);
+    },
+  });
+
+  const activated = await activator.activate('https://example.test/states/fixture/manifest.json');
+
+  assert.equal(activated.seasonalLayers.surfaceAlbedo.length, 12);
+  assert.deepEqual(
+    activated.seasonalLayers.surfaceAlbedo.map(frame => frame.month),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  );
+  assert.equal(activated.seasonalLayers.surfaceAlbedo[0].value, activated.layers.surfaceAlbedo);
+  assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /surface-12\.png$/);
+  assert.equal(loadedUrls.length, 18);
+});
+
+test('a seasonal surface contract rejects a missing or duplicated calendar month', async () => {
+  for (const frames of [
+    Array.from({ length: 11 }, (_, index) => index + 1),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11],
+  ]) {
+    const manifest = fixtureManifest();
+    manifest.layers.surfaceAlbedo.seasonalCycle = {
+      interpolation: 'linear',
+      frames: frames.map(month => ({ month, datasetId: 'earth', asset: manifest.layers.surfaceAlbedo.asset })),
+    };
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => loaded(undefined),
+    });
+
+    await assert.rejects(
+      activator.activate('https://example.test/states/invalid/manifest.json'),
+      /layers\.surfaceAlbedo\.seasonalCycle\.frames/,
+    );
+  }
+});
+
+test('seasonal cycles are rejected on layers the renderer does not consume seasonally', async () => {
+  const manifest = fixtureManifest();
+  manifest.layers.cloudOpacity.seasonalCycle = {
+    interpolation: 'linear',
+    frames: Array.from({ length: 12 }, (_, index) => ({
+      month: index + 1,
+      datasetId: 'earth',
+      asset: manifest.layers.cloudOpacity.asset,
+    })),
+  };
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async () => loaded(undefined),
+  });
+
+  await assert.rejects(
+    activator.activate('https://example.test/states/invalid/manifest.json'),
+    /layers\.cloudOpacity\.seasonalCycle/,
+  );
+});
+
 test('an incomplete manifest is rejected without replacing the active Earth state', async () => {
   const complete = fixtureManifest();
   const incomplete = fixtureManifest();
@@ -193,7 +269,9 @@ test('the bundled manifest activates every asset required by the current scene',
   const activated = await activator.activate('https://themarble.local/earth-state/bundled-v1.json');
 
   assert.equal(activated.manifest.classification, 'static-fallback');
-  assert.match(activated.layers.surfaceAlbedo, /earth-surface-5400\.png$/);
+  assert.match(activated.layers.surfaceAlbedo, /bmng-2004-01-5400\.jpg$/);
+  assert.equal(activated.seasonalLayers.surfaceAlbedo.length, 12);
+  assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /bmng-2004-12-5400\.jpg$/);
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
   assert.match(activated.layers.cloudDensity, /cloud-density-modis-terra-2026-08-25\.png$/);

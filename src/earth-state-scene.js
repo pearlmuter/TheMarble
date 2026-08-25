@@ -5,9 +5,13 @@ export function isHipparcosPayload(value) {
   return value.stars.every(star => Array.isArray(star) && star.length === 4 && star.every(Number.isFinite));
 }
 
-export function validateEarthStateScene(activeEarthState, isTexture) {
+export function validateEarthStateScene(activeEarthState, isTexture, { isSeasonalSurfaceSource = () => false } = {}) {
   for (const name of EARTH_STATE_REQUIRED_LAYERS) {
-    if (!isTexture(activeEarthState?.layers?.[name])) {
+    const asset = activeEarthState?.layers?.[name];
+    const isDeferredSeasonalSurface = name === 'surfaceAlbedo'
+      && activeEarthState?.manifest?.layers?.surfaceAlbedo?.seasonalCycle
+      && isSeasonalSurfaceSource(asset);
+    if (!isTexture(asset) && !isDeferredSeasonalSurface) {
       throw new Error(`Earth-state scene asset ${name} is not a texture`);
     }
   }

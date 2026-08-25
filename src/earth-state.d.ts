@@ -45,6 +45,17 @@ export interface EarthStateLayer {
   asset: EarthStateAssetReference;
 }
 
+export interface EarthStateSurfaceLayer extends EarthStateLayer {
+  seasonalCycle?: {
+    interpolation: 'linear';
+    frames: Array<{
+      month: number;
+      datasetId: string;
+      asset: EarthStateAssetReference;
+    }>;
+  };
+}
+
 export interface EarthStateResource {
   datasetId: string;
   semantics: string;
@@ -73,7 +84,7 @@ export interface EarthStateManifest {
     retrievedAt: string;
   };
   datasets: EarthStateDataset[];
-  layers: Record<EarthStateLayerName, EarthStateLayer>;
+  layers: Record<Exclude<EarthStateLayerName, 'surfaceAlbedo'>, EarthStateLayer> & { surfaceAlbedo: EarthStateSurfaceLayer };
   resources: Record<EarthStateResourceName, EarthStateResource>;
 }
 
@@ -88,7 +99,12 @@ export interface EarthStateLatest {
 export function validateEarthStateLatest(latest: unknown): asserts latest is EarthStateLatest;
 
 export type EarthStateAssetRequest = {
-  name: EarthStateLayerName;
+  name: 'surfaceAlbedo';
+  role: 'layer';
+  descriptor: EarthStateSurfaceLayer;
+  url: string;
+} | {
+  name: Exclude<EarthStateLayerName, 'surfaceAlbedo'>;
   role: 'layer';
   descriptor: EarthStateLayer;
   url: string;
@@ -97,12 +113,19 @@ export type EarthStateAssetRequest = {
   role: 'resource';
   descriptor: EarthStateResource;
   url: string;
+} | {
+  name: 'surfaceAlbedo';
+  role: 'seasonal-layer-frame';
+  month: number;
+  descriptor: EarthStateLayer;
+  url: string;
 };
 
 export interface ActivatedEarthState<LoadedAsset> {
   manifest: EarthStateManifest;
   layers: Record<EarthStateLayerName, LoadedAsset>;
   resources: Record<EarthStateResourceName, LoadedAsset>;
+  seasonalLayers: { surfaceAlbedo?: Array<{ month: number; value: LoadedAsset }> };
   layerDatasets: Record<EarthStateLayerName, EarthStateDataset>;
 }
 

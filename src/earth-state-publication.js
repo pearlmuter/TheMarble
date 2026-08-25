@@ -42,9 +42,18 @@ async function verifyPublished(store, path, reference) {
 }
 
 function publicationEntries(manifest) {
+  const seasonalSurfaceEntries = manifest.layers.surfaceAlbedo.seasonalCycle?.frames
+    .filter(frame => frame.month !== 1)
+    .map(frame => ({
+      role: 'seasonal-layer-frame',
+      name: 'surfaceAlbedo',
+      month: frame.month,
+      descriptor: { ...manifest.layers.surfaceAlbedo, datasetId: frame.datasetId, asset: frame.asset },
+    })) ?? [];
   return [
     ...Object.entries(manifest.layers).map(([name, descriptor]) => ({ role: 'layer', name, descriptor })),
     ...Object.entries(manifest.resources).map(([name, descriptor]) => ({ role: 'resource', name, descriptor })),
+    ...seasonalSurfaceEntries,
   ];
 }
 
@@ -73,7 +82,7 @@ export function createEarthStatePublisher({ loadSource, store }) {
       const sourceSetBytes = encodeCanonicalJson({
         manifest: sourceManifest,
         targetTime: targetIso,
-        verifiedAssets: sourceEntries.map(({ role, name, checksum }) => ({ role, name, checksum })),
+        verifiedAssets: sourceEntries.map(({ role, name, month, checksum }) => ({ role, name, ...(month ? { month } : {}), checksum })),
       });
       const sourceSetId = (await earthStateSha256(sourceSetBytes)).slice(0, 16);
       const timeKey = targetIso.replaceAll(':', '-');
@@ -87,9 +96,12 @@ export function createEarthStatePublisher({ loadSource, store }) {
       for (const entry of sourceEntries) {
         const extension = earthStateExtensionForMediaType(entry.descriptor.asset.mediaType);
         if (!extension) throw new Error(`Unsupported Earth-state publication media type: ${entry.descriptor.asset.mediaType}`);
-        const filename = `${entry.role}-${entry.name}-${entry.checksum.slice(0, 16)}.${extension}`;
+        const monthSuffix = entry.month ? `-${String(entry.month).padStart(2, '0')}` : '';
+        const filename = `${entry.role}-${entry.name}${monthSuffix}-${entry.checksum.slice(0, 16)}.${extension}`;
         const path = `${bundleDirectory}/assets/${filename}`;
-        const publishedDescriptor = manifest[`${entry.role}s`][entry.name];
+        const publishedDescriptor = entry.role === 'seasonal-layer-frame'
+          ? manifest.layers[entry.name].seasonalCycle.frames.find(frame => frame.month === entry.month)
+          : manifest[`${entry.role}s`][entry.name];
         publishedDescriptor.asset = {
           href: `./assets/${filename}`,
           mediaType: entry.descriptor.asset.mediaType,
@@ -99,6 +111,9 @@ export function createEarthStatePublisher({ loadSource, store }) {
         };
         await store.writeImmutable(path, entry.bytes);
         await verifyPublished(store, path, publishedDescriptor.asset);
+        if (entry.role === 'layer' && entry.name === 'surfaceAlbedo' && publishedDescriptor.seasonalCycle) {
+          publishedDescriptor.seasonalCycle.frames.find(frame => frame.month === 1).asset = structuredClone(publishedDescriptor.asset);
+        }
       }
 
       validateEarthStateManifest(manifest);
