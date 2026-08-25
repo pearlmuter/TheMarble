@@ -175,7 +175,7 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.layers.surfaceAlbedo, /earth-surface-5400\.png$/);
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
-  assert.match(activated.layers.cloudDensity, /cloud-density-neutral-v1\.json$/);
+  assert.match(activated.layers.cloudDensity, /cloud-density-modis-terra-2026-08-25\.png$/);
   assert.match(activated.resources.moonAlbedo, /moon-1024\.jpg$/);
   assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-16k\.jpg$/);
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);
@@ -184,14 +184,18 @@ test('the bundled manifest activates every asset required by the current scene',
 test('bytes that disagree with the declared checksum cannot replace the active Earth state', async () => {
   const manifest = fixtureManifest();
   let corrupt = false;
+  let verifiedAssets = 0;
   const activator = createEarthStateActivator({
     loadManifest: async () => manifest,
     loadAsset: async ({ url }) => ({
       value: `loaded:${url}`,
       bytes: corrupt ? new TextEncoder().encode('corrupt asset') : fixtureBytes,
     }),
+    onAssetVerified: () => { verifiedAssets += 1; },
   });
   const active = await activator.activate('https://example.test/states/current/manifest.json');
+  const verifiedFromActiveState = verifiedAssets;
+  assert.equal(verifiedFromActiveState, 7);
 
   corrupt = true;
 
@@ -200,4 +204,5 @@ test('bytes that disagree with the declared checksum cannot replace the active E
     /checksum/,
   );
   assert.equal(activator.current, active);
+  assert.equal(verifiedAssets, verifiedFromActiveState);
 });

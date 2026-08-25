@@ -111,9 +111,12 @@ function requireEntries(manifest, groupName, names) {
       throw new Error(`Earth-state manifest is missing ${groupName}.${name}`);
     }
   }
+  for (const name of Object.keys(entries)) {
+    if (!names.includes(name)) throw new Error(`Earth-state manifest has unsupported ${groupName}.${name}`);
+  }
 }
 
-export function createEarthStateActivator({ loadManifest, loadAsset }) {
+export function createEarthStateActivator({ loadManifest, loadAsset, onAssetVerified }) {
   let current;
 
   return {
@@ -129,8 +132,10 @@ export function createEarthStateActivator({ loadManifest, loadAsset }) {
       const loadEntries = async (entries, role) => Object.fromEntries(await Promise.all(
         Object.entries(entries).map(async ([name, descriptor]) => {
           const url = new URL(descriptor.asset.href, baseUrl).href;
-          const loaded = await loadAsset({ name, role, descriptor, url });
+          const request = { name, role, descriptor, url };
+          const loaded = await loadAsset(request);
           const asset = await verifyLoadedAsset(loaded, descriptor.asset, `${role}.${name}`);
+          onAssetVerified?.(request, asset);
           return [name, asset];
         }),
       ));

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { createEarthStateActivator } from './earth-state.js';
-import type { ActivatedEarthState } from './earth-state.js';
+import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
+import type { EarthStateLayerName, EarthStateResourceName } from './earth-state.js';
 import './style.css';
 
 type HipparcosPayload = { stars: Array<[number, number, number, number]> };
@@ -19,6 +19,16 @@ function isCloudDensityPayload(value: unknown): value is CloudDensityPayload {
   return typeof width === 'number' && typeof height === 'number' && Number.isSafeInteger(width) && Number.isSafeInteger(height) && Array.isArray(rgba)
     && rgba.length === width * height * 4
     && rgba.every(channel => Number.isInteger(channel) && channel >= 0 && channel <= 255);
+}
+
+function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
+  if (!descriptor.dimensions) return;
+  const image = map.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+  const width = image.naturalWidth ?? image.width;
+  const height = image.naturalHeight ?? image.height;
+  if (width !== descriptor.dimensions.width || height !== descriptor.dimensions.height) {
+    throw new Error(`Earth-state asset dimensions mismatch for ${name}`);
+  }
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
@@ -49,6 +59,27 @@ scene.add(planet);
 const loader = new THREE.TextureLoader();
 loader.setCrossOrigin('anonymous');
 
+function solidTexture(red: number, green: number, blue: number, alpha = 255) {
+  const map = new THREE.DataTexture(new Uint8Array([red, green, blue, alpha]), 1, 1, THREE.RGBAFormat);
+  map.needsUpdate = true;
+  return map;
+}
+
+const previewLayers: Record<EarthStateLayerName, LoadedSceneAsset> = {
+  surfaceAlbedo: solidTexture(7, 18, 32),
+  nightLights: solidTexture(0, 0, 0),
+  cloudOpacity: solidTexture(255, 255, 255, 0),
+  cloudDensity: solidTexture(0, 0, 0, 0),
+};
+const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
+  moonAlbedo: solidTexture(38, 38, 38),
+  milkyWay: solidTexture(0, 0, 0, 0),
+  starCatalog: { stars: [] },
+};
+let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => void = () => undefined;
+let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
+let weatherFeed = 'loading bundled Earth state';
+
 const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   async loadManifest(manifestUrl) {
     const response = await fetch(manifestUrl);
@@ -58,6 +89,10 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   async loadAsset({ name, descriptor, url }) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
+    const responseMediaType = response.headers.get('content-type')?.split(';', 1)[0];
+    if (responseMediaType && responseMediaType !== descriptor.asset.mediaType) {
+      throw new Error(`Earth-state asset media type mismatch for ${name}`);
+    }
     const buffer = await response.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     if (descriptor.asset.mediaType.includes('json')) {
@@ -72,6 +107,7 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
         map.minFilter = THREE.NearestFilter;
         map.magFilter = THREE.NearestFilter;
         map.needsUpdate = true;
+        verifyTextureDimensions(map, descriptor, name);
         return { value: map, bytes };
       }
       throw new Error(`Unsupported Earth-state JSON asset: ${name}`);
@@ -79,12 +115,22 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
     const objectUrl = URL.createObjectURL(new Blob([buffer], { type: descriptor.asset.mediaType }));
     try {
       const map = await loader.loadAsync(objectUrl);
+      verifyTextureDimensions(map, descriptor, name);
       if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
+      if ('textureSemantics' in descriptor && descriptor.textureSemantics.sampling === 'nearest') {
+        map.minFilter = THREE.NearestFilter;
+        map.magFilter = THREE.NearestFilter;
+      }
       map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
       return { value: map, bytes };
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
+  },
+  onAssetVerified(request, asset) {
+    if (earthStateActivator.current) return;
+    if (request.role === 'layer') applyVerifiedLayer(request.name, asset);
+    else applyVerifiedResource(request.name, asset);
   },
 });
 
@@ -97,14 +143,21 @@ function animate() {
 }
 animate();
 
+startScene();
 void earthStateActivator.activate(
   new URL('/earth-state/bundled-v1.json', window.location.href).href,
-).then(startScene).catch(error => {
+).then(activeEarthState => {
+  for (const name of EARTH_STATE_REQUIRED_LAYERS) applyVerifiedLayer(name, activeEarthState.layers[name]);
+  for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
+  const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
+  weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
+  loading.classList.add('hidden');
+}).catch(error => {
   loading.setAttribute('aria-label', 'TheMarble could not load a complete Earth state');
   console.error(error);
 });
 
-function startScene(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+function startScene() {
 
 function requireTexture(asset: LoadedSceneAsset, name: string) {
   if (!(asset instanceof THREE.Texture)) throw new Error(`Earth-state asset ${name} is not a texture`);
@@ -116,16 +169,12 @@ function requireStarCatalog(asset: LoadedSceneAsset) {
   return asset;
 }
 
-const dayMap = requireTexture(activeEarthState.layers.surfaceAlbedo, 'surfaceAlbedo');
-const nightMap = requireTexture(activeEarthState.layers.nightLights, 'nightLights');
-const cloudMap = requireTexture(activeEarthState.layers.cloudOpacity, 'cloudOpacity');
-const liveWeatherMap = requireTexture(activeEarthState.layers.cloudDensity, 'cloudDensity');
-const moonMap = requireTexture(activeEarthState.resources.moonAlbedo, 'moonAlbedo');
-const milkyWayMap = requireTexture(activeEarthState.resources.milkyWay, 'milkyWay');
-const starCatalog = requireStarCatalog(activeEarthState.resources.starCatalog);
-const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
-const weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
-loading.classList.add('hidden');
+const dayMap = requireTexture(previewLayers.surfaceAlbedo, 'surfaceAlbedo');
+const nightMap = requireTexture(previewLayers.nightLights, 'nightLights');
+const cloudMap = requireTexture(previewLayers.cloudOpacity, 'cloudOpacity');
+const liveWeatherMap = requireTexture(previewLayers.cloudDensity, 'cloudDensity');
+const moonMap = requireTexture(previewResources.moonAlbedo, 'moonAlbedo');
+const milkyWayMap = requireTexture(previewResources.milkyWay, 'milkyWay');
 const celestialSky = new THREE.Group();
 scene.add(celestialSky);
 
@@ -158,7 +207,13 @@ function blackbodyColor(colorIndex: number) {
 }
 
 let starMaterial: THREE.ShaderMaterial | undefined;
+let starPoints: THREE.Points | undefined;
 function loadHipparcosStars({ stars }: HipparcosPayload) {
+  if (starPoints) {
+    celestialSky.remove(starPoints);
+    starPoints.geometry.dispose();
+    (starPoints.material as THREE.Material).dispose();
+  }
   const positions = new Float32Array(stars.length * 3); const colors = new Float32Array(stars.length * 3);
   const magnitudes = new Float32Array(stars.length); const brightness = new Float32Array(stars.length);
   stars.forEach(([rightAscension, declination, magnitude, colorIndex], index) => {
@@ -177,9 +232,9 @@ function loadHipparcosStars({ stars }: HipparcosPayload) {
     vertexShader: `attribute float magnitude; attribute float brightness; uniform float pixelRatio; varying vec3 vColor; varying float vBrightness; void main(){ vColor=color; vBrightness=brightness; vec4 viewPosition=modelViewMatrix*vec4(position,1.0); gl_PointSize=mix(.55,4.4,pow(brightness,2.15))*pixelRatio; gl_Position=projectionMatrix*viewPosition; }`,
     fragmentShader: `uniform float exposure; varying vec3 vColor; varying float vBrightness; void main(){ float radius=length(gl_PointCoord-.5)*2.0; if(radius>1.0)discard; float halo=pow(max(1.0-radius,0.0),2.5); float core=pow(max(1.0-radius,0.0),10.0); float alpha=(halo*.52+core*.92)*mix(.2,1.0,sqrt(vBrightness)); vec3 radiance=vColor*(.42+vBrightness*1.72+core)*exposure; gl_FragColor=vec4(radiance,alpha); }`
   });
-  celestialSky.add(new THREE.Points(geometry, starMaterial));
+  starPoints = new THREE.Points(geometry, starMaterial);
+  celestialSky.add(starPoints);
 }
-loadHipparcosStars(starCatalog);
 
 const earthMaterial = new THREE.ShaderMaterial({
   uniforms: {
@@ -500,5 +555,22 @@ function updateCelestialScene(now: Date) {
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
+applyVerifiedLayer = (name, asset) => {
+  const map = requireTexture(asset, name);
+  if (name === 'surfaceAlbedo') earthMaterial.uniforms.dayMap.value = map;
+  else if (name === 'nightLights') earthMaterial.uniforms.nightMap.value = map;
+  else if (name === 'cloudOpacity') {
+    earthMaterial.uniforms.cloudMap.value = map;
+    cloudMaterial.uniforms.cloudMap.value = map;
+  } else if (name === 'cloudDensity') {
+    earthMaterial.uniforms.liveWeatherMap.value = map;
+    cloudMaterial.uniforms.liveWeatherMap.value = map;
+  }
+};
+applyVerifiedResource = (name, asset) => {
+  if (name === 'moonAlbedo') moonMaterial.uniforms.moonMap.value = requireTexture(asset, name);
+  else if (name === 'milkyWay') milkyWayMaterial.uniforms.map.value = requireTexture(asset, name);
+  else if (name === 'starCatalog') loadHipparcosStars(requireStarCatalog(asset));
+};
 updateFrame = () => updateCelestialScene(new Date());
 }

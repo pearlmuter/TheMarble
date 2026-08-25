@@ -1,7 +1,9 @@
 export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-assisted';
 
-export const EARTH_STATE_REQUIRED_LAYERS: readonly string[];
-export const EARTH_STATE_REQUIRED_RESOURCES: readonly string[];
+export const EARTH_STATE_REQUIRED_LAYERS: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
+export const EARTH_STATE_REQUIRED_RESOURCES: readonly ['moonAlbedo', 'milkyWay', 'starCatalog'];
+export type EarthStateLayerName = typeof EARTH_STATE_REQUIRED_LAYERS[number];
+export type EarthStateResourceName = typeof EARTH_STATE_REQUIRED_RESOURCES[number];
 
 export interface EarthStateChecksum {
   algorithm: 'sha256';
@@ -62,22 +64,27 @@ export interface EarthStateManifest {
     retrievedAt: string;
   };
   datasets: EarthStateDataset[];
-  layers: Record<string, EarthStateLayer>;
-  resources: Record<string, EarthStateResource>;
+  layers: Record<EarthStateLayerName, EarthStateLayer>;
+  resources: Record<EarthStateResourceName, EarthStateResource>;
 }
 
-export interface EarthStateAssetRequest {
-  name: string;
-  role: 'layer' | 'resource';
-  descriptor: EarthStateLayer | EarthStateResource;
+export type EarthStateAssetRequest = {
+  name: EarthStateLayerName;
+  role: 'layer';
+  descriptor: EarthStateLayer;
   url: string;
-}
+} | {
+  name: EarthStateResourceName;
+  role: 'resource';
+  descriptor: EarthStateResource;
+  url: string;
+};
 
 export interface ActivatedEarthState<LoadedAsset> {
   manifest: EarthStateManifest;
-  layers: Record<string, LoadedAsset>;
-  resources: Record<string, LoadedAsset>;
-  layerDatasets: Record<string, EarthStateDataset>;
+  layers: Record<EarthStateLayerName, LoadedAsset>;
+  resources: Record<EarthStateResourceName, LoadedAsset>;
+  layerDatasets: Record<EarthStateLayerName, EarthStateDataset>;
 }
 
 export interface EarthStateActivator<LoadedAsset> {
@@ -88,4 +95,5 @@ export interface EarthStateActivator<LoadedAsset> {
 export function createEarthStateActivator<LoadedAsset>(adapters: {
   loadManifest(manifestUrl: string): Promise<unknown>;
   loadAsset(request: EarthStateAssetRequest): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
+  onAssetVerified?(request: EarthStateAssetRequest, value: LoadedAsset): void;
 }): EarthStateActivator<LoadedAsset>;
