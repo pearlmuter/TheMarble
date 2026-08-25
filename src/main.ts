@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
-import type { EarthStateLayerName, EarthStateResourceName } from './earth-state.js';
+import type { ActivatedEarthState, EarthStateLayerName, EarthStateResourceName } from './earth-state.js';
 import './style.css';
 
 type HipparcosPayload = { stars: Array<[number, number, number, number]> };
@@ -80,14 +80,25 @@ let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => 
 let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
 let weatherFeed = 'loading bundled Earth state';
 
+async function loadJsonDocument(url: string, { signal }: { signal: AbortSignal }) {
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`Earth-state document unavailable (${response.status}): ${url}`);
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? 'application/octet-stream';
+  if (mediaType !== 'application/json') throw new Error(`Earth-state document media type mismatch: ${url}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new Error(`Earth-state document is malformed JSON: ${url}`);
+  }
+  return { value, bytes, mediaType };
+}
+
 const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
-  async loadManifest(manifestUrl) {
-    const response = await fetch(manifestUrl);
-    if (!response.ok) throw new Error(`Earth-state manifest unavailable (${response.status})`);
-    return response.json();
-  },
-  async loadAsset({ name, descriptor, url }) {
-    const response = await fetch(url);
+  loadDocument: loadJsonDocument,
+  async loadAsset({ name, descriptor, url }, { signal }) {
+    const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
     const responseMediaType = response.headers.get('content-type')?.split(';', 1)[0];
     if (responseMediaType && responseMediaType !== descriptor.asset.mediaType) {
@@ -129,6 +140,13 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   },
 });
 
+function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+  for (const name of EARTH_STATE_REQUIRED_LAYERS) applyVerifiedLayer(name, activeEarthState.layers[name]);
+  for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
+  const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
+  weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
+}
+
 let updateFrame: () => void = () => undefined;
 function animate() {
   requestAnimationFrame(animate);
@@ -139,14 +157,29 @@ function animate() {
 animate();
 
 startScene();
+const latestEarthStateUrl = new URL('/earth-state/latest.json', window.location.href).href;
+let latestRefreshInFlight = false;
+async function refreshLatestEarthState() {
+  if (latestRefreshInFlight) return;
+  latestRefreshInFlight = true;
+  try {
+    const previous = earthStateActivator.current;
+    const activeEarthState = await earthStateActivator.activateLatest(latestEarthStateUrl);
+    if (activeEarthState !== previous) applyActivatedEarthState(activeEarthState);
+  } catch (error) {
+    console.info('TheMarble retained its current coherent Earth state.', error);
+  } finally {
+    latestRefreshInFlight = false;
+  }
+}
+
 void earthStateActivator.activate(
   new URL('/earth-state/bundled-v1.json', window.location.href).href,
 ).then(activeEarthState => {
-  for (const name of EARTH_STATE_REQUIRED_LAYERS) applyVerifiedLayer(name, activeEarthState.layers[name]);
-  for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
-  const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
-  weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
+  applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
+  void refreshLatestEarthState();
+  window.setInterval(refreshLatestEarthState, 10 * 60 * 1000);
 }).catch(error => {
   loading.setAttribute('aria-label', 'TheMarble could not load a complete Earth state');
   console.error(error);

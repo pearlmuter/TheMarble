@@ -68,6 +68,16 @@ export interface EarthStateManifest {
   resources: Record<EarthStateResourceName, EarthStateResource>;
 }
 
+export function validateEarthStateManifest(manifest: unknown): asserts manifest is EarthStateManifest;
+
+export interface EarthStateLatest {
+  schemaVersion: 1;
+  bundleId: string;
+  manifest: EarthStateAssetReference;
+}
+
+export function validateEarthStateLatest(latest: unknown): asserts latest is EarthStateLatest;
+
 export type EarthStateAssetRequest = {
   name: EarthStateLayerName;
   role: 'layer';
@@ -90,9 +100,11 @@ export interface ActivatedEarthState<LoadedAsset> {
 export interface EarthStateActivator<LoadedAsset> {
   readonly current: ActivatedEarthState<LoadedAsset> | undefined;
   activate(manifestUrl: string): Promise<ActivatedEarthState<LoadedAsset>>;
+  activateLatest(latestUrl: string): Promise<ActivatedEarthState<LoadedAsset>>;
 }
 
 export function createEarthStateActivator<LoadedAsset>(adapters: {
-  loadManifest(manifestUrl: string): Promise<unknown>;
-  loadAsset(request: EarthStateAssetRequest): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
+  loadDocument(url: string, options: { signal: AbortSignal }): Promise<{ value: unknown; bytes: Uint8Array; mediaType: string }>;
+  loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
+  timeoutMs?: number;
 }): EarthStateActivator<LoadedAsset>;

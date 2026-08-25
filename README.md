@@ -17,6 +17,20 @@ npm run tauri dev
 
 To make a production web build, use `npm run build`; the `dist` folder is the embeddable app.
 
+## Publish an Earth state
+
+The deterministic publisher copies a complete verified source set into immutable, time-keyed paths and replaces `latest.json` only after every published byte passes read-back validation:
+
+```sh
+npm run publish:earth-state -- \
+  --source public/earth-state/bundled-v1.json \
+  --source-root public \
+  --target-time 2026-08-25T12:00:00Z \
+  --output artifacts/earth-state
+```
+
+Publishing the same source set for the same target time produces identical asset, manifest, and latest-pointer bytes. A website can serve the output directory at `/earth-state/`; TheMarble checks `/earth-state/latest.json` every ten minutes while retaining its current verified globe through missing, malformed, corrupt, or timed-out replacements.
+
 ## What is live
 
 - The sunlight position is calculated locally from the current UTC time and date, producing the right seasonal tilt and day/night terminator.

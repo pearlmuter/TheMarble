@@ -47,7 +47,7 @@ async function verifyLoadedAsset(loaded, reference, path) {
   return loaded.value;
 }
 
-function validateManifest(manifest) {
+export function validateEarthStateManifest(manifest) {
   if (!isRecord(manifest)) fail('manifest');
   if (manifest.schemaVersion !== 1) fail('schemaVersion');
   requireString(manifest.bundleId, 'bundleId');
@@ -104,6 +104,14 @@ function validateManifest(manifest) {
   }
 }
 
+export function validateEarthStateLatest(latest) {
+  if (!isRecord(latest)) fail('latest');
+  if (latest.schemaVersion !== 1) fail('latest.schemaVersion');
+  requireString(latest.bundleId, 'latest.bundleId');
+  validateAsset(latest.manifest, 'latest.manifest');
+  if (latest.manifest.mediaType !== 'application/json') fail('latest.manifest.mediaType');
+}
+
 function requireEntries(manifest, groupName, names) {
   const entries = manifest?.[groupName];
   for (const name of names) {
@@ -116,8 +124,51 @@ function requireEntries(manifest, groupName, names) {
   }
 }
 
-export function createEarthStateActivator({ loadManifest, loadAsset }) {
+export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs = 120_000 }) {
   let current;
+
+  const withinDeadline = async operation => {
+    const controller = new AbortController();
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Earth-state activation timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([operation(controller.signal), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const activateManifest = async (manifest, manifestUrl, signal) => {
+    validateEarthStateManifest(manifest);
+    const baseUrl = new URL(manifestUrl);
+
+    const loadEntries = async (entries, role) => Object.fromEntries(await Promise.all(
+      Object.entries(entries).map(async ([name, descriptor]) => {
+        const url = new URL(descriptor.asset.href, baseUrl).href;
+        const request = { name, role, descriptor, url };
+        const loaded = await loadAsset(request, { signal });
+        const asset = await verifyLoadedAsset(loaded, descriptor.asset, `${role}.${name}`);
+        return [name, asset];
+      }),
+    ));
+
+    const [layers, resources] = await Promise.all([
+      loadEntries(manifest.layers, 'layer'),
+      loadEntries(manifest.resources, 'resource'),
+    ]);
+
+    const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
+    const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
+    const activated = { manifest, layers, resources, layerDatasets };
+    if (signal.aborted) throw new Error('Earth-state activation was aborted');
+    current = activated;
+    return activated;
+  };
 
   return {
     get current() {
@@ -125,30 +176,35 @@ export function createEarthStateActivator({ loadManifest, loadAsset }) {
     },
 
     async activate(manifestUrl) {
-      const manifest = await loadManifest(manifestUrl);
-      validateManifest(manifest);
-      const baseUrl = new URL(manifestUrl);
+      return withinDeadline(async signal => {
+        const document = await loadDocument(manifestUrl, { signal });
+        if (!isRecord(document) || document.mediaType !== 'application/json') {
+          throw new Error('Earth-state manifest document media type mismatch');
+        }
+        return activateManifest(document.value, manifestUrl, signal);
+      });
+    },
 
-      const loadEntries = async (entries, role) => Object.fromEntries(await Promise.all(
-        Object.entries(entries).map(async ([name, descriptor]) => {
-          const url = new URL(descriptor.asset.href, baseUrl).href;
-          const request = { name, role, descriptor, url };
-          const loaded = await loadAsset(request);
-          const asset = await verifyLoadedAsset(loaded, descriptor.asset, `${role}.${name}`);
-          return [name, asset];
-        }),
-      ));
+    async activateLatest(latestUrl) {
+      return withinDeadline(async signal => {
+        const latestDocument = await loadDocument(latestUrl, { signal });
+        if (!isRecord(latestDocument) || latestDocument.mediaType !== 'application/json' || !('value' in latestDocument)) {
+          throw new Error('Earth-state latest document is invalid');
+        }
+        validateEarthStateLatest(latestDocument.value);
+        const latest = latestDocument.value;
+        if (current?.manifest.bundleId === latest.bundleId) return current;
 
-      const [layers, resources] = await Promise.all([
-        loadEntries(manifest.layers, 'layer'),
-        loadEntries(manifest.resources, 'resource'),
-      ]);
-
-      const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
-      const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
-      const activated = { manifest, layers, resources, layerDatasets };
-      current = activated;
-      return activated;
+        const manifestUrl = new URL(latest.manifest.href, latestUrl).href;
+        const manifestDocument = await loadDocument(manifestUrl, { signal });
+        if (!isRecord(manifestDocument) || manifestDocument.mediaType !== latest.manifest.mediaType) {
+          throw new Error('Earth-state published manifest media type mismatch');
+        }
+        const manifest = await verifyLoadedAsset(manifestDocument, latest.manifest, 'latest.manifest');
+        validateEarthStateManifest(manifest);
+        if (manifest.bundleId !== latest.bundleId) throw new Error('Earth-state latest bundleId mismatch');
+        return activateManifest(manifest, manifestUrl, signal);
+      });
     },
   };
 }
