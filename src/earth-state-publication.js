@@ -50,14 +50,33 @@ function publicationEntries(manifest) {
       month: frame.month,
       descriptor: { ...manifest.layers.surfaceAlbedo, datasetId: frame.datasetId, asset: frame.asset },
     })) ?? [];
+  const cloudFrameEntries = manifest.cloudSequence?.frames.flatMap((frame, frameIndex) => (
+    Object.entries(frame.layers)
+      .filter(([name, descriptor]) => {
+        const primary = manifest.layers[name].asset;
+        return descriptor.asset.href !== primary.href
+          || descriptor.asset.byteLength !== primary.byteLength
+          || descriptor.asset.checksum.value.toLowerCase() !== primary.checksum.value.toLowerCase();
+      })
+      .map(([name, descriptor]) => ({
+        role: 'cloud-observation-frame',
+        name,
+        frameIndex,
+        descriptor: { ...manifest.layers[name], datasetId: descriptor.datasetId, asset: descriptor.asset },
+      }))
+  )) ?? [];
   return [
     ...Object.entries(manifest.layers).map(([name, descriptor]) => ({ role: 'layer', name, descriptor })),
     ...Object.entries(manifest.resources).map(([name, descriptor]) => ({ role: 'resource', name, descriptor })),
     ...seasonalSurfaceEntries,
+    ...cloudFrameEntries,
   ];
 }
 
-export function createEarthStatePublisher({ loadSource, store }) {
+export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bundle' }) {
+  if (!['bundle', 'content-addressed'].includes(assetLayout)) {
+    throw new Error(`Unsupported Earth-state asset layout: ${assetLayout}`);
+  }
   return {
     async publish({ targetTime, sourceManifestUrl }) {
       const targetIso = normalizeTime(targetTime);
@@ -82,28 +101,43 @@ export function createEarthStatePublisher({ loadSource, store }) {
       const sourceSetBytes = encodeCanonicalJson({
         manifest: sourceManifest,
         targetTime: targetIso,
-        verifiedAssets: sourceEntries.map(({ role, name, month, checksum }) => ({ role, name, ...(month ? { month } : {}), checksum })),
+        verifiedAssets: sourceEntries.map(({ role, name, month, frameIndex, checksum }) => ({
+          role,
+          name,
+          ...(month ? { month } : {}),
+          ...(frameIndex !== undefined ? { frameIndex } : {}),
+          checksum,
+        })),
       });
       const sourceSetId = (await earthStateSha256(sourceSetBytes)).slice(0, 16);
       const timeKey = targetIso.replaceAll(':', '-');
       const bundleDirectory = `bundles/${timeKey}-${sourceSetId}`;
       const manifest = structuredClone(sourceManifest);
       manifest.bundleId = `themarble-${timeKey}-${sourceSetId}`;
-      manifest.times.validAt = targetIso;
-      manifest.times.producedAt = targetIso;
-      manifest.times.retrievedAt = targetIso;
+      if (!manifest.cloudSequence) {
+        manifest.times.validAt = targetIso;
+        manifest.times.producedAt = targetIso;
+        manifest.times.retrievedAt = targetIso;
+      }
 
       for (const entry of sourceEntries) {
         const extension = earthStateExtensionForMediaType(entry.descriptor.asset.mediaType);
         if (!extension) throw new Error(`Unsupported Earth-state publication media type: ${entry.descriptor.asset.mediaType}`);
         const monthSuffix = entry.month ? `-${String(entry.month).padStart(2, '0')}` : '';
-        const filename = `${entry.role}-${entry.name}${monthSuffix}-${entry.checksum.slice(0, 16)}.${extension}`;
-        const path = `${bundleDirectory}/assets/${filename}`;
+        const frameSuffix = entry.frameIndex !== undefined ? `-${String(entry.frameIndex).padStart(2, '0')}` : '';
+        const filename = assetLayout === 'content-addressed'
+          ? `${entry.checksum}.${extension}`
+          : `${entry.role}-${entry.name}${monthSuffix}${frameSuffix}-${entry.checksum.slice(0, 16)}.${extension}`;
+        const path = assetLayout === 'content-addressed'
+          ? `assets/${filename}`
+          : `${bundleDirectory}/assets/${filename}`;
         const publishedDescriptor = entry.role === 'seasonal-layer-frame'
           ? manifest.layers[entry.name].seasonalCycle.frames.find(frame => frame.month === entry.month)
+          : entry.role === 'cloud-observation-frame'
+            ? manifest.cloudSequence.frames[entry.frameIndex].layers[entry.name]
           : manifest[`${entry.role}s`][entry.name];
         publishedDescriptor.asset = {
-          href: `./assets/${filename}`,
+          href: assetLayout === 'content-addressed' ? `../../assets/${filename}` : `./assets/${filename}`,
           mediaType: entry.descriptor.asset.mediaType,
           byteLength: entry.bytes.byteLength,
           immutable: true,
@@ -113,6 +147,9 @@ export function createEarthStatePublisher({ loadSource, store }) {
         await verifyPublished(store, path, publishedDescriptor.asset);
         if (entry.role === 'layer' && entry.name === 'surfaceAlbedo' && publishedDescriptor.seasonalCycle) {
           publishedDescriptor.seasonalCycle.frames.find(frame => frame.month === 1).asset = structuredClone(publishedDescriptor.asset);
+        }
+        if (entry.role === 'layer' && ['cloudOpacity', 'cloudDensity'].includes(entry.name) && manifest.cloudSequence) {
+          manifest.cloudSequence.frames.at(-1).layers[entry.name].asset = structuredClone(publishedDescriptor.asset);
         }
       }
 

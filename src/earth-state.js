@@ -65,6 +65,84 @@ function validateSeasonalCycle(layer, path, datasetIds) {
   if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
 }
 
+function validateCloudSequence(manifest, datasetIds) {
+  const sequence = manifest.cloudSequence;
+  if (sequence === undefined) return;
+  if (!isRecord(sequence)) fail('cloudSequence');
+  if (sequence.interpolation !== 'crossfade') fail('cloudSequence.interpolation');
+  if (!Number.isSafeInteger(sequence.transitionSeconds) || sequence.transitionSeconds <= 0) {
+    fail('cloudSequence.transitionSeconds');
+  }
+  if (!Array.isArray(sequence.frames) || sequence.frames.length !== 2) fail('cloudSequence.frames');
+
+  for (const [index, frame] of sequence.frames.entries()) {
+    const path = `cloudSequence.frames.${index}`;
+    if (!isRecord(frame)) fail(path);
+    for (const field of TIMESTAMP_FIELDS) {
+      const value = frame[field];
+      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) fail(`${path}.${field}`);
+    }
+    if (!isRecord(frame.coverage)
+      || !Number.isFinite(frame.coverage.observedFraction)
+      || frame.coverage.observedFraction < 0
+      || frame.coverage.observedFraction > 1
+      || !Array.isArray(frame.coverage.latitudeRange)
+      || frame.coverage.latitudeRange.length !== 2
+      || !frame.coverage.latitudeRange.every(Number.isFinite)
+      || frame.coverage.latitudeRange[0] < -90
+      || frame.coverage.latitudeRange[1] > 90
+      || frame.coverage.latitudeRange[0] >= frame.coverage.latitudeRange[1]) {
+      fail(`${path}.coverage`);
+    }
+    for (const field of ['visibleOptimalFraction', 'longwaveOptimalFraction']) {
+      const fraction = frame.coverage[field];
+      if (fraction !== undefined && (!Number.isFinite(fraction) || fraction < 0 || fraction > 1)) {
+        fail(`${path}.coverage.${field}`);
+      }
+    }
+    if (!isRecord(frame.layers)) fail(`${path}.layers`);
+    for (const name of ['cloudOpacity', 'cloudDensity']) {
+      const descriptor = frame.layers[name];
+      if (!isRecord(descriptor) || !datasetIds.has(descriptor.datasetId)) fail(`${path}.layers.${name}.datasetId`);
+      validateAsset(descriptor.asset, `${path}.layers.${name}.asset`);
+    }
+    const observedFrom = Date.parse(frame.observedFrom);
+    const observedTo = Date.parse(frame.observedTo);
+    const validAt = Date.parse(frame.validAt);
+    const producedAt = Date.parse(frame.producedAt);
+    const retrievedAt = Date.parse(frame.retrievedAt);
+    if (!(observedFrom <= validAt && validAt <= observedTo && observedTo <= producedAt && producedAt <= retrievedAt)) {
+      fail(`${path}.observedFrom`);
+    }
+    const validDate = new Date(validAt);
+    if (validDate.getUTCMinutes() !== 0 || validDate.getUTCSeconds() !== 0 || validDate.getUTCMilliseconds() !== 0) {
+      fail(`${path}.validAt`);
+    }
+  }
+
+  if (Date.parse(sequence.frames[1].validAt) - Date.parse(sequence.frames[0].validAt) !== 60 * 60 * 1000) {
+    fail('cloudSequence.frames.1.validAt');
+  }
+
+  const latest = sequence.frames[1];
+  for (const name of ['cloudOpacity', 'cloudDensity']) {
+    if (manifest.layers[name].datasetId !== latest.layers[name].datasetId
+      || !sameAssetReference(manifest.layers[name].asset, latest.layers[name].asset)) {
+      fail(`cloudSequence.frames.1.layers.${name}.asset`);
+    }
+  }
+  const expectedManifestTimes = {
+    observedFrom: sequence.frames[0].observedFrom,
+    observedTo: latest.observedTo,
+    validAt: latest.validAt,
+    producedAt: latest.producedAt,
+    retrievedAt: latest.retrievedAt,
+  };
+  for (const [field, expected] of Object.entries(expectedManifestTimes)) {
+    if (manifest.times[field] !== expected) fail(`times.${field}`);
+  }
+}
+
 async function verifyLoadedAsset(loaded, reference, path) {
   if (!isRecord(loaded) || !('value' in loaded) || !(loaded.bytes instanceof Uint8Array)) {
     throw new Error(`Earth-state loader did not return verifiable bytes for ${path}`);
@@ -136,6 +214,8 @@ export function validateEarthStateManifest(manifest) {
     validateDatasetBackedDescriptor(resource, path, datasetIds);
     requireString(resource.semantics, `${path}.semantics`);
   }
+
+  validateCloudSequence(manifest, datasetIds);
 }
 
 export function validateEarthStateLatest(latest) {
@@ -216,9 +296,35 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       seasonalLayers.surfaceAlbedo = frames;
     }
 
+    let cloudSequence;
+    if (manifest.cloudSequence) {
+      const frames = [];
+      for (const [frameIndex, frame] of manifest.cloudSequence.frames.entries()) {
+        const frameLayers = {};
+        for (const name of ['cloudOpacity', 'cloudDensity']) {
+          const frameDescriptor = frame.layers[name];
+          if (sameAssetReference(manifest.layers[name].asset, frameDescriptor.asset)) {
+            frameLayers[name] = layers[name];
+            continue;
+          }
+          const descriptor = { ...manifest.layers[name], datasetId: frameDescriptor.datasetId, asset: frameDescriptor.asset };
+          const url = new URL(frameDescriptor.asset.href, baseUrl).href;
+          const request = { name, role: 'cloud-observation-frame', frameIndex, descriptor, url };
+          const loaded = await loadAsset(request, { signal });
+          frameLayers[name] = await verifyLoadedAsset(
+            loaded,
+            frameDescriptor.asset,
+            `cloudSequence.frames.${frameIndex}.layers.${name}`,
+          );
+        }
+        frames.push({ ...frame, layers: frameLayers });
+      }
+      cloudSequence = { ...manifest.cloudSequence, frames };
+    }
+
     const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
     const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
-    const activated = { manifest, layers, resources, seasonalLayers, layerDatasets };
+    const activated = { manifest, layers, resources, seasonalLayers, cloudSequence, layerDatasets };
     if (signal.aborted) throw new Error('Earth-state activation was aborted');
     current = activated;
     return activated;

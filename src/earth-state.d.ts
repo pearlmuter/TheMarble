@@ -4,6 +4,7 @@ export const EARTH_STATE_REQUIRED_LAYERS: readonly ['surfaceAlbedo', 'nightLight
 export const EARTH_STATE_REQUIRED_RESOURCES: readonly ['moonAlbedo', 'milkyWay', 'starCatalog'];
 export type EarthStateLayerName = typeof EARTH_STATE_REQUIRED_LAYERS[number];
 export type EarthStateResourceName = typeof EARTH_STATE_REQUIRED_RESOURCES[number];
+export type EarthStateCloudLayerName = 'cloudOpacity' | 'cloudDensity';
 
 export interface EarthStateChecksum {
   algorithm: 'sha256';
@@ -64,6 +65,30 @@ export interface EarthStateResource {
   colorSpace?: string;
 }
 
+export interface EarthStateCloudFrame {
+  validAt: string;
+  observedFrom: string;
+  observedTo: string;
+  producedAt: string;
+  retrievedAt: string;
+  coverage: {
+    observedFraction: number;
+    latitudeRange: [number, number];
+    visibleOptimalFraction?: number;
+    longwaveOptimalFraction?: number;
+  };
+  layers: Record<EarthStateCloudLayerName, {
+    datasetId: string;
+    asset: EarthStateAssetReference;
+  }>;
+}
+
+export interface EarthStateCloudSequence {
+  interpolation: 'crossfade';
+  transitionSeconds: number;
+  frames: [EarthStateCloudFrame, EarthStateCloudFrame];
+}
+
 export interface EarthStateManifest {
   schemaVersion: 1;
   bundleId: string;
@@ -86,6 +111,7 @@ export interface EarthStateManifest {
   datasets: EarthStateDataset[];
   layers: Record<Exclude<EarthStateLayerName, 'surfaceAlbedo'>, EarthStateLayer> & { surfaceAlbedo: EarthStateSurfaceLayer };
   resources: Record<EarthStateResourceName, EarthStateResource>;
+  cloudSequence?: EarthStateCloudSequence;
 }
 
 export function validateEarthStateManifest(manifest: unknown): asserts manifest is EarthStateManifest;
@@ -119,6 +145,12 @@ export type EarthStateAssetRequest = {
   month: number;
   descriptor: EarthStateLayer;
   url: string;
+} | {
+  name: EarthStateCloudLayerName;
+  role: 'cloud-observation-frame';
+  frameIndex: number;
+  descriptor: EarthStateLayer;
+  url: string;
 };
 
 export interface ActivatedEarthState<LoadedAsset> {
@@ -126,6 +158,9 @@ export interface ActivatedEarthState<LoadedAsset> {
   layers: Record<EarthStateLayerName, LoadedAsset>;
   resources: Record<EarthStateResourceName, LoadedAsset>;
   seasonalLayers: { surfaceAlbedo?: Array<{ month: number; value: LoadedAsset }> };
+  cloudSequence?: Omit<EarthStateCloudSequence, 'frames'> & {
+    frames: [Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<EarthStateCloudLayerName, LoadedAsset> }, Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<EarthStateCloudLayerName, LoadedAsset> }];
+  };
   layerDatasets: Record<EarthStateLayerName, EarthStateDataset>;
 }
 

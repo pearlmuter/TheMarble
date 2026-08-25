@@ -15,3 +15,13 @@ test('the physical ocean uses the surface terminator astronomical Sun vector', (
   assert.match(mainSource, /vec3 halfVector=normalize\(sunView\+viewDirection\)/);
   assert.doesNotMatch(mainSource, /oceanSun(Direction)?/);
 });
+
+test('cloud color, opacity, quality, and surface shadow crossfade as two complete hourly states', () => {
+  assert.match(mainSource, /cloudMapFrom: \{ value:/);
+  assert.match(mainSource, /cloudMapTo: \{ value:/);
+  assert.match(mainSource, /cloudDensityFrom: \{ value:/);
+  assert.match(mainSource, /cloudDensityTo: \{ value:/);
+  assert.match(mainSource, /cloudMix: \{ value: 0 \}/);
+  assert.match(mainSource, /mix\(texture2D\(cloudMapFrom,vUv\),texture2D\(cloudMapTo,vUv\),cloudMix\)/);
+  assert.match(mainSource, /mix\(texture2D\(cloudDensityFrom,vUv\),texture2D\(cloudDensityTo,vUv\),cloudMix\)/);
+});

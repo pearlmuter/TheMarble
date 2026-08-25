@@ -15,6 +15,7 @@ export interface EarthStatePublication {
 export function createEarthStatePublisher(adapters: {
   loadSource(url: string): Promise<EarthStateLoadedBytes>;
   store: EarthStatePublicationStore;
+  assetLayout?: 'bundle' | 'content-addressed';
 }): {
   publish(request: { targetTime: string; sourceManifestUrl: string }): Promise<EarthStatePublication>;
 };

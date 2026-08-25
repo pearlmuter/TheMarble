@@ -81,6 +81,40 @@ function fixtureManifest() {
   };
 }
 
+function addHourlyCloudSequence(manifest) {
+  const frame = (hour, suffix, producedMinute, observedFraction) => ({
+    validAt: `2026-08-25T${hour}:00:00Z`,
+    observedFrom: `2026-08-25T${hour}:00:00Z`,
+    observedTo: `2026-08-25T${hour}:09:59Z`,
+    producedAt: `2026-08-25T${hour}:${producedMinute}:00Z`,
+    retrievedAt: `2026-08-25T${hour}:48:00Z`,
+    coverage: { observedFraction, latitudeRange: [-72.7, 72.7] },
+    layers: {
+      cloudOpacity: {
+        datasetId: 'earth',
+        asset: { ...manifest.layers.cloudOpacity.asset, href: `./clouds-${suffix}.png` },
+      },
+      cloudDensity: {
+        datasetId: 'earth',
+        asset: { ...manifest.layers.cloudDensity.asset, href: `./cloud-density-${suffix}.png` },
+      },
+    },
+  });
+  const frames = [frame('11', '11', '42', 0.79), frame('12', '12', '43', 0.8)];
+  manifest.cloudSequence = { interpolation: 'crossfade', transitionSeconds: 300, frames };
+  manifest.layers.cloudOpacity.asset = structuredClone(frames[1].layers.cloudOpacity.asset);
+  manifest.layers.cloudDensity.asset = structuredClone(frames[1].layers.cloudDensity.asset);
+  manifest.times = {
+    observedFrom: frames[0].observedFrom,
+    observedTo: frames[1].observedTo,
+    validAt: frames[1].validAt,
+    producedAt: frames[1].producedAt,
+    retrievedAt: frames[1].retrievedAt,
+  };
+  manifest.classification = 'observed';
+  return frames;
+}
+
 test('a complete Earth-state manifest activates one coherent scene asset set', async () => {
   const manifest = fixtureManifest();
   const loadedUrls = [];
@@ -100,6 +134,73 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   assert.equal(activated.layerDatasets.surfaceAlbedo.version, 'fixture-1');
   assert.equal(loadedUrls.length, 7);
   assert.equal(activator.current, activated);
+});
+
+test('an hourly cloud sequence activates two complete observation states with truthful windows', async () => {
+  const manifest = fixtureManifest();
+  addHourlyCloudSequence(manifest);
+  const loadedUrls = [];
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => {
+      loadedUrls.push(url);
+      return loaded(`loaded:${url}`);
+    },
+  });
+
+  const activated = await activator.activate('https://example.test/states/clouds/manifest.json');
+
+  assert.deepEqual(
+    activated.cloudSequence.frames.map(frame => [frame.validAt, frame.observedFrom, frame.observedTo]),
+    [
+      ['2026-08-25T11:00:00Z', '2026-08-25T11:00:00Z', '2026-08-25T11:09:59Z'],
+      ['2026-08-25T12:00:00Z', '2026-08-25T12:00:00Z', '2026-08-25T12:09:59Z'],
+    ],
+  );
+  assert.match(activated.cloudSequence.frames[0].layers.cloudOpacity, /clouds-11\.png$/);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudOpacity, activated.layers.cloudOpacity);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudDensity, activated.layers.cloudDensity);
+  assert.equal(loadedUrls.length, 9);
+});
+
+test('a cloud sequence rejects broken cadence, coverage, pairing, or bounding provenance', async () => {
+  const cases = [
+    ['cloudSequence.frames.1.validAt', manifest => {
+      const frame = manifest.cloudSequence.frames[1];
+      frame.validAt = '2026-08-25T13:00:00Z';
+      frame.observedFrom = '2026-08-25T13:00:00Z';
+      frame.observedTo = '2026-08-25T13:09:59Z';
+      frame.producedAt = '2026-08-25T13:43:00Z';
+      frame.retrievedAt = '2026-08-25T13:48:00Z';
+      Object.assign(manifest.times, {
+        observedTo: frame.observedTo,
+        validAt: frame.validAt,
+        producedAt: frame.producedAt,
+        retrievedAt: frame.retrievedAt,
+      });
+    }],
+    ['cloudSequence.frames.0.coverage', manifest => { manifest.cloudSequence.frames[0].coverage.observedFraction = 1.01; }],
+    ['cloudSequence.frames.1.layers.cloudOpacity.asset', manifest => { manifest.layers.cloudOpacity.asset.href = './different.png'; }],
+    ['times.observedFrom', manifest => { manifest.times.observedFrom = '2026-08-25T10:00:00Z'; }],
+    ['times.validAt', manifest => { manifest.times.validAt = '2026-08-25T11:00:00Z'; }],
+  ];
+
+  for (const [expectedPath, mutate] of cases) {
+    const manifest = fixtureManifest();
+    addHourlyCloudSequence(manifest);
+    mutate(manifest);
+    let loads = 0;
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => { loads += 1; return loaded(undefined); },
+    });
+
+    await assert.rejects(
+      activator.activate('https://example.test/states/invalid/manifest.json'),
+      new RegExp(expectedPath.replaceAll('.', '\\.')),
+    );
+    assert.equal(loads, 0);
+  }
 });
 
 test('a seasonal surface contract activates all 12 immutable monthly states coherently', async () => {
