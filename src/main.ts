@@ -127,11 +127,6 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
       URL.revokeObjectURL(objectUrl);
     }
   },
-  onAssetVerified(request, asset) {
-    if (earthStateActivator.current) return;
-    if (request.role === 'layer') applyVerifiedLayer(request.name, asset);
-    else applyVerifiedResource(request.name, asset);
-  },
 });
 
 let updateFrame: () => void = () => undefined;

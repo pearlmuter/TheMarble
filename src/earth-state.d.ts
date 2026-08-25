@@ -95,5 +95,4 @@ export interface EarthStateActivator<LoadedAsset> {
 export function createEarthStateActivator<LoadedAsset>(adapters: {
   loadManifest(manifestUrl: string): Promise<unknown>;
   loadAsset(request: EarthStateAssetRequest): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
-  onAssetVerified?(request: EarthStateAssetRequest, value: LoadedAsset): void;
 }): EarthStateActivator<LoadedAsset>;

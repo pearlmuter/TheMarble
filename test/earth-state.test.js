@@ -181,28 +181,31 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);
 });
 
-test('bytes that disagree with the declared checksum cannot replace the active Earth state', async () => {
+test('a late checksum failure cannot expose or replace a partial Earth state', async () => {
   const manifest = fixtureManifest();
-  let corrupt = false;
-  let verifiedAssets = 0;
+  let corruptStarCatalog = false;
+  const loadedAssets = [];
   const activator = createEarthStateActivator({
     loadManifest: async () => manifest,
-    loadAsset: async ({ url }) => ({
-      value: `loaded:${url}`,
-      bytes: corrupt ? new TextEncoder().encode('corrupt asset') : fixtureBytes,
-    }),
-    onAssetVerified: () => { verifiedAssets += 1; },
+    loadAsset: async ({ name, url }) => {
+      loadedAssets.push(name);
+      return {
+        value: `loaded:${url}`,
+        bytes: corruptStarCatalog && name === 'starCatalog'
+          ? new TextEncoder().encode('corrupt asset')
+          : fixtureBytes,
+      };
+    },
   });
   const active = await activator.activate('https://example.test/states/current/manifest.json');
-  const verifiedFromActiveState = verifiedAssets;
-  assert.equal(verifiedFromActiveState, 7);
+  loadedAssets.length = 0;
 
-  corrupt = true;
+  corruptStarCatalog = true;
 
   await assert.rejects(
     activator.activate('https://example.test/states/replacement/manifest.json'),
     /checksum/,
   );
+  assert.equal(loadedAssets.length, 7);
   assert.equal(activator.current, active);
-  assert.equal(verifiedAssets, verifiedFromActiveState);
 });

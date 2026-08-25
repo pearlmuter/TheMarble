@@ -116,7 +116,7 @@ function requireEntries(manifest, groupName, names) {
   }
 }
 
-export function createEarthStateActivator({ loadManifest, loadAsset, onAssetVerified }) {
+export function createEarthStateActivator({ loadManifest, loadAsset }) {
   let current;
 
   return {
@@ -135,7 +135,6 @@ export function createEarthStateActivator({ loadManifest, loadAsset, onAssetVeri
           const request = { name, role, descriptor, url };
           const loaded = await loadAsset(request);
           const asset = await verifyLoadedAsset(loaded, descriptor.asset, `${role}.${name}`);
-          onAssetVerified?.(request, asset);
           return [name, asset];
         }),
       ));
