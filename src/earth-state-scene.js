@@ -23,5 +23,12 @@ export function validateEarthStateScene(activeEarthState, isTexture, { isSeasona
   if (!isHipparcosPayload(activeEarthState?.resources?.starCatalog)) {
     throw new Error('Earth-state scene asset starCatalog is invalid');
   }
+  for (const [frameIndex, frame] of (activeEarthState?.cloudSequence?.frames ?? []).entries()) {
+    for (const name of ['cloudOpacity', 'cloudDensity']) {
+      if (!isTexture(frame?.layers?.[name])) {
+        throw new Error(`Earth-state scene asset cloudSequence.frames.${frameIndex}.layers.${name} is not a texture`);
+      }
+    }
+  }
   return activeEarthState;
 }

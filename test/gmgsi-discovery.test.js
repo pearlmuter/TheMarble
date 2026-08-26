@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { selectGmgsiCloudSequence } from '../src/gmgsi-discovery.js';
 
-const key = (band, hour, createdMinute = band === 'VIS' ? '43' : '35') => {
+const key = (band, hour, createdMinute = band === 'VIS' ? '43' : '35', version = 'v3r0') => {
   const product = band === 'VIS' ? 'GLOBCOMPVIS' : 'GLOBCOMPLIR';
-  return `GMGSI_${band === 'VIS' ? 'VIS' : 'LW'}/2026/08/25/${hour}/${product}_v3r0_blend_s20260825${hour}00000_e20260825${hour}09599_c20260825${hour}${createdMinute}000.nc`;
+  return `GMGSI_${band === 'VIS' ? 'VIS' : 'LW'}/2026/08/25/${hour}/${product}_${version}_blend_s20260825${hour}00000_e20260825${hour}09599_c20260825${hour}${createdMinute}000.nc`;
 };
 
 test('discovery chooses the newest two adjacent complete visible/infrared hours and ignores partial arrival', () => {
@@ -51,4 +51,19 @@ test('discovery rejects a pair whose visible and infrared observation windows di
     }),
     /two adjacent complete GMGSI hours/,
   );
+});
+
+test('discovery selects the newest matching product version instead of mixing revisions', () => {
+  const selected = selectGmgsiCloudSequence({
+    keys: [
+      key('VIS', '14'), key('LW', '14'),
+      key('VIS', '15', '42', 'v3r0'),
+      key('VIS', '15', '44', 'v3r1'),
+      key('LW', '15', '35', 'v3r0'),
+    ],
+    retrievedAt: '2026-08-25T16:00:00Z',
+  });
+
+  assert.match(selected.frames[1].visibleKey, /_v3r0_/);
+  assert.equal(selected.frames[1].version, 'v3r0');
 });

@@ -170,6 +170,8 @@ def compose(visible_path, longwave_path, cloud_path, density_path, metadata_path
     for field in ("observedFrom", "observedTo"):
         if visible_metadata[field] != longwave_metadata[field]:
             raise ValueError(f"GMGSI visible/longwave {field} mismatch")
+    if visible_metadata["version"] != longwave_metadata["version"]:
+        raise ValueError("GMGSI visible/longwave product versions disagree")
     if visible.shape != longwave.shape or not np.allclose(visible_lat, longwave_lat) or not np.allclose(visible_lon, longwave_lon):
         raise ValueError("GMGSI visible/longwave grids disagree")
 

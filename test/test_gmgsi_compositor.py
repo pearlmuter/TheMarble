@@ -1,7 +1,9 @@
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
+import h5py
 import numpy as np
 
 
@@ -12,6 +14,32 @@ SPEC.loader.exec_module(gmgsi)
 
 
 class CloudReconstructionFixtures(unittest.TestCase):
+    def test_visible_and_longwave_product_versions_must_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [pathlib.Path(directory) / name for name in ("visible.nc", "longwave.nc")]
+            for path, version in zip(paths, ("v3r0", "v3r1")):
+                with h5py.File(path, "w") as source:
+                    source.create_dataset("data", data=np.zeros((1, 2, 4), dtype=np.uint8))
+                    source.create_dataset("dqf", data=np.zeros((1, 2, 4), dtype=np.uint8))
+                    source.create_dataset("lat", data=np.array([60, -60], dtype=np.float32))
+                    source.create_dataset("lon", data=np.array([180, -90, 0, 90], dtype=np.float32))
+                    source.attrs["time_coverage_start"] = "2026-08-25T17:00:00Z"
+                    source.attrs["time_coverage_end"] = "2026-08-25T17:09:59Z"
+                    source.attrs["date_created"] = "2026-08-25T17:43:00Z"
+                    source.attrs["history"] = version
+                    source.attrs["title"] = "GMGSI fixture"
+                    source.attrs["geospatial_lat_min"] = np.array([-60], dtype=np.float32)
+                    source.attrs["geospatial_lat_max"] = np.array([60], dtype=np.float32)
+
+            with self.assertRaisesRegex(ValueError, "product versions"):
+                gmgsi.compose(
+                    paths[0], paths[1],
+                    pathlib.Path(directory) / "cloud.png",
+                    pathlib.Path(directory) / "density.png",
+                    pathlib.Path(directory) / "metadata.json",
+                    4, 4,
+                )
+
     def test_representative_weather_and_ambiguity(self):
         # convection, thin cloud, clear desert, darkness, snow/ice ambiguity, no data
         visible = np.array([230, 110, 200, 0, 235, 0], dtype=np.float32)

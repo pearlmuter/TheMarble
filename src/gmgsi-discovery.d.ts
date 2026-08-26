@@ -1,5 +1,6 @@
 export interface GmgsiDiscoveredFrame {
   validAt: string;
+  version: string;
   observedFrom: string;
   observedTo: string;
   producedAt: string;

@@ -1,4 +1,4 @@
-const KEY_PATTERN = /^GMGSI_(VIS|LW)\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\/(GLOBCOMP(?:VIS|LIR)_v[^/]+_blend_s(\d{15})_e(\d{15})_c(\d{15})\.nc)$/;
+const KEY_PATTERN = /^GMGSI_(VIS|LW)\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\/(GLOBCOMP(?:VIS|LIR)_(v[^_]+)_blend_s(\d{15})_e(\d{15})_c(\d{15})\.nc)$/;
 
 function noaaTimestamp(value) {
   const digits = value.slice(0, 14);
@@ -10,18 +10,24 @@ function noaaTimestamp(value) {
 function parseKey(key) {
   const match = KEY_PATTERN.exec(key);
   if (!match) return undefined;
-  const [, band, year, month, day, hour, , start, end, created] = match;
+  const [, band, year, month, day, hour, , version, start, end, created] = match;
   const validAt = `${year}-${month}-${day}T${hour}:00:00Z`;
   const observedFrom = noaaTimestamp(start);
   const observedTo = noaaTimestamp(end);
   if (!observedFrom.startsWith(`${year}-${month}-${day}T${hour}:`)) return undefined;
-  return { band, key, validAt, observedFrom, observedTo, producedAt: noaaTimestamp(created) };
+  return { band, key, version, validAt, observedFrom, observedTo, producedAt: noaaTimestamp(created) };
 }
 
-function newestByProduction(entries) {
-  return entries.reduce((latest, entry) => (
-    !latest || Date.parse(entry.producedAt) > Date.parse(latest.producedAt) ? entry : latest
-  ), undefined);
+function newestMatchingPair(visibleEntries, longwaveEntries) {
+  const pairs = visibleEntries.flatMap(visible => longwaveEntries
+    .filter(longwave => visible.version === longwave.version
+      && visible.observedFrom === longwave.observedFrom
+      && visible.observedTo === longwave.observedTo)
+    .map(longwave => ({ visible, longwave })));
+  return pairs.reduce((latest, pair) => {
+    const producedAt = Math.max(Date.parse(pair.visible.producedAt), Date.parse(pair.longwave.producedAt));
+    return !latest || producedAt > latest.producedAt ? { ...pair, producedAt } : latest;
+  }, undefined);
 }
 
 export function selectGmgsiCloudSequence({ keys, retrievedAt, lastPublishedValidAt }) {
@@ -36,12 +42,12 @@ export function selectGmgsiCloudSequence({ keys, retrievedAt, lastPublishedValid
   }
 
   const complete = [...byHour.entries()].flatMap(([validAt, bands]) => {
-    const visible = newestByProduction(bands.VIS);
-    const longwave = newestByProduction(bands.LW);
-    if (!visible || !longwave) return [];
-    if (visible.observedFrom !== longwave.observedFrom || visible.observedTo !== longwave.observedTo) return [];
+    const pair = newestMatchingPair(bands.VIS, bands.LW);
+    if (!pair) return [];
+    const { visible, longwave } = pair;
     return [{
       validAt,
+      version: visible.version,
       observedFrom: visible.observedFrom,
       observedTo: visible.observedTo,
       producedAt: Date.parse(visible.producedAt) >= Date.parse(longwave.producedAt) ? visible.producedAt : longwave.producedAt,

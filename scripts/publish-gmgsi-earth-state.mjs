@@ -10,6 +10,7 @@ import { createFilePublicationStore } from '../src/earth-state-publication-file-
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 
 const DEFAULT_BUCKET = 'https://noaa-gmgsi-pds.s3.amazonaws.com';
+const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 
 function parseArguments(argv) {
   const options = {};
@@ -111,7 +112,7 @@ function cloudDescriptors(metadata, opacityAsset, densityAsset, datasetId) {
 }
 
 function frameContract(discovered, metadata, layers, datasetId) {
-  for (const field of ['observedFrom', 'observedTo', 'producedAt']) {
+  for (const field of ['observedFrom', 'observedTo', 'producedAt', 'version']) {
     if (metadata[field] !== discovered[field]) throw new Error(`GMGSI compositor ${field} disagrees with discovery`);
   }
   return {
@@ -140,7 +141,7 @@ async function composeFrame({ bucket, frame, index, python, stage, width, height
   ]);
   await Promise.all([writeFile(visiblePath, visibleBytes), writeFile(longwavePath, longwaveBytes)]);
   await run(python, [
-    resolve('scripts/gmgsi_compositor.py'),
+    join(scriptDirectory, 'gmgsi_compositor.py'),
     '--visible', visiblePath,
     '--longwave', longwavePath,
     '--cloud', opacityPath,
