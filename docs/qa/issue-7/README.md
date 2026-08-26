@@ -4,7 +4,7 @@ These fixed-time screenshots use a deliberately exaggerated deterministic cryosp
 
 | Artifact | Scene | What it verifies |
 | --- | --- | --- |
-| `daylight-synthetic-cryosphere.jpg` | `?time=2026-06-21T12:00:00Z&view=day` | snow affects only detected land; sea ice affects only detected ocean; polar coverage follows the surface and remains separate from cloud |
-| `terminator-synthetic-cryosphere.jpg` | `?time=2026-06-21T12:00:00Z&view=terminator` | both layers obey the astronomical terminator; snow does not glow on the night side; sea ice uses rough diffuse reflection rather than liquid-ocean glint |
+| `final-daylight.png` | `?time=2026-06-21T12:00:00Z&view=day` | the final renderer consumes the scientific snow and sea-ice masks directly rather than guessing land/ocean from Blue Marble colour |
+| `final-terminator.png` | `?time=2026-06-21T12:00:00Z&view=terminator` | both layers obey the astronomical terminator; snow does not glow on the night side; sea ice uses rough diffuse reflection rather than liquid-ocean glint |
 
 Both scenes loaded the full immutable QA bundle through `latest.json`; browser logs contained no warnings or errors.
