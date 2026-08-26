@@ -9,8 +9,17 @@ import { selectDailyCryosphere } from '../src/cryosphere-selection.js';
 import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
 import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
+import { rebaseEarthStateSourceAssets } from '../src/earth-state-source-assets.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_ATTRIBUTION = {
+  'ims-snow-ice': 'U.S. National Ice Center IMS',
+  'gmasi-snow': 'NOAA/NESDIS GMASI',
+  'gmasi-sea-ice': 'NOAA/NESDIS GMASI',
+  'amsr2-snow': 'NASA/JAXA AMSR2',
+  'amsr2-sea-ice': 'NASA/JAXA AMSR2',
+  'viirs-snow': 'NASA VIIRS VNP10_NRT',
+};
 
 function parseArguments(argv) {
   const options = {};
@@ -84,6 +93,13 @@ async function assetReference(path) {
   };
 }
 
+function sourceIdentity(sources) {
+  return {
+    sourceVersion: [...new Set(sources.map(source => source.version))].join(' + '),
+    attribution: `${[...new Set(sources.map(source => source.attribution ?? DEFAULT_ATTRIBUTION[source.product]))].join('; ')}, modified by TheMarble`,
+  };
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const outputDirectory = resolve(options.output ?? 'public/earth-state');
@@ -120,26 +136,18 @@ async function main() {
       paths.viirsQuality = join(stage, 'viirs-quality.npy');
       await writeFile(paths.viirsQuality, await bytesFromUrl(selection.refinement.qualityHref));
     }
-    const sources = [
+    const snowSources = [
       selection.analysis.northernPrimary,
       selection.analysis.globalFallback.snow,
-      selection.analysis.globalFallback.seaIce,
       selection.refinement,
     ].filter(Boolean);
+    const seaIceSources = [selection.analysis.northernPrimary, selection.analysis.globalFallback.seaIce].filter(Boolean);
+    const sources = [...new Set([...snowSources, ...seaIceSources])];
     const producedAt = sources.reduce((latest, source) => Date.parse(source.producedAt) > Date.parse(latest) ? source.producedAt : latest, sources[0].producedAt);
-    const sourceVersion = [...new Set(sources.map(source => source.version))].join(' + ');
     const fallback = selection.fallback.ims
       ? selection.fallback.reason
-      : 'Global microwave analysis fills the Southern Hemisphere and any IMS coverage gap.';
-    const defaultAttribution = {
-      'ims-snow-ice': 'U.S. National Ice Center IMS',
-      'gmasi-snow': 'NOAA/NESDIS GMASI',
-      'gmasi-sea-ice': 'NOAA/NESDIS GMASI',
-      'amsr2-snow': 'NASA/JAXA AMSR2',
-      'amsr2-sea-ice': 'NASA/JAXA AMSR2',
-      'viirs-snow': 'NASA VIIRS VNP10_NRT',
-    };
-    const attribution = `${[...new Set(sources.map(source => source.attribution ?? defaultAttribution[source.product]))].join('; ')}, modified by TheMarble`;
+      : 'Global multisensor analysis fills the Southern Hemisphere and any IMS coverage gap.';
+    const combinedIdentity = sourceIdentity(sources);
     const compositorArgs = [
       join(scriptDirectory, 'cryosphere_compositor.py'),
       '--fallback-snow', paths.fallbackSnow,
@@ -150,36 +158,46 @@ async function main() {
       '--valid-at', selection.validAt,
       '--produced-at', producedAt,
       '--retrieved-at', selection.retrievedAt,
-      '--source-version', sourceVersion,
+      '--source-version', combinedIdentity.sourceVersion,
       '--fallback', fallback,
-      '--attribution', attribution,
+      '--attribution', combinedIdentity.attribution,
       ...(paths.ims ? ['--ims', paths.ims] : []),
       ...(paths.viirsSnow ? ['--viirs-snow', paths.viirsSnow, '--viirs-quality', paths.viirsQuality] : []),
     ];
     await run(python, compositorArgs);
-    const [snowAsset, seaIceAsset, metadata, baseManifest] = await Promise.all([
+    const [snowAsset, seaIceAsset, compositorMetadata, baseManifestDocument] = await Promise.all([
       assetReference(paths.snow),
       assetReference(paths.seaIce),
       readFile(paths.metadata, 'utf8').then(JSON.parse),
       readFile(baseManifestPath, 'utf8').then(JSON.parse),
     ]);
+    const { manifest: baseManifest, sourceUrls: baseSourceUrls } = rebaseEarthStateSourceAssets(baseManifestDocument, {
+      sourceManifestUrl: pathToFileURL(baseManifestPath).href,
+      publicRootUrl: pathToFileURL(`${publicRoot}${sep}`).href,
+    });
+    const metadata = {
+      ...compositorMetadata,
+      layers: {
+        snowCover: { ...sourceIdentity(snowSources), coverage: compositorMetadata.layers.snowCover.coverage, fallback },
+        seaIce: { ...sourceIdentity(seaIceSources), coverage: compositorMetadata.layers.seaIce.coverage, fallback },
+      },
+    };
     const manifest = addCryosphereAnalysis(baseManifest, { selection, metadata, snowAsset, seaIceAsset });
     manifest.bundleId = `source-cryosphere-${selection.validAt}`;
     manifest.classification = 'observed';
     const sourceManifestPath = join(stage, 'manifest.json');
     await writeFile(sourceManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     const stagePrefix = `${stage}${sep}`;
-    const publicPrefix = `${publicRoot}${sep}`;
     const publisher = createEarthStatePublisher({
       assetLayout: 'content-addressed',
       store: createFilePublicationStore(outputDirectory),
       async loadSource(url) {
         const parsed = new URL(url);
         if (parsed.protocol !== 'file:') throw new Error(`Unexpected publication source protocol: ${parsed.protocol}`);
-        let path = fileURLToPath(parsed);
-        if (path !== sourceManifestPath && !path.startsWith(stagePrefix)) path = resolve(publicRoot, parsed.pathname.replace(/^\/+/, ''));
-        if (path !== sourceManifestPath && !path.startsWith(stagePrefix) && path !== publicRoot && !path.startsWith(publicPrefix)) {
-          throw new Error(`Publication source escapes allowed roots: ${path}`);
+        const path = fileURLToPath(parsed);
+        const isStaged = path === sourceManifestPath || path.startsWith(stagePrefix);
+        if (!isStaged && !baseSourceUrls.has(parsed.href)) {
+          throw new Error(`Publication source was not declared by the base manifest: ${path}`);
         }
         const bytes = await readFile(path);
         const mediaType = earthStateMediaTypeForPath(path);

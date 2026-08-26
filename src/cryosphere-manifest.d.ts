@@ -5,11 +5,13 @@ export interface CryosphereCompositorMetadata {
   validAt: string;
   producedAt: string;
   retrievedAt: string;
-  sourceVersion: string;
   dimensions: { width: number; height: number };
-  coverage: { observedFraction: number; latitudeRange: [number, number]; fallbackFraction: number };
-  fallback: string;
-  attribution: string;
+  layers: Record<'snowCover' | 'seaIce', {
+    sourceVersion: string;
+    coverage: { observedFraction: number; latitudeRange: [number, number]; fallbackFraction: number };
+    fallback: string;
+    attribution: string;
+  }>;
 }
 
 export function addCryosphereAnalysis(manifest: EarthStateManifest, options: {

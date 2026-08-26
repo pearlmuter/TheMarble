@@ -67,6 +67,21 @@ function validateSeasonalCycle(layer, path, datasetIds) {
   if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
 }
 
+function validateCoverage(coverage, path) {
+  if (!isRecord(coverage)
+    || !Number.isFinite(coverage.observedFraction)
+    || coverage.observedFraction < 0
+    || coverage.observedFraction > 1
+    || !Array.isArray(coverage.latitudeRange)
+    || coverage.latitudeRange.length !== 2
+    || !coverage.latitudeRange.every(Number.isFinite)
+    || coverage.latitudeRange[0] < -90
+    || coverage.latitudeRange[1] > 90
+    || coverage.latitudeRange[0] >= coverage.latitudeRange[1]) {
+    fail(path);
+  }
+}
+
 function validateCloudSequence(manifest, datasetIds) {
   const sequence = manifest.cloudSequence;
   if (sequence === undefined) return;
@@ -84,18 +99,7 @@ function validateCloudSequence(manifest, datasetIds) {
       const value = frame[field];
       if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) fail(`${path}.${field}`);
     }
-    if (!isRecord(frame.coverage)
-      || !Number.isFinite(frame.coverage.observedFraction)
-      || frame.coverage.observedFraction < 0
-      || frame.coverage.observedFraction > 1
-      || !Array.isArray(frame.coverage.latitudeRange)
-      || frame.coverage.latitudeRange.length !== 2
-      || !frame.coverage.latitudeRange.every(Number.isFinite)
-      || frame.coverage.latitudeRange[0] < -90
-      || frame.coverage.latitudeRange[1] > 90
-      || frame.coverage.latitudeRange[0] >= frame.coverage.latitudeRange[1]) {
-      fail(`${path}.coverage`);
-    }
+    validateCoverage(frame.coverage, `${path}.coverage`);
     for (const field of ['visibleOptimalFraction', 'longwaveOptimalFraction']) {
       const fraction = frame.coverage[field];
       if (fraction !== undefined && (!Number.isFinite(fraction) || fraction < 0 || fraction > 1)) {
@@ -161,13 +165,10 @@ function validateCryosphereLayers(manifest) {
       && Date.parse(provenance.producedAt) <= Date.parse(provenance.retrievedAt))) fail(`${path}.validAt`);
     for (const field of ['sourceVersion', 'fallback', 'attribution']) requireString(provenance[field], `${path}.${field}`);
     const coverage = provenance.coverage;
-    if (!isRecord(coverage)
-      || !Number.isFinite(coverage.observedFraction) || coverage.observedFraction < 0 || coverage.observedFraction > 1
-      || !Number.isFinite(coverage.fallbackFraction) || coverage.fallbackFraction < 0 || coverage.fallbackFraction > 1
-      || !Array.isArray(coverage.latitudeRange) || coverage.latitudeRange.length !== 2
-      || !coverage.latitudeRange.every(Number.isFinite)
-      || coverage.latitudeRange[0] < -90 || coverage.latitudeRange[1] > 90
-      || coverage.latitudeRange[0] >= coverage.latitudeRange[1]) fail(`${path}.coverage`);
+    validateCoverage(coverage, `${path}.coverage`);
+    if (!Number.isFinite(coverage.fallbackFraction) || coverage.fallbackFraction < 0 || coverage.fallbackFraction > 1) {
+      fail(`${path}.coverage.fallbackFraction`);
+    }
   }
 }
 

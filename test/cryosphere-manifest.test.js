@@ -36,11 +36,21 @@ test('a daily analysis adds paired GPU layers and complete per-layer provenance 
     },
     metadata: {
       validAt: '2026-08-25T00:00:00Z', producedAt: '2026-08-25T18:00:00Z', retrievedAt: '2026-08-26T03:00:00Z',
-      sourceVersion: 'IMS v3 + AU_DySno/AU_SI12 V1 + VNP10_NRT V2',
       dimensions: { width: 4096, height: 2048 },
-      coverage: { observedFraction: .96, latitudeRange: [-90, 90], fallbackFraction: .5 },
-      fallback: 'AMSR2 fills the Southern Hemisphere and any IMS gap.',
-      attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS, modified by TheMarble',
+      layers: {
+        snowCover: {
+          sourceVersion: 'IMS v3 + AU_DySno V1 + VNP10_NRT V2',
+          coverage: { observedFraction: .96, latitudeRange: [-90, 90], fallbackFraction: .5 },
+          fallback: 'AMSR2 fills the Southern Hemisphere and any IMS gap.',
+          attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS, modified by TheMarble',
+        },
+        seaIce: {
+          sourceVersion: 'IMS v3 + AU_SI12 V1',
+          coverage: { observedFraction: .94, latitudeRange: [-90, 90], fallbackFraction: .5 },
+          fallback: 'AMSR2 fills the Southern Hemisphere and any IMS gap.',
+          attribution: 'USNIC IMS; NASA/JAXA AMSR2, modified by TheMarble',
+        },
+      },
     },
     snowAsset: asset('./snow.png'),
     seaIceAsset: asset('./sea-ice.png'),
@@ -49,7 +59,10 @@ test('a daily analysis adds paired GPU layers and complete per-layer provenance 
   assert.equal(result.layers.cloudOpacity, manifest.layers.cloudOpacity);
   assert.equal(result.layers.snowCover.units, 'snow-covered land fraction');
   assert.equal(result.layers.seaIce.units, 'sea-ice concentration fraction');
-  assert.deepEqual(result.layers.snowCover.provenance, result.layers.seaIce.provenance);
+  assert.match(result.layers.snowCover.provenance.sourceVersion, /VNP10/);
+  assert.doesNotMatch(result.layers.seaIce.provenance.sourceVersion, /VNP10/);
+  assert.doesNotMatch(result.layers.seaIce.provenance.attribution, /VIIRS/);
+  assert.equal(result.layers.seaIce.provenance.coverage.observedFraction, .94);
   assert.match(result.datasets.at(-1).attribution, /IMS.*AMSR2.*VIIRS/);
   assert.equal(result.layers.snowCover.channels.r, 'snow-covered land fraction');
   assert.equal(result.layers.seaIce.channels.r, 'sea-ice concentration fraction');
@@ -58,7 +71,7 @@ test('a daily analysis adds paired GPU layers and complete per-layer provenance 
 test('manifest construction rejects compositor metadata that disagrees with daily selection', () => {
   assert.throws(() => addCryosphereAnalysis(baseManifest(), {
     selection: { validAt: '2026-08-25T00:00:00Z', retrievedAt: '2026-08-26T03:00:00Z' },
-    metadata: { validAt: '2026-08-24T00:00:00Z', retrievedAt: '2026-08-26T03:00:00Z' },
+    metadata: { validAt: '2026-08-24T00:00:00Z', retrievedAt: '2026-08-26T03:00:00Z', layers: {} },
     snowAsset: asset('./snow.png'),
     seaIceAsset: asset('./sea-ice.png'),
   }), /validAt/);

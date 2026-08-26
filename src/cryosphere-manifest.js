@@ -30,33 +30,30 @@ export function addCryosphereAnalysis(manifest, { selection, metadata, snowAsset
   manifest.datasets = manifest.datasets.filter(dataset => !replacedIds.has(dataset.id));
   manifest.datasets.push({
     id: datasetId,
-    version: metadata.sourceVersion,
-    attribution: metadata.attribution,
+    version: [...new Set(Object.values(metadata.layers).map(layer => layer.sourceVersion))].join(' | '),
+    attribution: [...new Set(Object.values(metadata.layers).map(layer => layer.attribution))].join(' | '),
     observedFrom: metadata.validAt,
     observedTo: metadata.validAt,
   });
-  const provenance = {
+  const provenance = name => ({
     validAt: metadata.validAt,
     producedAt: metadata.producedAt,
     retrievedAt: metadata.retrievedAt,
-    sourceVersion: metadata.sourceVersion,
-    coverage: structuredClone(metadata.coverage),
-    fallback: metadata.fallback,
-    attribution: metadata.attribution,
-  };
+    ...structuredClone(metadata.layers[name]),
+  });
   manifest.layers.snowCover = layerDescriptor({
     datasetId,
     units: 'snow-covered land fraction',
     dimensions: metadata.dimensions,
     asset: snowAsset,
-    provenance,
+    provenance: provenance('snowCover'),
   });
   manifest.layers.seaIce = layerDescriptor({
     datasetId,
     units: 'sea-ice concentration fraction',
     dimensions: metadata.dimensions,
     asset: seaIceAsset,
-    provenance,
+    provenance: provenance('seaIce'),
   });
   return manifest;
 }

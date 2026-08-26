@@ -496,11 +496,10 @@ const earthMaterial = new THREE.ShaderMaterial({
       float ocean=smoothstep(.0006,.006,blueDominance)*(1.0-smoothstep(.12,.36,luminance));
       float snowCover=texture2D(snowCoverMap,vUv).r;
       float seaIce=texture2D(seaIceMap,vUv).r;
-      float landSnow=snowCover*(1.0-ocean);
-      float oceanIce=seaIce*ocean;
+      float landSnow=snowCover;
+      float oceanIce=seaIce;
       vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
       vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*directLight*mix(vec3(1.0),sunlight,.72);
-      land=mix(land,snowAlbedo,landSnow*.94);
       vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
       float roughness=.19; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
       float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
@@ -513,8 +512,9 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec3 sunGlint=vec3(1.0,.78,.5)*specular*nDotL*1.3;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
       vec3 seaIceLight=vec3(.68,.76,.82)*(.3+.92*nDotL)*mix(vec3(1.0),sunlight,.68)+atmosphericReflection*.28;
-      oceanLight=mix(oceanLight,seaIceLight,oceanIce);
       vec3 day=mix(land,oceanLight,ocean);
+      day=mix(day,snowAlbedo,landSnow*.94);
+      day=mix(day,seaIceLight,oceanIce);
       vec4 weather=mix(texture2D(cloudDensityFrom,vUv),texture2D(cloudDensityTo,vUv),cloudMix);
       float weatherDensity=mix(.72,1.18,weather.r)*weather.g;
       vec2 shadowUv=vUv+vec2(sunDirection.z,-sunDirection.x)*.0028;

@@ -30,8 +30,9 @@ test('daily land snow and sea ice have separate physical surface semantics', () 
   assert.match(mainSource, /uniform sampler2D snowCoverMap; uniform sampler2D seaIceMap;/);
   assert.match(mainSource, /float snowCover=texture2D\(snowCoverMap,vUv\)\.r;/);
   assert.match(mainSource, /float seaIce=texture2D\(seaIceMap,vUv\)\.r;/);
-  assert.match(mainSource, /landSnow=snowCover\*\(1\.0-ocean\)/);
-  assert.match(mainSource, /oceanIce=seaIce\*ocean/);
+  assert.match(mainSource, /float landSnow=snowCover;/);
+  assert.match(mainSource, /float oceanIce=seaIce;/);
+  assert.doesNotMatch(mainSource, /snowCover\*\(1\.0-ocean\)|seaIce\*ocean/);
   assert.match(mainSource, /roughness=mix\(roughness,[^,]+,oceanIce\)/);
   assert.doesNotMatch(mainSource, /cloud[^;\n]*snowCover|snowCover[^;\n]*cloud/i);
 });
