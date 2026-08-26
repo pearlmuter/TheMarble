@@ -1,4 +1,5 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_VIIRS_AGE_MS = 36 * 60 * 60 * 1000;
 const SUPPORTED_PRODUCTS = new Set([
   'ims-snow-ice', 'gmasi-snow', 'gmasi-sea-ice', 'amsr2-snow', 'amsr2-sea-ice', 'viirs-snow',
 ]);
@@ -46,6 +47,19 @@ function isGlobalCoverage(candidate) {
     && candidate.coverage.observedFraction >= 0.9;
 }
 
+function isNorthernCoverage(candidate) {
+  return candidate.coverage.latitudeRange[0] <= 1
+    && candidate.coverage.latitudeRange[1] >= 89
+    && candidate.coverage.observedFraction >= 0.45;
+}
+
+function findGlobalPair(products) {
+  return GLOBAL_PAIRS.find(([snow, seaIce]) => (
+    (products.get(snow) ?? []).some(isGlobalCoverage)
+    && (products.get(seaIce) ?? []).some(isGlobalCoverage)
+  ));
+}
+
 export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedValidAt }) {
   const retrievedMs = requireTimestamp(retrievedAt, 'retrieval time');
   if (!Array.isArray(candidates)) throw new Error('Cryosphere candidates must be an array');
@@ -67,26 +81,21 @@ export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedVa
   }
 
   const completeDays = [...byDay.entries()]
-    .filter(([, products]) => GLOBAL_PAIRS.some(([snow, seaIce]) => (
-      (products.get(snow) ?? []).some(isGlobalCoverage)
-      && (products.get(seaIce) ?? []).some(isGlobalCoverage)
-    )))
+    .filter(([, products]) => findGlobalPair(products) !== undefined)
     .sort(([left], [right]) => left.localeCompare(right));
   const selected = completeDays.at(-1);
   if (!selected) throw new Error('Cryosphere discovery did not find a complete global cryosphere day');
 
   const [day, products] = selected;
   const validAt = `${day}T00:00:00Z`;
-  const northernPrimary = newest(products.get('ims-snow-ice') ?? []);
-  const [globalSnowProduct, globalSeaIceProduct] = GLOBAL_PAIRS.find(([snow, seaIce]) => (
-    (products.get(snow) ?? []).some(isGlobalCoverage)
-    && (products.get(seaIce) ?? []).some(isGlobalCoverage)
-  ));
+  const northernPrimary = newest((products.get('ims-snow-ice') ?? []).filter(isNorthernCoverage));
+  const [globalSnowProduct, globalSeaIceProduct] = findGlobalPair(products);
   const globalSnow = newest(products.get(globalSnowProduct).filter(isGlobalCoverage));
   const globalSeaIce = newest(products.get(globalSeaIceProduct).filter(isGlobalCoverage));
   const viirs = newest(usable.filter(candidate => candidate.product === 'viirs-snow'
     && typeof candidate.qualityHref === 'string' && candidate.qualityHref.trim() !== ''
-    && Math.abs(Date.parse(candidate.validAt) - Date.parse(validAt)) <= 36 * 60 * 60 * 1000));
+    && retrievedMs - Date.parse(candidate.validAt) <= MAX_VIIRS_AGE_MS
+    && Math.abs(Date.parse(candidate.validAt) - Date.parse(validAt)) <= MAX_VIIRS_AGE_MS));
 
   return {
     validAt,

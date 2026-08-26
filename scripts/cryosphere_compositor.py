@@ -117,16 +117,15 @@ def compose_files(arguments):
     latitudes = 90.0 - (np.arange(ims.shape[0], dtype=np.float64) + .5) * (180.0 / ims.shape[0])
     weights = np.broadcast_to(np.cos(np.deg2rad(latitudes))[:, None], ims.shape)
     weighted_fraction = lambda mask: float(np.sum(mask * weights) / np.sum(weights))
-    snow_coverage = {
-        "observedFraction": weighted_fraction((ims != 0) | np.isfinite(fallback_snow)),
-        "latitudeRange": [-90, 90],
-        "fallbackFraction": weighted_fraction((ims == 0) & np.isfinite(fallback_snow)),
-    }
-    sea_ice_coverage = {
-        "observedFraction": weighted_fraction((ims != 0) | np.isfinite(fallback_sea_ice)),
-        "latitudeRange": [-90, 90],
-        "fallbackFraction": weighted_fraction((ims == 0) & np.isfinite(fallback_sea_ice)),
-    }
+
+    def coverage(fallback):
+        available = np.isfinite(fallback)
+        return {
+            "observedFraction": weighted_fraction((ims != 0) | available),
+            "latitudeRange": [-90, 90],
+            "fallbackFraction": weighted_fraction((ims == 0) & available),
+        }
+
     Path(arguments.metadata).write_text(json.dumps({
         "validAt": arguments.valid_at,
         "producedAt": arguments.produced_at,
@@ -134,8 +133,8 @@ def compose_files(arguments):
         "sourceVersion": arguments.source_version,
         "dimensions": {"width": int(snow.shape[1]), "height": int(snow.shape[0])},
         "layers": {
-            "snowCover": {"coverage": snow_coverage},
-            "seaIce": {"coverage": sea_ice_coverage},
+            "snowCover": {"coverage": coverage(fallback_snow)},
+            "seaIce": {"coverage": coverage(fallback_sea_ice)},
         },
         "fallback": arguments.fallback,
         "attribution": arguments.attribution,

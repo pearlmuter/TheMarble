@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { addCryosphereAnalysis } from '../src/cryosphere-manifest.js';
 import { selectDailyCryosphere } from '../src/cryosphere-selection.js';
 import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
+import { resolveEarthStateBaseManifest } from '../src/earth-state-publication-base.js';
 import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 import { rebaseEarthStateSourceAssets } from '../src/earth-state-source-assets.js';
@@ -103,8 +104,12 @@ function sourceIdentity(sources) {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const outputDirectory = resolve(options.output ?? 'public/earth-state');
-  const baseManifestPath = resolve(options['base-manifest'] ?? 'public/earth-state/bundled-v1.json');
   const publicRoot = resolve(options['public-root'] ?? 'public');
+  const baseManifestPath = await resolveEarthStateBaseManifest({
+    explicitPath: options['base-manifest'],
+    outputDirectory,
+    fallbackPath: 'public/earth-state/bundled-v1.json',
+  });
   const python = options.python ?? 'python3';
   const catalogUrl = new URL(options.catalog ?? './cryosphere-catalog.json', pathToFileURL(`${process.cwd()}${sep}`)).href;
   await access(baseManifestPath);

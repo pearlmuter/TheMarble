@@ -6,8 +6,10 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { selectGmgsiCloudSequence } from '../src/gmgsi-discovery.js';
 import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
+import { resolveEarthStateBaseManifest } from '../src/earth-state-publication-base.js';
 import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
+import { rebaseEarthStateSourceAssets } from '../src/earth-state-source-assets.js';
 
 const DEFAULT_BUCKET = 'https://noaa-gmgsi-pds.s3.amazonaws.com';
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -163,8 +165,12 @@ async function main() {
   const now = new Date(options.now ?? Date.now());
   if (Number.isNaN(now.valueOf())) throw new Error('Invalid --now value');
   const outputDirectory = resolve(options.output ?? 'public/earth-state');
-  const baseManifestPath = resolve(options['base-manifest'] ?? 'public/earth-state/bundled-v1.json');
   const publicRoot = resolve(options['public-root'] ?? 'public');
+  const baseManifestPath = await resolveEarthStateBaseManifest({
+    explicitPath: options['base-manifest'],
+    outputDirectory,
+    fallbackPath: 'public/earth-state/bundled-v1.json',
+  });
   const bucket = (options.bucket ?? DEFAULT_BUCKET).replace(/\/$/, '');
   const python = options.python ?? 'python3';
   const width = Number(options.width ?? 4096);
@@ -191,7 +197,11 @@ async function main() {
     for (const [index, frame] of selection.frames.entries()) {
       composed.push(await composeFrame({ bucket, frame, index, python, stage, width, height }));
     }
-    const baseManifest = JSON.parse(await readFile(baseManifestPath, 'utf8'));
+    const baseManifestDocument = JSON.parse(await readFile(baseManifestPath, 'utf8'));
+    const { manifest: baseManifest, sourceUrls: baseSourceUrls } = rebaseEarthStateSourceAssets(baseManifestDocument, {
+      sourceManifestUrl: pathToFileURL(baseManifestPath).href,
+      publicRootUrl: pathToFileURL(`${publicRoot}${sep}`).href,
+    });
     const datasetId = `noaa-gmgsi-${composed[1].metadata.version}`;
     const frames = composed.map((result, index) => {
       const descriptors = cloudDescriptors(result.metadata, result.opacityAsset, result.densityAsset, datasetId);
@@ -232,17 +242,14 @@ async function main() {
     await writeFile(sourceManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     const sourceManifestUrl = pathToFileURL(sourceManifestPath).href;
     const stagePrefix = `${stage}${sep}`;
-    const publicPrefix = `${publicRoot}${sep}`;
     const publisher = createEarthStatePublisher({
       async loadSource(url) {
         const parsed = new URL(url);
         if (parsed.protocol !== 'file:') throw new Error(`Unexpected publication source protocol: ${parsed.protocol}`);
-        let path = fileURLToPath(parsed);
-        if (path !== sourceManifestPath && !path.startsWith(stagePrefix)) {
-          path = resolve(publicRoot, parsed.pathname.replace(/^\/+/, ''));
-        }
-        if (path !== sourceManifestPath && !path.startsWith(stagePrefix) && path !== publicRoot && !path.startsWith(publicPrefix)) {
-          throw new Error(`Publication source escapes allowed roots: ${path}`);
+        const path = fileURLToPath(parsed);
+        const isStaged = path === sourceManifestPath || path.startsWith(stagePrefix);
+        if (!isStaged && !baseSourceUrls.has(parsed.href)) {
+          throw new Error(`Publication source was not declared by the base manifest: ${path}`);
         }
         const bytes = await readFile(path);
         const mediaType = earthStateMediaTypeForPath(path);

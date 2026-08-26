@@ -83,6 +83,38 @@ test('incomplete VIIRS is ignored so it cannot block a trusted daily analysis', 
   assert.equal(selected.publish, true);
 });
 
+test('VIIRS that is old at retrieval time cannot overwrite a trusted daily edge', () => {
+  const selected = selectDailyCryosphere({
+    candidates: [
+      candidate('gmasi-snow', '2026-08-25T00:00:00Z'),
+      candidate('gmasi-sea-ice', '2026-08-25T00:00:00Z'),
+      candidate('viirs-snow', '2026-08-25T12:00:00Z', {
+        producedAt: '2026-08-25T13:00:00Z',
+        qualityHref: 'https://fixtures.test/viirs-quality.npy',
+      }),
+    ],
+    retrievedAt: '2026-08-27T12:00:00Z',
+  });
+
+  assert.equal(selected.refinement, undefined);
+});
+
+test('IMS must substantially cover the Northern Hemisphere or fallback stays explicit', () => {
+  const selected = selectDailyCryosphere({
+    candidates: [
+      candidate('gmasi-snow', '2026-08-25T00:00:00Z'),
+      candidate('gmasi-sea-ice', '2026-08-25T00:00:00Z'),
+      candidate('ims-snow-ice', '2026-08-25T00:00:00Z', {
+        coverage: { latitudeRange: [-80, -20], observedFraction: .15 },
+      }),
+    ],
+    retrievedAt: '2026-08-26T03:00:00Z',
+  });
+
+  assert.equal(selected.analysis.northernPrimary, undefined);
+  assert.equal(selected.fallback.ims, true);
+});
+
 test('a nominal global pair must actually cover both hemispheres at useful completeness', () => {
   assert.throws(() => selectDailyCryosphere({
     candidates: [

@@ -46,10 +46,9 @@ python3 -m venv .venv-cryosphere
 npm run publish:cryosphere -- \
   --catalog artifacts/cryosphere-catalog.json \
   --python .venv-cryosphere/bin/python \
-  --base-manifest artifacts/earth-state/current-source-manifest.json \
   --output artifacts/earth-state
 ```
 
-The compositor emits distinct snow and sea-ice textures plus complete provenance. The ordinary Earth-state publisher verifies every byte and advances the atomic `latest.json` only after the full bundle—including cloud, snow, sea ice, sky, and static layers—passes validation and read-back.
+The compositor emits distinct snow and sea-ice textures plus complete provenance. By default the producer inherits the output directory's current atomic bundle (or the packaged baseline on first publication); `--base-manifest` can intentionally override that choice. The cloud producer follows the same rule, so their independent schedules preserve one another's layers. The ordinary Earth-state publisher verifies every byte and advances `latest.json` only after the full bundle—including cloud, snow, sea ice, sky, and static layers—passes validation and read-back.
 
 The provider adapter, scheduler, stable HTTPS origin, and client configuration belong to deployment issue #17. This repository deliberately keeps provider credentials and bulk scientific formats server-side; browsers and Tauri only receive small render-ready immutable textures.
