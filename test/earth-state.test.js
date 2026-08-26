@@ -431,7 +431,7 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /bmng-2004-12-5400\.jpg$/);
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
-  assert.match(activated.layers.cloudDensity, /cloud-density-modis-terra-2026-08-25\.png$/);
+  assert.match(activated.layers.cloudDensity, /cloud-density-static-neutral\.png$/);
   assert.match(activated.resources.moonAlbedo, /moon-1024\.jpg$/);
   assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-16k\.jpg$/);
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);
