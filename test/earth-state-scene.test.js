@@ -74,3 +74,16 @@ test('scene semantics reject a cloud sequence unless both complete frames contai
     /cloudSequence\.frames\.0\.layers\.cloudDensity/,
   );
 });
+
+test('scene semantics require snow and sea ice to arrive as one texture pair', () => {
+  const active = activatedScene();
+  active.layers.snowCover = { kind: 'texture' };
+
+  assert.throws(
+    () => validateEarthStateScene(active, asset => asset?.kind === 'texture'),
+    /seaIce/,
+  );
+
+  active.layers.seaIce = { kind: 'texture' };
+  assert.equal(validateEarthStateScene(active, asset => asset?.kind === 'texture'), active);
+});

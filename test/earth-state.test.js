@@ -115,6 +115,30 @@ function addHourlyCloudSequence(manifest) {
   return frames;
 }
 
+function addDailyCryosphere(manifest) {
+  const textureDescriptor = href => ({
+    datasetId: 'cryosphere',
+    units: 'fraction',
+    dimensions: { width: 4, height: 2 },
+    colorSpace: 'linear',
+    channels: { r: 'fraction', g: 'confidence', b: 'source code' },
+    textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+    asset: { href, mediaType: 'image/png', byteLength: fixtureBytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
+    provenance: {
+      validAt: '2026-08-25T00:00:00Z',
+      producedAt: '2026-08-25T18:00:00Z',
+      retrievedAt: '2026-08-26T03:00:00Z',
+      sourceVersion: 'IMS v3 + AMSR2 L3 + VNP10_NRT V2',
+      coverage: { observedFraction: 0.96, latitudeRange: [-90, 90], fallbackFraction: 0.5 },
+      fallback: 'AMSR2 fills the Southern Hemisphere and any missing IMS coverage.',
+      attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS, modified by TheMarble',
+    },
+  });
+  manifest.datasets.push({ id: 'cryosphere', version: '2026-08-25', attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS' });
+  manifest.layers.snowCover = textureDescriptor('./snow.png');
+  manifest.layers.seaIce = textureDescriptor('./sea-ice.png');
+}
+
 test('a complete Earth-state manifest activates one coherent scene asset set', async () => {
   const manifest = fixtureManifest();
   const loadedUrls = [];
@@ -161,6 +185,38 @@ test('an hourly cloud sequence activates two complete observation states with tr
   assert.equal(activated.cloudSequence.frames[1].layers.cloudOpacity, activated.layers.cloudOpacity);
   assert.equal(activated.cloudSequence.frames[1].layers.cloudDensity, activated.layers.cloudDensity);
   assert.equal(loadedUrls.length, 9);
+});
+
+test('daily snow cover and sea ice activate as distinct layers with explicit provenance', async () => {
+  const manifest = fixtureManifest();
+  addDailyCryosphere(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/fixture/manifest.json');
+
+  assert.match(activated.layers.snowCover, /snow\.png$/);
+  assert.match(activated.layers.seaIce, /sea-ice\.png$/);
+  assert.equal(activated.manifest.layers.snowCover.provenance.coverage.fallbackFraction, 0.5);
+  assert.match(activated.manifest.layers.seaIce.provenance.attribution, /AMSR2/);
+});
+
+test('a cryosphere update is atomic and rejects a missing paired layer or dishonest coverage', async () => {
+  for (const mutate of [
+    manifest => { delete manifest.layers.seaIce; },
+    manifest => { manifest.layers.snowCover.provenance.coverage.fallbackFraction = 1.01; },
+  ]) {
+    const manifest = fixtureManifest();
+    addDailyCryosphere(manifest);
+    mutate(manifest);
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => loaded('unused'),
+    });
+    await assert.rejects(() => activator.activate('https://example.test/manifest.json'), /snowCover|seaIce|fallbackFraction/);
+  }
 });
 
 test('a cloud sequence rejects broken cadence, coverage, pairing, or bounding provenance', async () => {

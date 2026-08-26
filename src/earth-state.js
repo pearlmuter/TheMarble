@@ -1,6 +1,8 @@
 import { earthStateSha256 } from './earth-state-codec.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
+export const EARTH_STATE_OPTIONAL_LAYERS = ['snowCover', 'seaIce'];
+export const EARTH_STATE_LAYER_NAMES = [...EARTH_STATE_REQUIRED_LAYERS, ...EARTH_STATE_OPTIONAL_LAYERS];
 export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
 const CLASSIFICATIONS = new Set(['static-fallback', 'observed', 'model-assisted']);
@@ -143,6 +145,32 @@ function validateCloudSequence(manifest, datasetIds) {
   }
 }
 
+function validateCryosphereLayers(manifest) {
+  const hasSnow = Object.hasOwn(manifest.layers, 'snowCover');
+  const hasSeaIce = Object.hasOwn(manifest.layers, 'seaIce');
+  if (hasSnow !== hasSeaIce) fail(hasSnow ? 'layers.seaIce' : 'layers.snowCover');
+  if (!hasSnow) return;
+  for (const name of EARTH_STATE_OPTIONAL_LAYERS) {
+    const provenance = manifest.layers[name].provenance;
+    const path = `layers.${name}.provenance`;
+    if (!isRecord(provenance)) fail(path);
+    for (const field of ['validAt', 'producedAt', 'retrievedAt']) {
+      if (typeof provenance[field] !== 'string' || Number.isNaN(Date.parse(provenance[field]))) fail(`${path}.${field}`);
+    }
+    if (!(Date.parse(provenance.validAt) <= Date.parse(provenance.producedAt)
+      && Date.parse(provenance.producedAt) <= Date.parse(provenance.retrievedAt))) fail(`${path}.validAt`);
+    for (const field of ['sourceVersion', 'fallback', 'attribution']) requireString(provenance[field], `${path}.${field}`);
+    const coverage = provenance.coverage;
+    if (!isRecord(coverage)
+      || !Number.isFinite(coverage.observedFraction) || coverage.observedFraction < 0 || coverage.observedFraction > 1
+      || !Number.isFinite(coverage.fallbackFraction) || coverage.fallbackFraction < 0 || coverage.fallbackFraction > 1
+      || !Array.isArray(coverage.latitudeRange) || coverage.latitudeRange.length !== 2
+      || !coverage.latitudeRange.every(Number.isFinite)
+      || coverage.latitudeRange[0] < -90 || coverage.latitudeRange[1] > 90
+      || coverage.latitudeRange[0] >= coverage.latitudeRange[1]) fail(`${path}.coverage`);
+  }
+}
+
 async function verifyLoadedAsset(loaded, reference, path) {
   if (!isRecord(loaded) || !('value' in loaded) || !(loaded.bytes instanceof Uint8Array)) {
     throw new Error(`Earth-state loader did not return verifiable bytes for ${path}`);
@@ -190,7 +218,7 @@ export function validateEarthStateManifest(manifest) {
     datasetIds.add(dataset.id);
   });
 
-  requireEntries(manifest, 'layers', EARTH_STATE_REQUIRED_LAYERS);
+  requireEntries(manifest, 'layers', EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_LAYER_NAMES);
   requireEntries(manifest, 'resources', EARTH_STATE_REQUIRED_RESOURCES);
 
   for (const [name, layer] of Object.entries(manifest.layers)) {
@@ -207,6 +235,7 @@ export function validateEarthStateManifest(manifest) {
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
     if (name === 'surfaceAlbedo') validateSeasonalCycle(layer, path, datasetIds);
     else if (layer.seasonalCycle !== undefined) fail(`${path}.seasonalCycle`);
+    if (!EARTH_STATE_OPTIONAL_LAYERS.includes(name) && layer.provenance !== undefined) fail(`${path}.provenance`);
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {
@@ -216,6 +245,7 @@ export function validateEarthStateManifest(manifest) {
   }
 
   validateCloudSequence(manifest, datasetIds);
+  validateCryosphereLayers(manifest);
 }
 
 export function validateEarthStateLatest(latest) {
@@ -226,7 +256,7 @@ export function validateEarthStateLatest(latest) {
   if (latest.manifest.mediaType !== 'application/json') fail('latest.manifest.mediaType');
 }
 
-function requireEntries(manifest, groupName, names) {
+function requireEntries(manifest, groupName, names, supportedNames = names) {
   const entries = manifest?.[groupName];
   for (const name of names) {
     if (!entries || !Object.hasOwn(entries, name)) {
@@ -234,7 +264,7 @@ function requireEntries(manifest, groupName, names) {
     }
   }
   for (const name of Object.keys(entries)) {
-    if (!names.includes(name)) throw new Error(`Earth-state manifest has unsupported ${groupName}.${name}`);
+    if (!supportedNames.includes(name)) throw new Error(`Earth-state manifest has unsupported ${groupName}.${name}`);
   }
 }
 

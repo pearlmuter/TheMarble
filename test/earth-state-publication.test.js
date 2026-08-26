@@ -122,6 +122,36 @@ function addCloudSequenceToSource(source) {
   source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
 }
 
+function addCryosphereToSource(source) {
+  const manifestUrl = 'https://fixtures.test/source/manifest.json';
+  const manifest = JSON.parse(new TextDecoder().decode(source.get(manifestUrl).bytes));
+  const addLayer = (name, filename) => {
+    const bytes = encoder.encode(`fixture:${filename}`);
+    const href = `./${filename}.png`;
+    source.set(new URL(href, manifestUrl).href, { bytes, mediaType: 'image/png' });
+    manifest.layers[name] = {
+      datasetId: 'fixture-cryosphere',
+      units: 'fraction',
+      dimensions: { width: 4, height: 2 },
+      colorSpace: 'linear',
+      channels: { r: 'fraction', g: 'confidence', b: 'source code' },
+      textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+      asset: { href, mediaType: 'image/png', byteLength: bytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum(bytes) } },
+      provenance: {
+        validAt: '2026-08-25T00:00:00Z', producedAt: '2026-08-25T18:00:00Z', retrievedAt: '2026-08-26T03:00:00Z',
+        sourceVersion: 'IMS v3 + AMSR2 L3 + VNP10_NRT V2',
+        coverage: { observedFraction: 0.96, latitudeRange: [-90, 90], fallbackFraction: 0.5 },
+        fallback: 'AMSR2 global fallback',
+        attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS',
+      },
+    };
+  };
+  manifest.datasets.push({ id: 'fixture-cryosphere', version: '2026-08-25', attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS' });
+  addLayer('snowCover', 'snow-cover');
+  addLayer('seaIce', 'sea-ice');
+  source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
+}
+
 function memoryStore() {
   const files = new Map();
   return {
@@ -207,6 +237,23 @@ test('publication carries both complete hourly cloud observations into the immut
     const previousPath = new URL(previous.layers[name].asset.href, `https://published.test/${publication.manifestPath}`).pathname.slice(1);
     assert.equal(store.files.has(previousPath), true);
   }
+});
+
+test('publication carries snow and sea ice as one immutable daily analysis with provenance', async () => {
+  const source = sourceFixture();
+  addCryosphereToSource(source);
+  const store = memoryStore();
+  const publisher = createEarthStatePublisher({ loadSource: loadSourceFixture(source), store: store.adapter });
+
+  const publication = await publisher.publish({
+    targetTime: '2026-08-26T03:00:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+
+  assert.match(publication.manifest.layers.snowCover.asset.href, /layer-snowCover-/);
+  assert.match(publication.manifest.layers.seaIce.asset.href, /layer-seaIce-/);
+  assert.equal(publication.manifest.layers.snowCover.provenance.validAt, '2026-08-25T00:00:00Z');
+  assert.match(publication.manifest.layers.seaIce.provenance.attribution, /AMSR2/);
 });
 
 test('content-addressed publication reuses immutable static assets across hourly bundles', async () => {

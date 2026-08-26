@@ -15,6 +15,18 @@ export function validateEarthStateScene(activeEarthState, isTexture, { isSeasona
       throw new Error(`Earth-state scene asset ${name} is not a texture`);
     }
   }
+  const hasSnow = Object.hasOwn(activeEarthState?.layers ?? {}, 'snowCover');
+  const hasSeaIce = Object.hasOwn(activeEarthState?.layers ?? {}, 'seaIce');
+  if (hasSnow !== hasSeaIce) {
+    throw new Error(`Earth-state scene asset ${hasSnow ? 'seaIce' : 'snowCover'} is missing`);
+  }
+  if (hasSnow) {
+    for (const name of ['snowCover', 'seaIce']) {
+      if (!isTexture(activeEarthState.layers[name])) {
+        throw new Error(`Earth-state scene asset ${name} is not a texture`);
+      }
+    }
+  }
   for (const name of ['moonAlbedo', 'milkyWay']) {
     if (!isTexture(activeEarthState?.resources?.[name])) {
       throw new Error(`Earth-state scene asset ${name} is not a texture`);

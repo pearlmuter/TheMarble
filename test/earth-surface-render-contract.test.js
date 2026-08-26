@@ -25,3 +25,13 @@ test('cloud color, opacity, quality, and surface shadow crossfade as two complet
   assert.match(mainSource, /mix\(texture2D\(cloudMapFrom,vUv\),texture2D\(cloudMapTo,vUv\),cloudMix\)/);
   assert.match(mainSource, /mix\(texture2D\(cloudDensityFrom,vUv\),texture2D\(cloudDensityTo,vUv\),cloudMix\)/);
 });
+
+test('daily land snow and sea ice have separate physical surface semantics', () => {
+  assert.match(mainSource, /uniform sampler2D snowCoverMap; uniform sampler2D seaIceMap;/);
+  assert.match(mainSource, /float snowCover=texture2D\(snowCoverMap,vUv\)\.r;/);
+  assert.match(mainSource, /float seaIce=texture2D\(seaIceMap,vUv\)\.r;/);
+  assert.match(mainSource, /landSnow=snowCover\*\(1\.0-ocean\)/);
+  assert.match(mainSource, /oceanIce=seaIce\*ocean/);
+  assert.match(mainSource, /roughness=mix\(roughness,[^,]+,oceanIce\)/);
+  assert.doesNotMatch(mainSource, /cloud[^;\n]*snowCover|snowCover[^;\n]*cloud/i);
+});

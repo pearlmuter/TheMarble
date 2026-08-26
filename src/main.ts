@@ -8,7 +8,7 @@ import { loadEarthStateJsonDocument } from './earth-state-document.js';
 import { createIndexedDbEarthStateStorage } from './earth-state-indexeddb.js';
 import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene.js';
 import type { HipparcosPayload } from './earth-state-scene.js';
-import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
+import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
 import type { SeasonalPair } from './seasonal-surface-controller.js';
@@ -98,6 +98,8 @@ const previewLayers: Record<EarthStateLayerName, LoadedSceneAsset> = {
   nightLights: solidTexture(0, 0, 0),
   cloudOpacity: solidTexture(255, 255, 255, 0),
   cloudDensity: solidTexture(0, 0, 0, 0),
+  snowCover: solidTexture(0, 0, 0, 0),
+  seaIce: solidTexture(0, 0, 0, 0),
 };
 const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
   moonAlbedo: solidTexture(38, 38, 38),
@@ -283,6 +285,9 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       applyVerifiedLayer(name, activeEarthState.layers[name]);
     }
   }
+  for (const name of EARTH_STATE_OPTIONAL_LAYERS) {
+    applyVerifiedLayer(name, activeEarthState.layers[name] ?? previewLayers[name]);
+  }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
   const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
@@ -399,6 +404,8 @@ const dayMap = requireTexture(previewLayers.surfaceAlbedo, 'surfaceAlbedo');
 const nightMap = requireTexture(previewLayers.nightLights, 'nightLights');
 const cloudMap = requireTexture(previewLayers.cloudOpacity, 'cloudOpacity');
 const liveWeatherMap = requireTexture(previewLayers.cloudDensity, 'cloudDensity');
+const snowCoverMap = requireTexture(previewLayers.snowCover, 'snowCover');
+const seaIceMap = requireTexture(previewLayers.seaIce, 'seaIce');
 const moonMap = requireTexture(previewResources.moonAlbedo, 'moonAlbedo');
 const milkyWayMap = requireTexture(previewResources.milkyWay, 'milkyWay');
 const celestialSky = new THREE.Group();
@@ -466,6 +473,7 @@ const earthMaterial = new THREE.ShaderMaterial({
   uniforms: {
     dayMapFrom: { value: dayMap }, dayMapTo: { value: dayMap }, seasonalMix: { value: 0 },
     nightMap: { value: nightMap },
+    snowCoverMap: { value: snowCoverMap }, seaIceMap: { value: seaIceMap },
     cloudMapFrom: { value: cloudMap }, cloudMapTo: { value: cloudMap },
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
     sunDirection: { value: new THREE.Vector3(1, 0, 0) }
@@ -473,7 +481,7 @@ const earthMaterial = new THREE.ShaderMaterial({
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*vec4(vViewPosition,1.0); }`,
   fragmentShader: `
     uniform sampler2D dayMapFrom; uniform sampler2D dayMapTo; uniform float seasonalMix;
-    uniform sampler2D nightMap; uniform sampler2D cloudMapFrom; uniform sampler2D cloudMapTo;
+    uniform sampler2D nightMap; uniform sampler2D snowCoverMap; uniform sampler2D seaIceMap; uniform sampler2D cloudMapFrom; uniform sampler2D cloudMapTo;
     uniform sampler2D cloudDensityFrom; uniform sampler2D cloudDensityTo; uniform float cloudMix; uniform vec3 sunDirection;
     varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition;
     void main() {
@@ -486,9 +494,15 @@ const earthMaterial = new THREE.ShaderMaterial({
       float luminance=dot(surface,vec3(.2126,.7152,.0722));
       float blueDominance=surface.b-max(surface.r,surface.g);
       float ocean=smoothstep(.0006,.006,blueDominance)*(1.0-smoothstep(.12,.36,luminance));
+      float snowCover=texture2D(snowCoverMap,vUv).r;
+      float seaIce=texture2D(seaIceMap,vUv).r;
+      float landSnow=snowCover*(1.0-ocean);
+      float oceanIce=seaIce*ocean;
       vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
+      vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*directLight*mix(vec3(1.0),sunlight,.72);
+      land=mix(land,snowAlbedo,landSnow*.94);
       vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
-      float roughness=.19; float alpha2=roughness*roughness; alpha2*=alpha2;
+      float roughness=.19; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
       float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
       float k=roughness*roughness*.5; float geometryView=nDotV/(nDotV*(1.0-k)+k); float geometryLight=nDotL/(nDotL*(1.0-k)+k);
       float fresnel=.0204+(1.0-.0204)*pow(1.0-vDotH,5.0);
@@ -498,6 +512,8 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec3 atmosphericReflection=vec3(.018,.075,.15)*horizonFresnel*(.3+.7*daylight);
       vec3 sunGlint=vec3(1.0,.78,.5)*specular*nDotL*1.3;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
+      vec3 seaIceLight=vec3(.68,.76,.82)*(.3+.92*nDotL)*mix(vec3(1.0),sunlight,.68)+atmosphericReflection*.28;
+      oceanLight=mix(oceanLight,seaIceLight,oceanIce);
       vec3 day=mix(land,oceanLight,ocean);
       vec4 weather=mix(texture2D(cloudDensityFrom,vUv),texture2D(cloudDensityTo,vUv),cloudMix);
       float weatherDensity=mix(.72,1.18,weather.r)*weather.g;
@@ -856,6 +872,14 @@ applyVerifiedLayer = (name, asset) => {
     const previous = earthMaterial.uniforms.nightMap.value;
     earthMaterial.uniforms.nightMap.value = map;
     disposeReplacedTexture(previous, map);
+  } else if (name === 'snowCover') {
+    const previous = earthMaterial.uniforms.snowCoverMap.value;
+    earthMaterial.uniforms.snowCoverMap.value = map;
+    if (previous !== snowCoverMap) disposeReplacedTexture(previous, map);
+  } else if (name === 'seaIce') {
+    const previous = earthMaterial.uniforms.seaIceMap.value;
+    earthMaterial.uniforms.seaIceMap.value = map;
+    if (previous !== seaIceMap) disposeReplacedTexture(previous, map);
   }
 };
 applyVerifiedResource = (name, asset) => {

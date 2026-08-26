@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "publish:earth-state": "node scripts/publish-earth-state.mjs",
     "publish:gmgsi": "node scripts/publish-gmgsi-earth-state.mjs",
+    "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"
