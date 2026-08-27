@@ -2,6 +2,9 @@ node_modules/
 dist/
 src-tauri/target/
 artifacts/
+.venv*/
+__pycache__/
+*.pyc
 
 .DS_Store
 *.log

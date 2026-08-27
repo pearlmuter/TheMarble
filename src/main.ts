@@ -7,6 +7,8 @@ import { loadEarthStateJsonDocument } from './earth-state-document.js';
 import { createIndexedDbEarthStateStorage } from './earth-state-indexeddb.js';
 import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene.js';
 import type { HipparcosPayload } from './earth-state-scene.js';
+import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
+import { formatRollingSurfaceStatus } from './rolling-surface-status.js';
 import { createEarthStateActivator, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
@@ -190,7 +192,7 @@ async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: Ab
   if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle)) {
+  if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
     return { value: await createDeferredSceneTexture(request, bytes, mediaType), bytes, mediaType };
   }
   const loaded = await decodeSceneAsset(request, bytes, mediaType);
@@ -224,7 +226,7 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
     },
     async loadAsset(request) {
       const entry = candidate.read(request.url);
-      if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle)) {
+      if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
         return {
           value: await createDeferredSceneTexture(request, entry.bytes, entry.mediaType),
           bytes: entry.bytes,
@@ -271,10 +273,11 @@ function isDeferredSceneTexture(asset: LoadedSceneAsset): asset is DeferredScene
 }
 
 async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
-  const frames = activeEarthState.seasonalLayers.surfaceAlbedo ?? [];
-  const fallbackSurface = frames.length === 0
-    ? requireLoadedTexture(activeEarthState.layers.surfaceAlbedo, 'surfaceAlbedo')
-    : undefined;
+  const selectedSurface = selectEarthSurfaceForRendering(activeEarthState);
+  const frames = selectedSurface.frames;
+  const fallbackSurface = selectedSurface.fallbackAsset === undefined
+    ? undefined
+    : requireLoadedTexture(selectedSurface.fallbackAsset, 'surfaceAlbedo');
   const seasonalSurface = await seasonalSurfaceController.prepare({ frames, date: sceneNow(), fallbackTexture: fallbackSurface });
   for (const name of EARTH_STATE_REQUIRED_LAYERS) {
     if (name !== 'surfaceAlbedo') applyVerifiedLayer(name, activeEarthState.layers[name]);
@@ -282,7 +285,8 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
   const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
-  weatherFeed = `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
+  const surfaceStatus = formatRollingSurfaceStatus(activeEarthState.manifest.layers.surfaceAlbedo.rollingComposite);
+  weatherFeed = [surfaceStatus, `clouds ${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`].filter(Boolean).join(' · ');
   activeBundleId = activeEarthState.manifest.bundleId;
 }
 

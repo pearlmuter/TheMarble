@@ -10,6 +10,7 @@ export function validateEarthStateScene(activeEarthState, isTexture, { isSeasona
     const asset = activeEarthState?.layers?.[name];
     const isDeferredSeasonalSurface = name === 'surfaceAlbedo'
       && activeEarthState?.manifest?.layers?.surfaceAlbedo?.seasonalCycle
+      && !activeEarthState?.manifest?.layers?.surfaceAlbedo?.rollingComposite
       && isSeasonalSurfaceSource(asset);
     if (!isTexture(asset) && !isDeferredSeasonalSurface) {
       throw new Error(`Earth-state scene asset ${name} is not a texture`);

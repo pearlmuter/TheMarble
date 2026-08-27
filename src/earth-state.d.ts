@@ -1,8 +1,10 @@
 export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-assisted';
 
 export const EARTH_STATE_REQUIRED_LAYERS: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
+export const EARTH_STATE_OPTIONAL_LAYERS: readonly ['surfaceAge'];
 export const EARTH_STATE_REQUIRED_RESOURCES: readonly ['moonAlbedo', 'milkyWay', 'starCatalog'];
 export type EarthStateLayerName = typeof EARTH_STATE_REQUIRED_LAYERS[number];
+export type EarthStateOptionalLayerName = typeof EARTH_STATE_OPTIONAL_LAYERS[number];
 export type EarthStateResourceName = typeof EARTH_STATE_REQUIRED_RESOURCES[number];
 
 export interface EarthStateChecksum {
@@ -46,6 +48,26 @@ export interface EarthStateLayer {
 }
 
 export interface EarthStateSurfaceLayer extends EarthStateLayer {
+  rollingComposite?: {
+    validAt: string;
+    observedFrom: string;
+    observedTo: string;
+    producedAt: string;
+    retrievedAt: string;
+    coverage: { rollingFraction: number; updatedFraction: number; baselineFraction: number };
+    oldestPixelAgeDays: number | null;
+    newestPixelAgeDays: number | null;
+    sourceProducts: Array<'mcd43a4-nbar' | 'viirs-surface-reflectance'>;
+    observationWindows: Array<{
+      index: number;
+      product: 'mcd43a4-nbar' | 'viirs-surface-reflectance';
+      version: string;
+      validAt: string;
+      observedFrom: string;
+      observedTo: string;
+    }>;
+    normalization: { method: 'robust-channel-gain-and-delta-limit'; maxDailyChange: number };
+  };
   seasonalCycle?: {
     interpolation: 'linear';
     frames: Array<{
@@ -84,7 +106,7 @@ export interface EarthStateManifest {
     retrievedAt: string;
   };
   datasets: EarthStateDataset[];
-  layers: Record<Exclude<EarthStateLayerName, 'surfaceAlbedo'>, EarthStateLayer> & { surfaceAlbedo: EarthStateSurfaceLayer };
+  layers: Record<Exclude<EarthStateLayerName, 'surfaceAlbedo'>, EarthStateLayer> & { surfaceAlbedo: EarthStateSurfaceLayer; surfaceAge?: EarthStateLayer };
   resources: Record<EarthStateResourceName, EarthStateResource>;
 }
 
@@ -104,7 +126,7 @@ export type EarthStateAssetRequest = {
   descriptor: EarthStateSurfaceLayer;
   url: string;
 } | {
-  name: Exclude<EarthStateLayerName, 'surfaceAlbedo'>;
+  name: Exclude<EarthStateLayerName, 'surfaceAlbedo'> | EarthStateOptionalLayerName;
   role: 'layer';
   descriptor: EarthStateLayer;
   url: string;
@@ -123,10 +145,10 @@ export type EarthStateAssetRequest = {
 
 export interface ActivatedEarthState<LoadedAsset> {
   manifest: EarthStateManifest;
-  layers: Record<EarthStateLayerName, LoadedAsset>;
+  layers: Record<EarthStateLayerName, LoadedAsset> & { surfaceAge?: LoadedAsset };
   resources: Record<EarthStateResourceName, LoadedAsset>;
   seasonalLayers: { surfaceAlbedo?: Array<{ month: number; value: LoadedAsset }> };
-  layerDatasets: Record<EarthStateLayerName, EarthStateDataset>;
+  layerDatasets: Record<EarthStateLayerName, EarthStateDataset> & { surfaceAge?: EarthStateDataset };
 }
 
 export interface EarthStateActivator<LoadedAsset> {
