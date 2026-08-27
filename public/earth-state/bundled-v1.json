@@ -36,11 +36,9 @@
       "attribution": "Bundled TheMarble fair-cloud texture; original source metadata was not recorded"
     },
     {
-      "id": "nasa-gibs-modis-terra-2026-08-25",
-      "version": "MODIS_Terra_CorrectedReflectance_TrueColor-2026-08-25",
-      "attribution": "NASA EOSDIS GIBS, MODIS Terra corrected-reflectance true color",
-      "observedFrom": "2026-08-25T00:00:00Z",
-      "observedTo": "2026-08-25T23:59:59Z"
+      "id": "bundled-cloud-density-neutral",
+      "version": "sha256-353d66ef8bf255ce",
+      "attribution": "TheMarble neutral confidence control for the bundled static cloud texture"
     },
     {
       "id": "threejs-moon-example",
@@ -122,18 +120,18 @@
       }
     },
     "cloudDensity": {
-      "datasetId": "nasa-gibs-modis-terra-2026-08-25",
-      "units": "normalized density and observation confidence",
-      "dimensions": { "width": 256, "height": 128 },
+      "datasetId": "bundled-cloud-density-neutral",
+      "units": "neutral density modulation and full fallback confidence",
+      "dimensions": { "width": 2, "height": 1 },
       "colorSpace": "linear",
-      "channels": { "r": "density modulation", "g": "observation confidence", "b": "reserved", "a": "reserved" },
+      "channels": { "r": "neutral density modulation", "g": "full fallback confidence", "b": "reserved" },
       "textureSemantics": { "mapping": "equirectangular", "sampling": "linear" },
       "asset": {
-        "href": "/earth-state/cloud-density-modis-terra-2026-08-25.png",
+        "href": "/earth-state/cloud-density-static-neutral.png",
         "mediaType": "image/png",
-        "byteLength": 18804,
+        "byteLength": 70,
         "immutable": true,
-        "checksum": { "algorithm": "sha256", "value": "9d388834cb2349251b05874357c105d90be56987ccca3c2e291f9b5d2e11d8d6" }
+        "checksum": { "algorithm": "sha256", "value": "353d66ef8bf255ce05ff1ce49c50dce9c43f1a317b03f4deb64ceb140fe0d51a" }
       }
     }
   },

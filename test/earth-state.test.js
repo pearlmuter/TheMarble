@@ -81,6 +81,151 @@ function fixtureManifest() {
   };
 }
 
+function addHourlyCloudSequence(manifest) {
+  const frame = (hour, suffix, producedMinute, observedFraction) => ({
+    validAt: `2026-08-25T${hour}:00:00Z`,
+    observedFrom: `2026-08-25T${hour}:00:00Z`,
+    observedTo: `2026-08-25T${hour}:09:59Z`,
+    producedAt: `2026-08-25T${hour}:${producedMinute}:00Z`,
+    retrievedAt: `2026-08-25T${hour}:48:00Z`,
+    coverage: { observedFraction, latitudeRange: [-72.7, 72.7] },
+    layers: {
+      cloudOpacity: {
+        datasetId: 'earth',
+        asset: { ...manifest.layers.cloudOpacity.asset, href: `./clouds-${suffix}.png` },
+      },
+      cloudDensity: {
+        datasetId: 'earth',
+        asset: { ...manifest.layers.cloudDensity.asset, href: `./cloud-density-${suffix}.png` },
+      },
+    },
+  });
+  const frames = [frame('11', '11', '42', 0.79), frame('12', '12', '43', 0.8)];
+  manifest.cloudSequence = { interpolation: 'crossfade', transitionSeconds: 300, frames };
+  manifest.layers.cloudOpacity.asset = structuredClone(frames[1].layers.cloudOpacity.asset);
+  manifest.layers.cloudDensity.asset = structuredClone(frames[1].layers.cloudDensity.asset);
+  manifest.times = {
+    observedFrom: frames[0].observedFrom,
+    observedTo: frames[1].observedTo,
+    validAt: frames[1].validAt,
+    producedAt: frames[1].producedAt,
+    retrievedAt: frames[1].retrievedAt,
+  };
+  manifest.classification = 'observed';
+  return frames;
+}
+
+function addSatcorpsCloudSequence(manifest) {
+  const physicalLayer = (href, channels) => ({
+    datasetId: 'earth',
+    units: 'normalized physical retrieval',
+    dimensions: { width: 4, height: 2 },
+    colorSpace: 'linear',
+    channels,
+    textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+    asset: { ...manifest.layers.cloudOpacity.asset, href },
+  });
+  manifest.layers.cloudPhysics = physicalLayer('./cloud-physics-1300.png', {
+    r: 'log optical depth / log(151)', g: 'thermodynamic phase', b: 'effective height / 20 km', a: 'retrieval quality',
+  });
+  manifest.layers.cloudAge = physicalLayer('./cloud-age-1300.png', { r: 'absolute observation age / 3 hours' });
+  const frame = (hour, suffix) => ({
+    validAt: `2026-08-25T${hour}:00:00Z`,
+    observedFrom: `2026-08-25T${hour}:00:00Z`,
+    observedTo: `2026-08-25T${hour}:09:59Z`,
+    producedAt: `2026-08-25T${hour}:30:00Z`,
+    retrievedAt: '2026-08-25T13:45:00Z',
+    coverage: { observedFraction: .97, latitudeRange: [-90, 90], usableFraction: .94 },
+    layers: Object.fromEntries(['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge'].map(name => [name, {
+      datasetId: 'earth',
+      asset: {
+        ...manifest.layers[name].asset,
+        href: `./${name}-${suffix}.png`,
+      },
+    }])),
+  });
+  const frames = [frame('12', '1200'), frame('13', '1300')];
+  manifest.cloudSequence = { provider: 'satcorps', interpolation: 'crossfade', transitionSeconds: 300, frames };
+  for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
+    manifest.layers[name].asset = structuredClone(frames[1].layers[name].asset);
+  }
+  manifest.times = {
+    observedFrom: frames[0].observedFrom,
+    observedTo: frames[1].observedTo,
+    validAt: frames[1].validAt,
+    producedAt: frames[1].producedAt,
+    retrievedAt: frames[1].retrievedAt,
+  };
+  manifest.classification = 'observed';
+  return frames;
+}
+
+function addCloudGapCompletion(manifest) {
+  const frames = addHourlyCloudSequence(manifest);
+  manifest.layers.cloudProvenance = {
+    ...manifest.layers.cloudDensity,
+    colorSpace: 'linear',
+    channels: { r: 'source class', g: 'observation age', b: 'source quality', a: 'native contribution' },
+    asset: { ...manifest.layers.cloudDensity.asset, href: './cloud-provenance-12.png' },
+  };
+  manifest.cloudSequence.gapCompletion = {
+    maxObservationAgeSeconds: 10_800,
+    minObservationQuality: .72,
+    seamBlendPixels: 3,
+  };
+  for (const [index, frame] of frames.entries()) {
+    const polarObservedTo = new Date(Date.parse(frame.validAt) - 4 * 60 * 1000).toISOString();
+    const polarObservedFrom = new Date(Date.parse(polarObservedTo) - 16 * 60 * 1000).toISOString();
+    frame.coverage = {
+      observedFraction: index === 0 ? .72 : .75,
+      primaryObservedFraction: index === 0 ? .64 : .67,
+      polarObservedFraction: .08,
+      modelAssistedFraction: .2,
+      fallbackFraction: index === 0 ? .08 : .05,
+      latitudeRange: [-90, 90],
+    };
+    frame.assistance = {
+      polarObservation: {
+        product: 'viirs-cloud', version: 'v2',
+        observedFrom: polarObservedFrom, observedTo: polarObservedTo,
+      },
+      model: { product: 'gfs-total-cloud', version: '0p25-v16', runAt: '2026-08-25T06:00:00Z', forecastHour: index + 5 },
+      staticFallback: 'Bundled climatological cloud texture fills the final rejected pixels.',
+    };
+    frame.layers.cloudProvenance = {
+      datasetId: 'earth',
+      asset: { ...manifest.layers.cloudProvenance.asset, href: `./cloud-provenance-${index === 0 ? '11' : '12'}.png` },
+    };
+  }
+  manifest.layers.cloudProvenance.asset = structuredClone(frames[1].layers.cloudProvenance.asset);
+  manifest.classification = 'model-assisted';
+  return frames;
+}
+
+function addDailyCryosphere(manifest) {
+  const textureDescriptor = href => ({
+    datasetId: 'cryosphere',
+    units: 'fraction',
+    dimensions: { width: 4, height: 2 },
+    colorSpace: 'linear',
+    channels: { r: 'fraction', g: 'confidence', b: 'source code' },
+    textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+    asset: { href, mediaType: 'image/png', byteLength: fixtureBytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum } },
+    provenance: {
+      validAt: '2026-08-25T00:00:00Z',
+      producedAt: '2026-08-25T18:00:00Z',
+      retrievedAt: '2026-08-26T03:00:00Z',
+      sourceVersion: 'IMS v3 + AMSR2 L3 + VNP10_NRT V2',
+      coverage: { observedFraction: 0.96, latitudeRange: [-90, 90], fallbackFraction: 0.5 },
+      fallback: 'AMSR2 fills the Southern Hemisphere and any missing IMS coverage.',
+      attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS, modified by TheMarble',
+    },
+  });
+  manifest.datasets.push({ id: 'cryosphere', version: '2026-08-25', attribution: 'USNIC IMS; NASA/JAXA AMSR2; NASA VIIRS' });
+  manifest.layers.snowCover = textureDescriptor('./snow.png');
+  manifest.layers.seaIce = textureDescriptor('./sea-ice.png');
+}
+
 test('a complete Earth-state manifest activates one coherent scene asset set', async () => {
   const manifest = fixtureManifest();
   const loadedUrls = [];
@@ -100,6 +245,187 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   assert.equal(activated.layerDatasets.surfaceAlbedo.version, 'fixture-1');
   assert.equal(loadedUrls.length, 7);
   assert.equal(activator.current, activated);
+});
+
+test('an hourly cloud sequence activates two complete observation states with truthful windows', async () => {
+  const manifest = fixtureManifest();
+  addHourlyCloudSequence(manifest);
+  const loadedUrls = [];
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => {
+      loadedUrls.push(url);
+      return loaded(`loaded:${url}`);
+    },
+  });
+
+  const activated = await activator.activate('https://example.test/states/clouds/manifest.json');
+
+  assert.deepEqual(
+    activated.cloudSequence.frames.map(frame => [frame.validAt, frame.observedFrom, frame.observedTo]),
+    [
+      ['2026-08-25T11:00:00Z', '2026-08-25T11:00:00Z', '2026-08-25T11:09:59Z'],
+      ['2026-08-25T12:00:00Z', '2026-08-25T12:00:00Z', '2026-08-25T12:09:59Z'],
+    ],
+  );
+  assert.match(activated.cloudSequence.frames[0].layers.cloudOpacity, /clouds-11\.png$/);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudOpacity, activated.layers.cloudOpacity);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudDensity, activated.layers.cloudDensity);
+  assert.equal(loadedUrls.length, 9);
+});
+
+test('a SatCORPS sequence activates all physical fields as one coherent hourly observation pair', async () => {
+  const manifest = fixtureManifest();
+  addSatcorpsCloudSequence(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/satcorps/manifest.json');
+
+  assert.equal(activated.cloudSequence.provider, 'satcorps');
+  assert.deepEqual(activated.cloudSequence.frames.map(frame => frame.validAt), [
+    '2026-08-25T12:00:00Z', '2026-08-25T13:00:00Z',
+  ]);
+  for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
+    assert.match(activated.cloudSequence.frames[0].layers[name], new RegExp(`${name}-1200\\.png$`));
+    assert.equal(activated.cloudSequence.frames[1].layers[name], activated.layers[name]);
+  }
+});
+
+test('gap-completed clouds activate provenance and assistance metadata as one coherent pair', async () => {
+  const manifest = fixtureManifest();
+  addCloudGapCompletion(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/gap-completed/manifest.json');
+
+  assert.equal(activated.manifest.classification, 'model-assisted');
+  assert.equal(activated.cloudSequence.gapCompletion.maxObservationAgeSeconds, 10_800);
+  assert.equal(activated.cloudSequence.frames[1].coverage.observedFraction, .75);
+  assert.equal(activated.cloudSequence.frames[1].coverage.modelAssistedFraction, .2);
+  assert.equal(activated.cloudSequence.frames[1].coverage.fallbackFraction, .05);
+  assert.equal(activated.cloudSequence.frames[1].assistance.model.forecastHour, 6);
+  assert.match(activated.cloudSequence.frames[0].layers.cloudProvenance, /cloud-provenance-11\.png$/);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudProvenance, activated.layers.cloudProvenance);
+});
+
+test('gap completion rejects unclassified area, missing provenance, or undisclosed model assistance', async () => {
+  const cases = [
+    ['cloudSequence.frames.1.coverage', manifest => { manifest.cloudSequence.frames[1].coverage.fallbackFraction = .04; }],
+    ['cloudSequence.frames.0.layers.cloudProvenance', manifest => { delete manifest.cloudSequence.frames[0].layers.cloudProvenance; }],
+    ['cloudSequence.frames.1.assistance.model', manifest => { delete manifest.cloudSequence.frames[1].assistance.model; }],
+  ];
+
+  for (const [expectedPath, mutate] of cases) {
+    const manifest = fixtureManifest();
+    addCloudGapCompletion(manifest);
+    mutate(manifest);
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => loaded('unused'),
+    });
+
+    await assert.rejects(
+      activator.activate('https://example.test/states/invalid-gap/manifest.json'),
+      new RegExp(expectedPath.replaceAll('.', '\\.')),
+    );
+  }
+});
+
+test('a physical cloud observation is rejected atomically when one field is absent or unpaired', async () => {
+  for (const mutate of [
+    manifest => { delete manifest.layers.cloudAge; },
+    manifest => { delete manifest.cloudSequence.frames[0].layers.cloudPhysics; },
+    manifest => { manifest.cloudSequence.frames[1].coverage.usableFraction = .69; },
+  ]) {
+    const manifest = fixtureManifest();
+    addSatcorpsCloudSequence(manifest);
+    mutate(manifest);
+    let loads = 0;
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => { loads += 1; return loaded('unused'); },
+    });
+    await assert.rejects(() => activator.activate('https://example.test/states/satcorps/manifest.json'), /cloudAge|cloudPhysics|usableFraction/);
+    assert.equal(loads, 0);
+  }
+});
+
+test('daily snow cover and sea ice activate as distinct layers with explicit provenance', async () => {
+  const manifest = fixtureManifest();
+  addDailyCryosphere(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/fixture/manifest.json');
+
+  assert.match(activated.layers.snowCover, /snow\.png$/);
+  assert.match(activated.layers.seaIce, /sea-ice\.png$/);
+  assert.equal(activated.manifest.layers.snowCover.provenance.coverage.fallbackFraction, 0.5);
+  assert.match(activated.manifest.layers.seaIce.provenance.attribution, /AMSR2/);
+});
+
+test('a cryosphere update is atomic and rejects a missing paired layer or dishonest coverage', async () => {
+  for (const mutate of [
+    manifest => { delete manifest.layers.seaIce; },
+    manifest => { manifest.layers.snowCover.provenance.coverage.fallbackFraction = 1.01; },
+  ]) {
+    const manifest = fixtureManifest();
+    addDailyCryosphere(manifest);
+    mutate(manifest);
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => loaded('unused'),
+    });
+    await assert.rejects(() => activator.activate('https://example.test/manifest.json'), /snowCover|seaIce|fallbackFraction/);
+  }
+});
+
+test('a cloud sequence rejects broken cadence, coverage, pairing, or bounding provenance', async () => {
+  const cases = [
+    ['cloudSequence.frames.1.validAt', manifest => {
+      const frame = manifest.cloudSequence.frames[1];
+      frame.validAt = '2026-08-25T13:00:00Z';
+      frame.observedFrom = '2026-08-25T13:00:00Z';
+      frame.observedTo = '2026-08-25T13:09:59Z';
+      frame.producedAt = '2026-08-25T13:43:00Z';
+      frame.retrievedAt = '2026-08-25T13:48:00Z';
+      Object.assign(manifest.times, {
+        observedTo: frame.observedTo,
+        validAt: frame.validAt,
+        producedAt: frame.producedAt,
+        retrievedAt: frame.retrievedAt,
+      });
+    }],
+    ['cloudSequence.frames.0.coverage', manifest => { manifest.cloudSequence.frames[0].coverage.observedFraction = 1.01; }],
+    ['cloudSequence.frames.1.layers.cloudOpacity.asset', manifest => { manifest.layers.cloudOpacity.asset.href = './different.png'; }],
+    ['times.observedFrom', manifest => { manifest.times.observedFrom = '2026-08-25T10:00:00Z'; }],
+    ['times.validAt', manifest => { manifest.times.validAt = '2026-08-25T11:00:00Z'; }],
+  ];
+
+  for (const [expectedPath, mutate] of cases) {
+    const manifest = fixtureManifest();
+    addHourlyCloudSequence(manifest);
+    mutate(manifest);
+    let loads = 0;
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => { loads += 1; return loaded(undefined); },
+    });
+
+    await assert.rejects(
+      activator.activate('https://example.test/states/invalid/manifest.json'),
+      new RegExp(expectedPath.replaceAll('.', '\\.')),
+    );
+    assert.equal(loads, 0);
+  }
 });
 
 test('a seasonal surface contract activates all 12 immutable monthly states coherently', async () => {
@@ -274,7 +600,7 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /bmng-2004-12-5400\.jpg$/);
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
-  assert.match(activated.layers.cloudDensity, /cloud-density-modis-terra-2026-08-25\.png$/);
+  assert.match(activated.layers.cloudDensity, /cloud-density-static-neutral\.png$/);
   assert.match(activated.resources.moonAlbedo, /moon-1024\.jpg$/);
   assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-16k\.jpg$/);
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);

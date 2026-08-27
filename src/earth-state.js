@@ -1,6 +1,11 @@
 import { earthStateSha256 } from './earth-state-codec.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
+export const EARTH_STATE_CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
+export const EARTH_STATE_PHYSICAL_CLOUD_LAYERS = ['cloudPhysics', 'cloudAge'];
+export const EARTH_STATE_CLOUD_AUDIT_LAYERS = ['cloudProvenance'];
+export const EARTH_STATE_OPTIONAL_LAYERS = [...EARTH_STATE_CRYOSPHERE_LAYERS, ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS, ...EARTH_STATE_CLOUD_AUDIT_LAYERS];
+export const EARTH_STATE_LAYER_NAMES = [...EARTH_STATE_REQUIRED_LAYERS, ...EARTH_STATE_OPTIONAL_LAYERS];
 export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
 const CLASSIFICATIONS = new Set(['static-fallback', 'observed', 'model-assisted']);
@@ -65,6 +70,186 @@ function validateSeasonalCycle(layer, path, datasetIds) {
   if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
 }
 
+function validateCoverage(coverage, path) {
+  if (!isRecord(coverage)
+    || !Number.isFinite(coverage.observedFraction)
+    || coverage.observedFraction < 0
+    || coverage.observedFraction > 1
+    || !Array.isArray(coverage.latitudeRange)
+    || coverage.latitudeRange.length !== 2
+    || !coverage.latitudeRange.every(Number.isFinite)
+    || coverage.latitudeRange[0] < -90
+    || coverage.latitudeRange[1] > 90
+    || coverage.latitudeRange[0] >= coverage.latitudeRange[1]) {
+    fail(path);
+  }
+}
+
+function validateCloudSequence(manifest, datasetIds) {
+  const sequence = manifest.cloudSequence;
+  if (sequence === undefined) return;
+  if (!isRecord(sequence)) fail('cloudSequence');
+  const provider = sequence.provider ?? 'gmgsi';
+  if (!['gmgsi', 'satcorps'].includes(provider)) fail('cloudSequence.provider');
+  const gapCompletion = sequence.gapCompletion;
+  if (gapCompletion !== undefined) {
+    if (!isRecord(gapCompletion)
+      || !Number.isSafeInteger(gapCompletion.maxObservationAgeSeconds) || gapCompletion.maxObservationAgeSeconds <= 0
+      || !Number.isFinite(gapCompletion.minObservationQuality) || gapCompletion.minObservationQuality < 0 || gapCompletion.minObservationQuality > 1
+      || !Number.isSafeInteger(gapCompletion.seamBlendPixels) || gapCompletion.seamBlendPixels < 0) {
+      fail('cloudSequence.gapCompletion');
+    }
+  }
+  const layerNames = provider === 'satcorps'
+    ? ['cloudOpacity', 'cloudDensity', ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS]
+    : ['cloudOpacity', 'cloudDensity'];
+  if (gapCompletion) layerNames.push(...EARTH_STATE_CLOUD_AUDIT_LAYERS);
+  if (sequence.interpolation !== 'crossfade') fail('cloudSequence.interpolation');
+  if (!Number.isSafeInteger(sequence.transitionSeconds) || sequence.transitionSeconds <= 0) {
+    fail('cloudSequence.transitionSeconds');
+  }
+  if (!Array.isArray(sequence.frames) || sequence.frames.length !== 2) fail('cloudSequence.frames');
+
+  for (const [index, frame] of sequence.frames.entries()) {
+    const path = `cloudSequence.frames.${index}`;
+    if (!isRecord(frame)) fail(path);
+    for (const field of TIMESTAMP_FIELDS) {
+      const value = frame[field];
+      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) fail(`${path}.${field}`);
+    }
+    validateCoverage(frame.coverage, `${path}.coverage`);
+    for (const field of ['visibleOptimalFraction', 'longwaveOptimalFraction']) {
+      const fraction = frame.coverage[field];
+      if (fraction !== undefined && (!Number.isFinite(fraction) || fraction < 0 || fraction > 1)) {
+        fail(`${path}.coverage.${field}`);
+      }
+    }
+    if (!isRecord(frame.layers)) fail(`${path}.layers`);
+    for (const name of Object.keys(frame.layers)) {
+      if (!layerNames.includes(name)) fail(`${path}.layers.${name}`);
+    }
+    for (const name of layerNames) {
+      const descriptor = frame.layers[name];
+      if (!isRecord(descriptor) || !datasetIds.has(descriptor.datasetId)) fail(`${path}.layers.${name}.datasetId`);
+      validateAsset(descriptor.asset, `${path}.layers.${name}.asset`);
+    }
+    if (provider === 'satcorps' && (!Number.isFinite(frame.coverage.usableFraction)
+      || frame.coverage.usableFraction < .7 || frame.coverage.usableFraction > 1)) {
+      fail(`${path}.coverage.usableFraction`);
+    }
+    if (gapCompletion) {
+      for (const field of ['primaryObservedFraction', 'polarObservedFraction', 'modelAssistedFraction', 'fallbackFraction']) {
+        const fraction = frame.coverage[field];
+        if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) fail(`${path}.coverage.${field}`);
+      }
+      if (Math.abs(frame.coverage.primaryObservedFraction + frame.coverage.polarObservedFraction
+        - frame.coverage.observedFraction) > 0.001) fail(`${path}.coverage.observedFraction`);
+      const total = frame.coverage.observedFraction + frame.coverage.modelAssistedFraction + frame.coverage.fallbackFraction;
+      if (Math.abs(total - 1) > 0.001) fail(`${path}.coverage`);
+      if (!isRecord(frame.assistance)) fail(`${path}.assistance`);
+      const model = frame.assistance.model;
+      if (frame.coverage.modelAssistedFraction > 0) {
+        if (!isRecord(model) || model.product !== 'gfs-total-cloud') fail(`${path}.assistance.model`);
+        requireString(model.version, `${path}.assistance.model.version`);
+        if (typeof model.runAt !== 'string' || Number.isNaN(Date.parse(model.runAt))) fail(`${path}.assistance.model.runAt`);
+        if (!Number.isSafeInteger(model.forecastHour) || model.forecastHour < 0
+          || Date.parse(frame.validAt) - Date.parse(model.runAt) !== model.forecastHour * 60 * 60 * 1000) {
+          fail(`${path}.assistance.model.forecastHour`);
+        }
+      } else if (model !== undefined) fail(`${path}.assistance.model`);
+      const polar = frame.assistance.polarObservation;
+      if (polar !== undefined) {
+        if (!isRecord(polar) || !['viirs-cloud', 'modis-cloud'].includes(polar.product)) fail(`${path}.assistance.polarObservation`);
+        requireString(polar.version, `${path}.assistance.polarObservation.version`);
+        for (const field of ['observedFrom', 'observedTo']) {
+          if (typeof polar[field] !== 'string' || Number.isNaN(Date.parse(polar[field]))) fail(`${path}.assistance.polarObservation.${field}`);
+        }
+        if (Date.parse(polar.observedFrom) > Date.parse(polar.observedTo)
+          || Date.parse(polar.observedTo) > Date.parse(frame.validAt)
+          || Date.parse(frame.validAt) - Date.parse(polar.observedTo) > gapCompletion.maxObservationAgeSeconds * 1000) {
+          fail(`${path}.assistance.polarObservation.observedTo`);
+        }
+      }
+      if (frame.coverage.fallbackFraction > 0) requireString(frame.assistance.staticFallback, `${path}.assistance.staticFallback`);
+    } else if (frame.assistance !== undefined) fail(`${path}.assistance`);
+    const observedFrom = Date.parse(frame.observedFrom);
+    const observedTo = Date.parse(frame.observedTo);
+    const validAt = Date.parse(frame.validAt);
+    const producedAt = Date.parse(frame.producedAt);
+    const retrievedAt = Date.parse(frame.retrievedAt);
+    if (!(observedFrom <= validAt && validAt <= observedTo && observedTo <= producedAt && producedAt <= retrievedAt)) {
+      fail(`${path}.observedFrom`);
+    }
+    const validDate = new Date(validAt);
+    const validMinutes = [0];
+    if (!validMinutes.includes(validDate.getUTCMinutes()) || validDate.getUTCSeconds() !== 0 || validDate.getUTCMilliseconds() !== 0) {
+      fail(`${path}.validAt`);
+    }
+  }
+
+  if (gapCompletion) {
+    const expectedClassification = sequence.frames.some(frame => frame.coverage.modelAssistedFraction > 0)
+      ? 'model-assisted'
+      : sequence.frames.some(frame => frame.coverage.observedFraction > 0) ? 'observed' : 'static-fallback';
+    if (manifest.classification !== expectedClassification) fail('classification');
+  }
+
+  const cadenceMs = 60 * 60 * 1000;
+  if (Date.parse(sequence.frames[1].validAt) - Date.parse(sequence.frames[0].validAt) !== cadenceMs) {
+    fail('cloudSequence.frames.1.validAt');
+  }
+
+  const latest = sequence.frames[1];
+  for (const name of layerNames) {
+    if (!manifest.layers[name]) fail(`layers.${name}`);
+    if (manifest.layers[name].datasetId !== latest.layers[name].datasetId
+      || !sameAssetReference(manifest.layers[name].asset, latest.layers[name].asset)) {
+      fail(`cloudSequence.frames.1.layers.${name}.asset`);
+    }
+  }
+  const expectedManifestTimes = {
+    observedFrom: sequence.frames[0].observedFrom,
+    observedTo: latest.observedTo,
+    validAt: latest.validAt,
+    producedAt: latest.producedAt,
+    retrievedAt: latest.retrievedAt,
+  };
+  for (const [field, expected] of Object.entries(expectedManifestTimes)) {
+    if (manifest.times[field] !== expected) fail(`times.${field}`);
+  }
+}
+
+function validateCryosphereLayers(manifest) {
+  const hasSnow = Object.hasOwn(manifest.layers, 'snowCover');
+  const hasSeaIce = Object.hasOwn(manifest.layers, 'seaIce');
+  if (hasSnow !== hasSeaIce) fail(hasSnow ? 'layers.seaIce' : 'layers.snowCover');
+  if (!hasSnow) return;
+  for (const name of EARTH_STATE_CRYOSPHERE_LAYERS) {
+    const provenance = manifest.layers[name].provenance;
+    const path = `layers.${name}.provenance`;
+    if (!isRecord(provenance)) fail(path);
+    for (const field of ['validAt', 'producedAt', 'retrievedAt']) {
+      if (typeof provenance[field] !== 'string' || Number.isNaN(Date.parse(provenance[field]))) fail(`${path}.${field}`);
+    }
+    if (!(Date.parse(provenance.validAt) <= Date.parse(provenance.producedAt)
+      && Date.parse(provenance.producedAt) <= Date.parse(provenance.retrievedAt))) fail(`${path}.validAt`);
+    for (const field of ['sourceVersion', 'fallback', 'attribution']) requireString(provenance[field], `${path}.${field}`);
+    const coverage = provenance.coverage;
+    validateCoverage(coverage, `${path}.coverage`);
+    if (!Number.isFinite(coverage.fallbackFraction) || coverage.fallbackFraction < 0 || coverage.fallbackFraction > 1) {
+      fail(`${path}.coverage.fallbackFraction`);
+    }
+  }
+}
+
+function validatePhysicalCloudLayers(manifest) {
+  const hasPhysics = Object.hasOwn(manifest.layers, 'cloudPhysics');
+  const hasAge = Object.hasOwn(manifest.layers, 'cloudAge');
+  if (hasPhysics !== hasAge) fail(hasPhysics ? 'layers.cloudAge' : 'layers.cloudPhysics');
+  if (manifest.cloudSequence?.provider === 'satcorps' && !hasPhysics) fail('layers.cloudPhysics');
+  if (hasPhysics && manifest.cloudSequence?.provider !== 'satcorps') fail('cloudSequence.provider');
+}
+
 async function verifyLoadedAsset(loaded, reference, path) {
   if (!isRecord(loaded) || !('value' in loaded) || !(loaded.bytes instanceof Uint8Array)) {
     throw new Error(`Earth-state loader did not return verifiable bytes for ${path}`);
@@ -112,7 +297,7 @@ export function validateEarthStateManifest(manifest) {
     datasetIds.add(dataset.id);
   });
 
-  requireEntries(manifest, 'layers', EARTH_STATE_REQUIRED_LAYERS);
+  requireEntries(manifest, 'layers', EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_LAYER_NAMES);
   requireEntries(manifest, 'resources', EARTH_STATE_REQUIRED_RESOURCES);
 
   for (const [name, layer] of Object.entries(manifest.layers)) {
@@ -129,6 +314,7 @@ export function validateEarthStateManifest(manifest) {
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
     if (name === 'surfaceAlbedo') validateSeasonalCycle(layer, path, datasetIds);
     else if (layer.seasonalCycle !== undefined) fail(`${path}.seasonalCycle`);
+    if (!EARTH_STATE_CRYOSPHERE_LAYERS.includes(name) && layer.provenance !== undefined) fail(`${path}.provenance`);
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {
@@ -136,6 +322,10 @@ export function validateEarthStateManifest(manifest) {
     validateDatasetBackedDescriptor(resource, path, datasetIds);
     requireString(resource.semantics, `${path}.semantics`);
   }
+
+  validateCloudSequence(manifest, datasetIds);
+  validateCryosphereLayers(manifest);
+  validatePhysicalCloudLayers(manifest);
 }
 
 export function validateEarthStateLatest(latest) {
@@ -146,7 +336,7 @@ export function validateEarthStateLatest(latest) {
   if (latest.manifest.mediaType !== 'application/json') fail('latest.manifest.mediaType');
 }
 
-function requireEntries(manifest, groupName, names) {
+function requireEntries(manifest, groupName, names, supportedNames = names) {
   const entries = manifest?.[groupName];
   for (const name of names) {
     if (!entries || !Object.hasOwn(entries, name)) {
@@ -154,7 +344,7 @@ function requireEntries(manifest, groupName, names) {
     }
   }
   for (const name of Object.keys(entries)) {
-    if (!names.includes(name)) throw new Error(`Earth-state manifest has unsupported ${groupName}.${name}`);
+    if (!supportedNames.includes(name)) throw new Error(`Earth-state manifest has unsupported ${groupName}.${name}`);
   }
 }
 
@@ -216,9 +406,35 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       seasonalLayers.surfaceAlbedo = frames;
     }
 
+    let cloudSequence;
+    if (manifest.cloudSequence) {
+      const frames = [];
+      for (const [frameIndex, frame] of manifest.cloudSequence.frames.entries()) {
+        const frameLayers = {};
+        for (const name of Object.keys(frame.layers)) {
+          const frameDescriptor = frame.layers[name];
+          if (sameAssetReference(manifest.layers[name].asset, frameDescriptor.asset)) {
+            frameLayers[name] = layers[name];
+            continue;
+          }
+          const descriptor = { ...manifest.layers[name], datasetId: frameDescriptor.datasetId, asset: frameDescriptor.asset };
+          const url = new URL(frameDescriptor.asset.href, baseUrl).href;
+          const request = { name, role: 'cloud-observation-frame', frameIndex, descriptor, url };
+          const loaded = await loadAsset(request, { signal });
+          frameLayers[name] = await verifyLoadedAsset(
+            loaded,
+            frameDescriptor.asset,
+            `cloudSequence.frames.${frameIndex}.layers.${name}`,
+          );
+        }
+        frames.push({ ...frame, layers: frameLayers });
+      }
+      cloudSequence = { ...manifest.cloudSequence, frames };
+    }
+
     const datasetsById = Object.fromEntries(manifest.datasets.map(dataset => [dataset.id, dataset]));
     const layerDatasets = Object.fromEntries(Object.entries(manifest.layers).map(([name, layer]) => [name, datasetsById[layer.datasetId]]));
-    const activated = { manifest, layers, resources, seasonalLayers, layerDatasets };
+    const activated = { manifest, layers, resources, seasonalLayers, cloudSequence, layerDatasets };
     if (signal.aborted) throw new Error('Earth-state activation was aborted');
     current = activated;
     return activated;

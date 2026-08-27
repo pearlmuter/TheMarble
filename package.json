@@ -7,6 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "publish:earth-state": "node scripts/publish-earth-state.mjs",
+    "publish:gmgsi": "node scripts/publish-gmgsi-earth-state.mjs",
+    "publish:clouds": "node scripts/publish-cloud-earth-state.mjs",
+    "publish:cloud-gaps": "node scripts/publish-cloud-gap-earth-state.mjs",
+    "compose:satcorps": "python3 scripts/satcorps_compositor.py",
+    "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"

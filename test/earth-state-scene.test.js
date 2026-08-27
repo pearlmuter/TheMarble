@@ -58,3 +58,32 @@ test('scene semantics allow a verified deferred surface only when the manifest s
     /surfaceAlbedo/,
   );
 });
+
+test('scene semantics reject a cloud sequence unless both complete frames contain textures', () => {
+  const active = activatedScene();
+  const texture = { kind: 'texture' };
+  active.cloudSequence = {
+    frames: [
+      { layers: { cloudOpacity: texture, cloudDensity: { kind: 'decoded-json' } } },
+      { layers: { cloudOpacity: texture, cloudDensity: texture } },
+    ],
+  };
+
+  assert.throws(
+    () => validateEarthStateScene(active, asset => asset?.kind === 'texture'),
+    /cloudSequence\.frames\.0\.layers\.cloudDensity/,
+  );
+});
+
+test('scene semantics require snow and sea ice to arrive as one texture pair', () => {
+  const active = activatedScene();
+  active.layers.snowCover = { kind: 'texture' };
+
+  assert.throws(
+    () => validateEarthStateScene(active, asset => asset?.kind === 'texture'),
+    /seaIce/,
+  );
+
+  active.layers.seaIce = { kind: 'texture' };
+  assert.equal(validateEarthStateScene(active, asset => asset?.kind === 'texture'), active);
+});
