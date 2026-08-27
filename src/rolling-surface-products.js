@@ -6,3 +6,7 @@ export const ROLLING_SURFACE_PRODUCTS = Object.freeze({
 export function rollingSurfaceProduct(product) {
   return ROLLING_SURFACE_PRODUCTS[product];
 }
+
+export function isRollingSurfaceProduct(product) {
+  return rollingSurfaceProduct(product) !== undefined;
+}

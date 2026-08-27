@@ -1,4 +1,4 @@
-import type { RollingSurfaceProduct } from './rolling-surface-selection.js';
+import type { RollingSurfaceProduct } from './rolling-surface-products.js';
 
 export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-assisted';
 

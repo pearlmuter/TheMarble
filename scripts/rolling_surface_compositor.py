@@ -23,72 +23,102 @@ SOURCE_CODES = {
     "mcd43a4-nbar": SOURCE_MCD43A4,
     "viirs-surface-reflectance": SOURCE_VIIRS,
 }
+PROVIDER_REFLECTANCE_SCALE = 0.0001
+MAX_PROVIDER_REFLECTANCE = 1.6
+MCD43_FULL_INVERSION_BIT = 0b1
+VIIRS_QF1_CLOUD_QUALITY_MASK = 0b00000011
+VIIRS_QF1_CLOUD_CONFIDENCE_MASK = 0b00001100
+VIIRS_QF1_NIGHT_MASK = 0b00010000
+VIIRS_QF1_LOW_SUN_MASK = 0b00100000
+VIIRS_QF2_LAND_WATER_MASK = 0b00000111
+VIIRS_QF2_SHADOW_MASK = 0b00001000
+VIIRS_QF2_HEAVY_AEROSOL_AND_CIRRUS_MASK = 0b11010000
+VIIRS_QF3_BAD_M3_M4_M5_SDR_MASK = 0b00011100
+VIIRS_QF5_BAD_M3_M4_M5_REFLECTANCE_MASK = 0b01110000
+VIIRS_QF7_ADJACENT_OR_CIRRUS_MASK = 0b00010010
+VIIRS_QF7_AEROSOL_MASK = 0b00001100
+VIIRS_MAX_GOOD_SENSOR_ZENITH_DEGREES = 55.0
+VIIRS_REJECT_SENSOR_ZENITH_DEGREES = 70.0
 
 
 def decode_provider_observation(data: Any, product: str, window_index: int) -> dict[str, Any]:
     """Decode documented MCD43A4/VNP09 QA fields into the compositor interface."""
     if "reflectance" in data:
-        return {
+        decoded = {
             "product": product,
             "window_index": window_index,
             **{name: np.asarray(data[name]) for name in [
                 "reflectance", "land", "quality", "cloud", "cloud_shadow", "haze", "geometry_quality", "age_days",
             ]},
         }
+        if "tile_id" in data:
+            decoded["tile_id"] = np.asarray(data["tile_id"])
+        return decoded
     if product == "mcd43a4-nbar":
-        reflectance = np.asarray(data["nbar_rgb"], dtype=np.float32) * 0.0001
+        reflectance = np.asarray(data["nbar_rgb"], dtype=np.float32) * PROVIDER_REFLECTANCE_SCALE
         mandatory_quality = np.asarray(data["mandatory_quality_rgb"], dtype=np.uint8)
         if mandatory_quality.shape != reflectance.shape:
             raise ValueError("MCD43A4 mandatory_quality_rgb must match nbar_rgb")
         shape = reflectance.shape[:2]
-        full_inversion = np.all((mandatory_quality & 1) == 0, axis=2)
-        valid = np.all(np.isfinite(reflectance) & (reflectance >= 0) & (reflectance <= 1.6), axis=2)
-        return {
+        full_inversion = np.all((mandatory_quality & MCD43_FULL_INVERSION_BIT) == 0, axis=2)
+        valid = np.all(np.isfinite(reflectance) & (reflectance >= 0) & (reflectance <= MAX_PROVIDER_REFLECTANCE), axis=2)
+        decoded = {
             "product": product,
             "window_index": window_index,
             "reflectance": reflectance,
             "land": _array(data["land"], shape, "land", bool),
-            "quality": np.where(full_inversion & valid, 0.98, 0).astype(np.float32),
+            "quality": np.where(full_inversion & valid, 1, 0).astype(np.float32),
             "cloud": np.zeros(shape, dtype=bool),
             "cloud_shadow": np.zeros(shape, dtype=bool),
             "haze": np.zeros(shape, dtype=bool),
             "geometry_quality": np.ones(shape, dtype=np.float32),
             "age_days": _array(data["age_days"], shape, "age_days", np.float32),
         }
+        if "tile_id" in data:
+            decoded["tile_id"] = np.asarray(data["tile_id"])
+        return decoded
     if product == "viirs-surface-reflectance":
-        reflectance = np.asarray(data["surface_reflectance_rgb"], dtype=np.float32) * 0.0001
+        reflectance = np.asarray(data["surface_reflectance_rgb"], dtype=np.float32) * PROVIDER_REFLECTANCE_SCALE
         shape = reflectance.shape[:2]
         qf1 = _array(data["qf1"], shape, "qf1", np.uint8)
         qf2 = _array(data["qf2"], shape, "qf2", np.uint8)
-        qf4 = _array(data["qf4"], shape, "qf4", np.uint8)
-        qf6 = _array(data["qf6"], shape, "qf6", np.uint8)
+        qf3 = _array(data["qf3"], shape, "qf3", np.uint8)
+        qf5 = _array(data["qf5"], shape, "qf5", np.uint8)
         qf7 = _array(data["qf7"], shape, "qf7", np.uint8)
-        cloud_quality = qf1 & 0b11
-        cloud_confidence = (qf1 >> 2) & 0b11
-        cloud = (cloud_quality < 2) | (cloud_confidence >= 2) | ((qf1 & 0b00010000) != 0) | ((qf1 & 0b00100000) != 0)
-        land_class = qf2 & 0b111
+        cloud_quality = qf1 & VIIRS_QF1_CLOUD_QUALITY_MASK
+        cloud_confidence = (qf1 & VIIRS_QF1_CLOUD_CONFIDENCE_MASK) >> 2
+        cloud = (cloud_quality < 2) | (cloud_confidence >= 2) | ((qf1 & VIIRS_QF1_NIGHT_MASK) != 0) | ((qf1 & VIIRS_QF1_LOW_SUN_MASK) != 0)
+        land_class = qf2 & VIIRS_QF2_LAND_WATER_MASK
         land = (land_class == 0) | (land_class == 1)
-        shadow = (qf2 & 0b00001000) != 0
-        haze = ((qf2 & 0b11010000) != 0) | ((qf7 & 0b00010010) != 0) | (((qf7 >> 2) & 0b11) == 3)
-        bad_rgb = ((qf4 & 0b00001110) != 0) | ((qf6 & 0b00111000) != 0)
-        valid = np.all(np.isfinite(reflectance) & (reflectance >= -0.01) & (reflectance <= 1.6), axis=2)
+        shadow = (qf2 & VIIRS_QF2_SHADOW_MASK) != 0
+        haze = ((qf2 & VIIRS_QF2_HEAVY_AEROSOL_AND_CIRRUS_MASK) != 0) | ((qf7 & VIIRS_QF7_ADJACENT_OR_CIRRUS_MASK) != 0) | ((qf7 & VIIRS_QF7_AEROSOL_MASK) == VIIRS_QF7_AEROSOL_MASK)
+        bad_rgb = ((qf3 & VIIRS_QF3_BAD_M3_M4_M5_SDR_MASK) != 0) | ((qf5 & VIIRS_QF5_BAD_M3_M4_M5_REFLECTANCE_MASK) != 0)
+        valid = np.all(np.isfinite(reflectance) & (reflectance >= -0.01) & (reflectance <= MAX_PROVIDER_REFLECTANCE), axis=2)
         geometry = np.ones(shape, dtype=np.float32)
         if "sensor_zenith_degrees" in data:
             sensor_zenith = np.abs(_array(data["sensor_zenith_degrees"], shape, "sensor_zenith_degrees", np.float32))
-            geometry = np.clip((70 - sensor_zenith) / 15, 0, 1)
+            geometry = np.clip(
+                (VIIRS_REJECT_SENSOR_ZENITH_DEGREES - sensor_zenith)
+                / (VIIRS_REJECT_SENSOR_ZENITH_DEGREES - VIIRS_MAX_GOOD_SENSOR_ZENITH_DEGREES),
+                0,
+                1,
+            )
         accepted = land & ~cloud & ~shadow & ~haze & ~bad_rgb & valid
-        return {
+        decoded = {
             "product": product,
             "window_index": window_index,
             "reflectance": reflectance,
             "land": land,
-            "quality": np.where(accepted, 0.95, 0).astype(np.float32),
+            "quality": np.where(accepted, 1, 0).astype(np.float32),
             "cloud": cloud,
             "cloud_shadow": shadow,
             "haze": haze | bad_rgb,
             "geometry_quality": geometry,
             "age_days": _array(data["age_days"], shape, "age_days", np.float32),
         }
+        if "tile_id" in data:
+            decoded["tile_id"] = np.asarray(data["tile_id"])
+        return decoded
     raise ValueError(f"unsupported rolling-surface product: {product}")
 
 
@@ -212,12 +242,30 @@ def compose_rolling_surface(
         haze = _array(item.get("haze"), pixel_shape, "haze", bool)
         geometry = _array(item.get("geometry_quality"), pixel_shape, "geometry_quality", np.float32)
         observation_age = _array(item.get("age_days"), pixel_shape, "age_days", np.float32)
+        tile_id = item.get("tile_id")
+        if tile_id is not None:
+            tile_id = _array(tile_id, pixel_shape, "tile_id")
         finite = np.all(np.isfinite(reflectance), axis=2) & np.isfinite(quality) & np.isfinite(geometry) & np.isfinite(observation_age)
         eligible = (
             ~updated & land & finite & ~cloud & ~shadow & ~haze
             & (quality >= min_quality) & (geometry >= min_geometry_quality) & (observation_age >= 0)
+            & ((source == SOURCE_BASELINE) | (observation_age < age_days))
         )
-        normalized, gains = _normalize_observation(reflectance, surface, eligible)
+        tile_normalization = []
+        if tile_id is None:
+            normalized, gains = _normalize_observation(reflectance, surface, eligible)
+        else:
+            normalized = reflectance.copy()
+            gains = [1.0, 1.0, 1.0]
+            for tile in np.unique(tile_id[eligible]):
+                tile_mask = eligible & (tile_id == tile)
+                tile_values, tile_gains = _normalize_observation(reflectance, surface, tile_mask)
+                normalized[tile_mask] = tile_values[tile_mask]
+                tile_normalization.append({
+                    "tileId": int(tile) if np.issubdtype(np.asarray(tile).dtype, np.integer) else str(tile),
+                    "gain": tile_gains,
+                    "acceptedPixelCount": int(np.count_nonzero(tile_mask)),
+                })
         limited = np.clip(normalized, surface - permitted_delta, surface + permitted_delta)
         feather = _feather_weights(eligible, int(seam_feather_pixels))
         alpha = feather[eligible][:, None]
@@ -229,6 +277,7 @@ def compose_rolling_surface(
         normalization.append({
             "product": product,
             "gain": gains,
+            "tiles": tile_normalization,
             "acceptedPixelCount": int(np.count_nonzero(eligible)),
         })
 

@@ -1,4 +1,5 @@
-export type RollingSurfaceProduct = 'mcd43a4-nbar' | 'viirs-surface-reflectance';
+import type { RollingSurfaceProduct } from './rolling-surface-products.js';
+export type { RollingSurfaceProduct } from './rolling-surface-products.js';
 
 export interface RollingSurfaceCandidate {
   product: RollingSurfaceProduct;

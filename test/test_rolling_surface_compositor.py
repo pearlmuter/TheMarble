@@ -95,6 +95,44 @@ class RollingSurfaceCompositorTests(unittest.TestCase):
         self.assertGreater(float(result["surface"][0, 3, 0]), float(result["surface"][0, 2, 0]))
         self.assertLess(float(result["surface"][0, 4, 0] - result["surface"][0, 5, 0]), 0.1)
 
+    def test_delayed_clear_pixels_fill_older_land_without_overwriting_fresher_land(self):
+        baseline = np.full((1, 2, 3), 0.1, dtype=np.float32)
+        previous = np.full((1, 2, 3), 0.2, dtype=np.float32)
+        delayed = observation(
+            np.full((1, 2, 3), 0.4, dtype=np.float32),
+            age_days=np.array([[8, 8]], dtype=np.float32),
+        )
+        result = compose_rolling_surface(
+            seasonal_baseline=baseline,
+            previous_surface=previous,
+            previous_age_days=np.array([[1, 12]], dtype=np.uint16),
+            previous_source=np.array([[2, 1]], dtype=np.uint8),
+            previous_window_index=np.array([[2, 1]], dtype=np.uint16),
+            observations=[delayed],
+            elapsed_days=0,
+            seam_feather_pixels=0,
+            max_daily_change=1,
+        )
+
+        self.assertFalse(result["updated"][0, 0])
+        self.assertTrue(result["updated"][0, 1])
+        self.assertEqual(result["age_days"][0, 0], 1)
+        self.assertEqual(result["age_days"][0, 1], 8)
+
+    def test_contiguous_tiles_receive_independent_color_normalization(self):
+        baseline = np.full((1, 4, 3), 0.3, dtype=np.float32)
+        biased = np.array([[[0.4] * 3, [0.4] * 3, [0.2] * 3, [0.2] * 3]], dtype=np.float32)
+        result = compose_rolling_surface(
+            seasonal_baseline=baseline,
+            observations=[observation(biased, tile_id=np.array([[1, 1, 2, 2]], dtype=np.uint16))],
+            elapsed_days=1,
+            seam_feather_pixels=0,
+            max_daily_change=1,
+        )
+
+        self.assertLess(abs(float(result["surface"][0, 1, 0] - result["surface"][0, 2, 0])), 0.06)
+        self.assertEqual(len(result["normalization"][0]["tiles"]), 2)
+
     def test_provider_qa_bits_are_decoded_before_composition(self):
         mcd = decode_provider_observation({
             "nbar_rgb": np.array([[[1000, 2000, 3000], [1000, 2000, 3000]]], dtype=np.uint16),
@@ -110,8 +148,8 @@ class RollingSurfaceCompositorTests(unittest.TestCase):
             "surface_reflectance_rgb": np.full((1, 3, 3), 2000, dtype=np.int16),
             "qf1": np.array([[3, 15, 3]], dtype=np.uint8),
             "qf2": np.array([[0, 0, 8]], dtype=np.uint8),
-            "qf4": np.zeros((1, 3), dtype=np.uint8),
-            "qf6": np.zeros((1, 3), dtype=np.uint8),
+            "qf3": np.zeros((1, 3), dtype=np.uint8),
+            "qf5": np.zeros((1, 3), dtype=np.uint8),
             "qf7": np.zeros((1, 3), dtype=np.uint8),
             "age_days": np.ones((1, 3), dtype=np.float32),
         }, "viirs-surface-reflectance", 2)

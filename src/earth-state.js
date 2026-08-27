@@ -1,4 +1,5 @@
 import { earthStateSha256 } from './earth-state-codec.js';
+import { isRollingSurfaceProduct } from './rolling-surface-products.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_OPTIONAL_LAYERS = ['surfaceAge'];
@@ -95,7 +96,7 @@ function validateRollingComposite(layer, path, datasetIds) {
   if (rolling.coverage.rollingFraction === 0 && (rolling.oldestPixelAgeDays !== null || rolling.newestPixelAgeDays !== null)) {
     fail(`${path}.rollingComposite.oldestPixelAgeDays`);
   }
-  if (!Array.isArray(rolling.sourceProducts) || rolling.sourceProducts.some(product => !['mcd43a4-nbar', 'viirs-surface-reflectance'].includes(product))) {
+  if (!Array.isArray(rolling.sourceProducts) || rolling.sourceProducts.some(product => !isRollingSurfaceProduct(product))) {
     fail(`${path}.rollingComposite.sourceProducts`);
   }
   if (!Array.isArray(rolling.observationWindows)) fail(`${path}.rollingComposite.observationWindows`);
@@ -104,7 +105,7 @@ function validateRollingComposite(layer, path, datasetIds) {
     const windowPath = `${path}.rollingComposite.observationWindows.${index}`;
     if (!isRecord(window) || !Number.isSafeInteger(window.index) || window.index < 1 || window.index > 65534 || windowIndices.has(window.index)) fail(`${windowPath}.index`);
     windowIndices.add(window.index);
-    if (!['mcd43a4-nbar', 'viirs-surface-reflectance'].includes(window.product)) fail(`${windowPath}.product`);
+    if (!isRollingSurfaceProduct(window.product)) fail(`${windowPath}.product`);
     requireString(window.version, `${windowPath}.version`);
     for (const field of ['validAt', 'observedFrom', 'observedTo']) {
       if (typeof window[field] !== 'string' || Number.isNaN(Date.parse(window[field]))) fail(`${windowPath}.${field}`);
