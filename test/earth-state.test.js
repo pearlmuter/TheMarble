@@ -160,6 +160,48 @@ function addSatcorpsCloudSequence(manifest) {
   return frames;
 }
 
+function addCloudGapCompletion(manifest) {
+  const frames = addHourlyCloudSequence(manifest);
+  manifest.layers.cloudProvenance = {
+    ...manifest.layers.cloudDensity,
+    colorSpace: 'linear',
+    channels: { r: 'source class', g: 'observation age', b: 'source quality', a: 'native contribution' },
+    asset: { ...manifest.layers.cloudDensity.asset, href: './cloud-provenance-12.png' },
+  };
+  manifest.cloudSequence.gapCompletion = {
+    maxObservationAgeSeconds: 10_800,
+    minObservationQuality: .72,
+    seamBlendPixels: 3,
+  };
+  for (const [index, frame] of frames.entries()) {
+    const polarObservedTo = new Date(Date.parse(frame.validAt) - 4 * 60 * 1000).toISOString();
+    const polarObservedFrom = new Date(Date.parse(polarObservedTo) - 16 * 60 * 1000).toISOString();
+    frame.coverage = {
+      observedFraction: index === 0 ? .72 : .75,
+      primaryObservedFraction: index === 0 ? .64 : .67,
+      polarObservedFraction: .08,
+      modelAssistedFraction: .2,
+      fallbackFraction: index === 0 ? .08 : .05,
+      latitudeRange: [-90, 90],
+    };
+    frame.assistance = {
+      polarObservation: {
+        product: 'viirs-cloud', version: 'v2',
+        observedFrom: polarObservedFrom, observedTo: polarObservedTo,
+      },
+      model: { product: 'gfs-total-cloud', version: '0p25-v16', runAt: '2026-08-25T06:00:00Z', forecastHour: index + 5 },
+      staticFallback: 'Bundled climatological cloud texture fills the final rejected pixels.',
+    };
+    frame.layers.cloudProvenance = {
+      datasetId: 'earth',
+      asset: { ...manifest.layers.cloudProvenance.asset, href: `./cloud-provenance-${index === 0 ? '11' : '12'}.png` },
+    };
+  }
+  manifest.layers.cloudProvenance.asset = structuredClone(frames[1].layers.cloudProvenance.asset);
+  manifest.classification = 'model-assisted';
+  return frames;
+}
+
 function addDailyCryosphere(manifest) {
   const textureDescriptor = href => ({
     datasetId: 'cryosphere',
@@ -249,6 +291,49 @@ test('a SatCORPS sequence activates all physical fields as one coherent hourly o
   for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
     assert.match(activated.cloudSequence.frames[0].layers[name], new RegExp(`${name}-1200\\.png$`));
     assert.equal(activated.cloudSequence.frames[1].layers[name], activated.layers[name]);
+  }
+});
+
+test('gap-completed clouds activate provenance and assistance metadata as one coherent pair', async () => {
+  const manifest = fixtureManifest();
+  addCloudGapCompletion(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/gap-completed/manifest.json');
+
+  assert.equal(activated.manifest.classification, 'model-assisted');
+  assert.equal(activated.cloudSequence.gapCompletion.maxObservationAgeSeconds, 10_800);
+  assert.equal(activated.cloudSequence.frames[1].coverage.observedFraction, .75);
+  assert.equal(activated.cloudSequence.frames[1].coverage.modelAssistedFraction, .2);
+  assert.equal(activated.cloudSequence.frames[1].coverage.fallbackFraction, .05);
+  assert.equal(activated.cloudSequence.frames[1].assistance.model.forecastHour, 6);
+  assert.match(activated.cloudSequence.frames[0].layers.cloudProvenance, /cloud-provenance-11\.png$/);
+  assert.equal(activated.cloudSequence.frames[1].layers.cloudProvenance, activated.layers.cloudProvenance);
+});
+
+test('gap completion rejects unclassified area, missing provenance, or undisclosed model assistance', async () => {
+  const cases = [
+    ['cloudSequence.frames.1.coverage', manifest => { manifest.cloudSequence.frames[1].coverage.fallbackFraction = .04; }],
+    ['cloudSequence.frames.0.layers.cloudProvenance', manifest => { delete manifest.cloudSequence.frames[0].layers.cloudProvenance; }],
+    ['cloudSequence.frames.1.assistance.model', manifest => { delete manifest.cloudSequence.frames[1].assistance.model; }],
+  ];
+
+  for (const [expectedPath, mutate] of cases) {
+    const manifest = fixtureManifest();
+    addCloudGapCompletion(manifest);
+    mutate(manifest);
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => loaded('unused'),
+    });
+
+    await assert.rejects(
+      activator.activate('https://example.test/states/invalid-gap/manifest.json'),
+      new RegExp(expectedPath.replaceAll('.', '\\.')),
+    );
   }
 });
 

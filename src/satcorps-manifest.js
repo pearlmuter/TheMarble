@@ -83,7 +83,10 @@ export function addSatcorpsCloudSequence(baseManifest, { selection, composedFram
   });
 
   const manifest = structuredClone(baseManifest);
-  const replacedDatasetIds = new Set(PHYSICAL_LAYER_NAMES.map(name => manifest.layers?.[name]?.datasetId).filter(Boolean));
+  const replacedDatasetIds = new Set(
+    [...PHYSICAL_LAYER_NAMES, 'cloudProvenance'].map(name => manifest.layers?.[name]?.datasetId).filter(Boolean),
+  );
+  delete manifest.layers.cloudProvenance;
   manifest.bundleId = `source-satcorps-${frames[1].validAt}`;
   manifest.classification = 'observed';
   manifest.datasets = (manifest.datasets ?? []).filter(dataset => dataset.id !== datasetId && !replacedDatasetIds.has(dataset.id));

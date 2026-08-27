@@ -3,12 +3,13 @@ export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-a
 export const EARTH_STATE_REQUIRED_LAYERS: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_CRYOSPHERE_LAYERS: readonly ['snowCover', 'seaIce'];
 export const EARTH_STATE_PHYSICAL_CLOUD_LAYERS: readonly ['cloudPhysics', 'cloudAge'];
-export const EARTH_STATE_OPTIONAL_LAYERS: readonly ['snowCover', 'seaIce', 'cloudPhysics', 'cloudAge'];
-export const EARTH_STATE_LAYER_NAMES: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity', 'snowCover', 'seaIce', 'cloudPhysics', 'cloudAge'];
+export const EARTH_STATE_CLOUD_AUDIT_LAYERS: readonly ['cloudProvenance'];
+export const EARTH_STATE_OPTIONAL_LAYERS: readonly ['snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance'];
+export const EARTH_STATE_LAYER_NAMES: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity', 'snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance'];
 export const EARTH_STATE_REQUIRED_RESOURCES: readonly ['moonAlbedo', 'milkyWay', 'starCatalog'];
 export type EarthStateLayerName = typeof EARTH_STATE_LAYER_NAMES[number];
 export type EarthStateResourceName = typeof EARTH_STATE_REQUIRED_RESOURCES[number];
-export type EarthStateCloudLayerName = 'cloudOpacity' | 'cloudDensity' | 'cloudPhysics' | 'cloudAge';
+export type EarthStateCloudLayerName = 'cloudOpacity' | 'cloudDensity' | 'cloudPhysics' | 'cloudAge' | 'cloudProvenance';
 
 export interface EarthStateChecksum {
   algorithm: 'sha256';
@@ -97,6 +98,10 @@ export interface EarthStateCloudFrame {
     visibleOptimalFraction?: number;
     longwaveOptimalFraction?: number;
     usableFraction?: number;
+    modelAssistedFraction?: number;
+    fallbackFraction?: number;
+    primaryObservedFraction?: number;
+    polarObservedFraction?: number;
   };
   layers: Record<'cloudOpacity' | 'cloudDensity', {
     datasetId: string;
@@ -104,13 +109,22 @@ export interface EarthStateCloudFrame {
   }> & Partial<Record<'cloudPhysics' | 'cloudAge', {
     datasetId: string;
     asset: EarthStateAssetReference;
+  }>> & Partial<Record<'cloudProvenance', {
+    datasetId: string;
+    asset: EarthStateAssetReference;
   }>>;
+  assistance?: {
+    polarObservation?: { product: 'viirs-cloud' | 'modis-cloud'; version: string; observedFrom: string; observedTo: string };
+    model?: { product: 'gfs-total-cloud'; version: string; runAt: string; forecastHour: number };
+    staticFallback?: string;
+  };
 }
 
 export interface EarthStateCloudSequence {
   provider?: 'gmgsi' | 'satcorps';
   interpolation: 'crossfade';
   transitionSeconds: number;
+  gapCompletion?: { maxObservationAgeSeconds: number; minObservationQuality: number; seamBlendPixels: number };
   frames: [EarthStateCloudFrame, EarthStateCloudFrame];
 }
 
@@ -137,7 +151,7 @@ export interface EarthStateManifest {
   layers: Record<'nightLights' | 'cloudOpacity' | 'cloudDensity', EarthStateLayer>
     & { surfaceAlbedo: EarthStateSurfaceLayer }
     & Partial<Record<'snowCover' | 'seaIce', EarthStateCryosphereLayer>>
-    & Partial<Record<'cloudPhysics' | 'cloudAge', EarthStateLayer>>;
+    & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', EarthStateLayer>>;
   resources: Record<EarthStateResourceName, EarthStateResource>;
   cloudSequence?: EarthStateCloudSequence;
 }
@@ -187,7 +201,7 @@ export interface ActivatedEarthState<LoadedAsset> {
   resources: Record<EarthStateResourceName, LoadedAsset>;
   seasonalLayers: { surfaceAlbedo?: Array<{ month: number; value: LoadedAsset }> };
   cloudSequence?: Omit<EarthStateCloudSequence, 'frames'> & {
-    frames: [Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge', LoadedAsset>> }, Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge', LoadedAsset>> }];
+    frames: [Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', LoadedAsset>> }, Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', LoadedAsset>> }];
   };
   layerDatasets: Record<typeof EARTH_STATE_REQUIRED_LAYERS[number], EarthStateDataset> & Partial<Record<typeof EARTH_STATE_OPTIONAL_LAYERS[number], EarthStateDataset>>;
 }

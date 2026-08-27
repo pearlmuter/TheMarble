@@ -13,5 +13,6 @@ test('the GMGSI compositor path is resolved beside the publisher instead of from
 test('GMGSI fallback removes SatCORPS-only layers and their dataset before validation', () => {
   assert.match(publisherSource, /delete manifest\.layers\.cloudPhysics/);
   assert.match(publisherSource, /delete manifest\.layers\.cloudAge/);
+  assert.match(publisherSource, /delete manifest\.layers\.cloudProvenance/);
   assert.match(publisherSource, /provider: 'gmgsi'/);
 });

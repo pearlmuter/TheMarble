@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
+import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
 import { activateEarthStateAtStartup, createEarthStateBundleCache } from './earth-state-cache.js';
 import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
@@ -104,6 +105,7 @@ const previewLayers: Record<EarthStateLayerName, LoadedSceneAsset> = {
   // Alpha zero marks the neutral fields as a legacy GMGSI fallback.
   cloudPhysics: solidTexture(0, 128, 140, 0),
   cloudAge: solidTexture(0, 0, 0, 0),
+  cloudProvenance: solidTexture(0, 0, 0, 255),
 };
 const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
   moonAlbedo: solidTexture(38, 38, 38),
@@ -290,7 +292,9 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
     }
   }
   for (const name of EARTH_STATE_OPTIONAL_LAYERS) {
-    applyVerifiedLayer(name, activeEarthState.layers[name] ?? previewLayers[name]);
+    if (!['cloudPhysics', 'cloudAge', 'cloudProvenance'].includes(name)) {
+      applyVerifiedLayer(name, activeEarthState.layers[name] ?? previewLayers[name]);
+    }
   }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
@@ -307,10 +311,11 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
           cloudDensity: requireLoadedTexture(frame.layers.cloudDensity, 'cloud observation density'),
           cloudPhysics: requireLoadedTexture(frame.layers.cloudPhysics ?? previewLayers.cloudPhysics, 'cloud observation physics'),
           cloudAge: requireLoadedTexture(frame.layers.cloudAge ?? previewLayers.cloudAge, 'cloud observation age'),
+          cloudProvenance: requireLoadedTexture(frame.layers.cloudProvenance ?? previewLayers.cloudProvenance, 'cloud observation provenance'),
         },
       })) as [
-        { validAt: string; observedFrom: string; observedTo: string; layers: { cloudOpacity: THREE.Texture; cloudDensity: THREE.Texture; cloudPhysics: THREE.Texture; cloudAge: THREE.Texture } },
-        { validAt: string; observedFrom: string; observedTo: string; layers: { cloudOpacity: THREE.Texture; cloudDensity: THREE.Texture; cloudPhysics: THREE.Texture; cloudAge: THREE.Texture } },
+        { validAt: string; observedFrom: string; observedTo: string; layers: { cloudOpacity: THREE.Texture; cloudDensity: THREE.Texture; cloudPhysics: THREE.Texture; cloudAge: THREE.Texture; cloudProvenance: THREE.Texture } },
+        { validAt: string; observedFrom: string; observedTo: string; layers: { cloudOpacity: THREE.Texture; cloudDensity: THREE.Texture; cloudPhysics: THREE.Texture; cloudAge: THREE.Texture; cloudProvenance: THREE.Texture } },
       ],
     };
     cloudObservationController.activate(sequence, sceneNow());
@@ -320,6 +325,13 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       const coverage = Math.round(to.coverage.observedFraction * 100);
       const latitude = Math.min(Math.abs(to.coverage.latitudeRange[0]), Math.abs(to.coverage.latitudeRange[1])).toFixed(1);
       const provider = activeEarthState.cloudSequence?.provider === 'satcorps' ? 'NASA SatCORPS' : 'NOAA GMGSI';
+      const gapStatus = formatCloudGapStatus({
+        gapCompletion: activeEarthState.cloudSequence?.gapCompletion,
+        frame: to,
+      });
+      if (gapStatus) {
+        return `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${gapStatus}`;
+      }
       return `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${coverage}% usable coverage to ±${latitude}°`;
     };
   } else {
@@ -328,6 +340,7 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       cloudDensity: requireLoadedTexture(activeEarthState.layers.cloudDensity, 'cloudDensity'),
       cloudPhysics: requireLoadedTexture(activeEarthState.layers.cloudPhysics ?? previewLayers.cloudPhysics, 'cloudPhysics'),
       cloudAge: requireLoadedTexture(activeEarthState.layers.cloudAge ?? previewLayers.cloudAge, 'cloudAge'),
+      cloudProvenance: requireLoadedTexture(activeEarthState.layers.cloudProvenance ?? previewLayers.cloudProvenance, 'cloudProvenance'),
     });
     weatherFeed = () => `${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`;
   }
@@ -415,6 +428,7 @@ const cloudMap = requireTexture(previewLayers.cloudOpacity, 'cloudOpacity');
 const liveWeatherMap = requireTexture(previewLayers.cloudDensity, 'cloudDensity');
 const cloudPhysicsMap = requireTexture(previewLayers.cloudPhysics, 'cloudPhysics');
 const cloudAgeMap = requireTexture(previewLayers.cloudAge, 'cloudAge');
+const cloudProvenanceMap = requireTexture(previewLayers.cloudProvenance, 'cloudProvenance');
 const snowCoverMap = requireTexture(previewLayers.snowCover, 'snowCover');
 const seaIceMap = requireTexture(previewLayers.seaIce, 'seaIce');
 const moonMap = requireTexture(previewResources.moonAlbedo, 'moonAlbedo');
@@ -643,13 +657,19 @@ function installCloudUniforms(material: THREE.ShaderMaterial, from: { cloudOpaci
 }
 
 cloudObservationController = createCloudObservationController<THREE.Texture>({
-  initialLayers: { cloudOpacity: cloudMap, cloudDensity: liveWeatherMap, cloudPhysics: cloudPhysicsMap, cloudAge: cloudAgeMap },
+  initialLayers: {
+    cloudOpacity: cloudMap,
+    cloudDensity: liveWeatherMap,
+    cloudPhysics: cloudPhysicsMap,
+    cloudAge: cloudAgeMap,
+    cloudProvenance: cloudProvenanceMap,
+  },
   install({ from, to, mix }) {
     installCloudUniforms(earthMaterial, from, to, mix);
     installCloudUniforms(cloudMaterial, from, to, mix);
   },
   disposeTexture(texture) {
-    if (texture !== cloudPhysicsMap && texture !== cloudAgeMap) texture.dispose();
+    if (texture !== cloudPhysicsMap && texture !== cloudAgeMap && texture !== cloudProvenanceMap) texture.dispose();
   },
 });
 

@@ -3,6 +3,7 @@ export type CloudLayerPair<Texture> = {
   cloudDensity: Texture;
   cloudPhysics?: Texture;
   cloudAge?: Texture;
+  cloudProvenance?: Texture;
 };
 
 export type CloudObservationFrame<Texture> = {

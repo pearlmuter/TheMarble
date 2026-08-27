@@ -164,6 +164,53 @@ function makeCloudSequencePhysical(source) {
   source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
 }
 
+function makeCloudSequenceGapCompleted(source) {
+  const manifestUrl = 'https://fixtures.test/source/manifest.json';
+  const manifest = JSON.parse(new TextDecoder().decode(source.get(manifestUrl).bytes));
+  const provenanceAsset = suffix => {
+    const bytes = encoder.encode(`fixture:cloud-provenance-${suffix}`);
+    const href = `./cloud-provenance-${suffix}.png`;
+    source.set(new URL(href, manifestUrl).href, { bytes, mediaType: 'image/png' });
+    return {
+      href, mediaType: 'image/png', byteLength: bytes.byteLength, immutable: true,
+      checksum: { algorithm: 'sha256', value: checksum(bytes) },
+    };
+  };
+  manifest.cloudSequence.provider = 'gmgsi';
+  manifest.cloudSequence.gapCompletion = {
+    maxObservationAgeSeconds: 10_800,
+    minObservationQuality: .72,
+    seamBlendPixels: 3,
+  };
+  manifest.layers.cloudProvenance = {
+    ...manifest.layers.cloudDensity,
+    channels: { r: 'source class', g: 'age', b: 'quality', a: 'native contribution' },
+    asset: provenanceAsset('12'),
+  };
+  manifest.cloudSequence.frames.forEach((frame, index) => {
+    frame.coverage = {
+      observedFraction: .75,
+      primaryObservedFraction: .65,
+      polarObservedFraction: .1,
+      modelAssistedFraction: .2,
+      fallbackFraction: .05,
+      latitudeRange: [-90, 90],
+    };
+    frame.assistance = {
+      model: {
+        product: 'gfs-total-cloud', version: 'gfs-v16', runAt: '2026-08-25T06:00:00Z', forecastHour: index + 5,
+      },
+      staticFallback: 'Bundled static cloud texture',
+    };
+    frame.layers.cloudProvenance = {
+      datasetId: 'fixture-earth',
+      asset: index === 1 ? structuredClone(manifest.layers.cloudProvenance.asset) : provenanceAsset('11'),
+    };
+  });
+  manifest.classification = 'model-assisted';
+  source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
+}
+
 function addCryosphereToSource(source) {
   const manifestUrl = 'https://fixtures.test/source/manifest.json';
   const manifest = JSON.parse(new TextDecoder().decode(source.get(manifestUrl).bytes));
@@ -298,6 +345,25 @@ test('publication carries every SatCORPS physical field atomically across both h
     assert.deepEqual(publication.manifest.cloudSequence.frames[1].layers[name].asset, publication.manifest.layers[name].asset);
     assert.match(publication.manifest.cloudSequence.frames[0].layers[name].asset.href, /cloud-observation-frame/);
   }
+});
+
+test('publication carries both gap provenance frames and assistance audit metadata atomically', async () => {
+  const source = sourceFixture();
+  addCloudSequenceToSource(source);
+  makeCloudSequenceGapCompleted(source);
+  const store = memoryStore();
+  const publisher = createEarthStatePublisher({ loadSource: loadSourceFixture(source), store: store.adapter });
+
+  const publication = await publisher.publish({
+    targetTime: '2026-08-25T12:48:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+
+  const [previous, current] = publication.manifest.cloudSequence.frames;
+  assert.match(previous.layers.cloudProvenance.asset.href, /cloud-observation-frame-cloudProvenance-00/);
+  assert.deepEqual(current.layers.cloudProvenance.asset, publication.manifest.layers.cloudProvenance.asset);
+  assert.equal(current.coverage.modelAssistedFraction, .2);
+  assert.equal(current.assistance.model.forecastHour, 6);
 });
 
 test('publication carries snow and sea ice as one immutable daily analysis with provenance', async () => {

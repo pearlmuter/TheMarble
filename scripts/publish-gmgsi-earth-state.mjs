@@ -219,9 +219,11 @@ async function main() {
       manifest.layers.cloudDensity.datasetId,
       manifest.layers.cloudPhysics?.datasetId,
       manifest.layers.cloudAge?.datasetId,
+      manifest.layers.cloudProvenance?.datasetId,
     ]);
     delete manifest.layers.cloudPhysics;
     delete manifest.layers.cloudAge;
+    delete manifest.layers.cloudProvenance;
     manifest.bundleId = `source-gmgsi-${frames[1].validAt}`;
     manifest.classification = 'observed';
     manifest.datasets = manifest.datasets.filter(dataset => !replacedDatasetIds.has(dataset.id));

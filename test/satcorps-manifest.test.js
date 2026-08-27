@@ -85,6 +85,27 @@ test('GMGSI to SatCORPS replacement removes the superseded cloud dataset for saf
   assert.equal(new Set(ids).size, ids.length);
 });
 
+test('a fresh SatCORPS observation removes superseded gap-completion provenance', () => {
+  const frames = [
+    selectedFrame('2026-08-25T15:00:00Z', '1500'),
+    selectedFrame('2026-08-25T16:00:00Z', '1600'),
+  ];
+  const oldCloud = { datasetId: 'cloud-gap-old', asset: asset('./old.png') };
+  const base = {
+    bundleId: 'gap-completed', classification: 'model-assisted', times: {}, resources: {},
+    datasets: [{ id: 'cloud-gap-old', version: 'old', attribution: 'old gap completion' }],
+    layers: { cloudOpacity: oldCloud, cloudDensity: oldCloud, cloudProvenance: oldCloud },
+  };
+
+  const manifest = addSatcorpsCloudSequence(base, {
+    selection: { provider: 'satcorps', retrievedAt: '2026-08-25T16:00:00Z', frames },
+    composedFrames: [composed(frames[0], '1500'), composed(frames[1], '1600')],
+  });
+
+  assert.equal(manifest.layers.cloudProvenance, undefined);
+  assert.ok(!manifest.datasets.some(dataset => dataset.id === 'cloud-gap-old'));
+});
+
 test('manifest construction rejects compositor provenance that disagrees with provider selection', () => {
   const frames = [
     selectedFrame('2026-08-25T15:00:00Z', '1500'),
