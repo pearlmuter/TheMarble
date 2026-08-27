@@ -6,6 +6,8 @@ import {
   MOON_EQUATORIAL_RADIUS_KM,
   SUN_EQUATORIAL_RADIUS_KM,
 } from './astronomical-state.js';
+import { createOneTimeInertialCameraPlacement } from './inertial-camera.js';
+import type { FixedSceneView } from './inertial-camera.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
 import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
@@ -65,7 +67,10 @@ const sunStatus = document.querySelector<HTMLElement>('#sun-status')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
 const sceneParameters = new URLSearchParams(window.location.search);
 const fixedSceneTime = sceneParameters.get('time');
-const fixedSceneView = sceneParameters.get('view');
+const requestedSceneView = sceneParameters.get('view');
+const fixedSceneView: FixedSceneView = requestedSceneView === 'day' || requestedSceneView === 'terminator'
+  ? requestedSceneView
+  : 'night';
 function sceneNow() {
   if (fixedSceneTime) {
     const date = new Date(fixedSceneTime);
@@ -872,35 +877,19 @@ function applyCelestialRotation(object: THREE.Object3D, matrix: readonly number[
   object.quaternion.setFromRotationMatrix(celestialRotationMatrix);
 }
 
-let cameraTracksSun = true;
-let pointerStart: { x: number; y: number } | undefined;
-canvas.addEventListener('pointerdown', event => { pointerStart = { x: event.clientX, y: event.clientY }; }, { passive: true });
-canvas.addEventListener('pointermove', event => {
-  if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 4) cameraTracksSun = false;
-}, { passive: true });
-canvas.addEventListener('pointerup', () => { pointerStart = undefined; }, { passive: true });
-canvas.addEventListener('pointercancel', () => { pointerStart = undefined; }, { passive: true });
-canvas.addEventListener('wheel', () => { cameraTracksSun = false; }, { passive: true });
+const takeInitialCameraPosition = createOneTimeInertialCameraPlacement(fixedSceneView);
 function updateCelestialScene(now: Date) {
   const frame = celestialSceneFrameAt(now);
   const solar = frame.astronomy.sun;
   // The Earth body rotates in EQJ while the camera and Hipparcos/Gaia sky remain inertial.
   applyCelestialRotation(planet, frame.earth.bodyToSceneMatrix);
   const sunDirection = new THREE.Vector3(...frame.sun.inertialDirection);
-  if (cameraTracksSun) {
+  const initialCameraPosition = takeInitialCameraPosition(frame);
+  if (initialCameraPosition) {
     // Place the observer just outside the Sun–Earth occultation cone. The real, 0.53° solar disc
-    // sits beyond the atmospheric limb; the camera then remains still while Earth rotates below.
-    const rightTangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDirection).normalize();
-    const upTangent = new THREE.Vector3().crossVectors(sunDirection, rightTangent).normalize();
-    const tangent = rightTangent.multiplyScalar(.72).addScaledVector(upTangent, .69).normalize();
-    const observerDistance = 7;
-    const solarSeparation = Math.asin(1 / observerDistance) + radians(.36);
-    const observerDirection = fixedSceneView === 'day'
-      ? sunDirection.clone()
-      : fixedSceneView === 'terminator'
-        ? tangent
-        : sunDirection.clone().multiplyScalar(-Math.cos(solarSeparation)).addScaledVector(tangent, Math.sin(solarSeparation));
-    camera.position.copy(observerDirection.multiplyScalar(observerDistance));
+    // sits beyond the atmospheric limb. This placement happens once: afterwards the observer
+    // remains inertial while Earth rotates and the Sun advances through the EQJ sky.
+    camera.position.fromArray(initialCameraPosition);
     camera.lookAt(0, 0, 0);
     controls.target.set(0, 0, 0);
   }

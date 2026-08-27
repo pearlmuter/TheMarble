@@ -4,55 +4,81 @@ import { astronomicalStateAt, celestialSceneFrameAt } from '../src/astronomical-
 
 const ECLIPSE_REFERENCE = new Date('2024-04-08T18:00:00.000Z');
 
+function reference(expected, tolerance) {
+  return { expected, tolerance };
+}
+
+const ASTRONOMICAL_REFERENCES = [
+  {
+    name: 'fixed eclipse instant',
+    date: ECLIPSE_REFERENCE,
+    // USNO GAST 07:09:56.1442; JPL Horizons DE441 geocentric ICRF values.
+    earth: {
+      greenwichApparentSiderealDegrees: reference(107.483934, 0.01),
+    },
+    sun: {
+      rightAscensionHours: reference(1.172219, 0.004),
+      declinationDegrees: reference(7.46025, 0.05),
+      distanceAu: reference(1.001503576, 0.00005),
+      angularDiameterDegrees: reference(0.532106, 0.002),
+      subsolarLatitudeDegrees: reference(7.587028, 0.05),
+      subsolarLongitudeDegrees: reference(-89.591267, 0.05),
+    },
+    moon: {
+      rightAscensionHours: reference(1.151186, 0.004),
+      declinationDegrees: reference(7.687917, 0.05),
+      distanceAu: reference(0.002404986, 0.000002),
+      angularDiameterDegrees: reference(0.553371, 0.003),
+      phaseAngleDegrees: reference(179.6121, 0.15),
+      illuminatedFraction: reference(0.0000113, 0.0002),
+      librationLongitudeDegrees: reference(1.951469, 0.2),
+      librationLatitudeDegrees: reference(-0.437737, 0.2),
+      northPolePositionAngleDegrees: reference(339.2349, 0.5),
+    },
+  },
+  {
+    name: 'June solstice',
+    date: new Date('2025-06-21T12:00:00.000Z'),
+    // USNO GAST 05:59:45.2590; JPL Horizons DE441 geocentric ICRF values.
+    earth: {
+      greenwichApparentSiderealDegrees: reference(89.938579, 0.01),
+    },
+    sun: {
+      rightAscensionHours: reference(6.001378, 0.004),
+      declinationDegrees: reference(23.435972, 0.05),
+      distanceAu: reference(1.016231612, 0.00005),
+      angularDiameterDegrees: reference(0.524394, 0.002),
+      subsolarLatitudeDegrees: reference(23.437833, 0.05),
+      subsolarLongitudeDegrees: reference(0.464379, 0.05),
+    },
+    moon: {
+      rightAscensionHours: reference(2.150403, 0.004),
+      declinationDegrees: reference(16.73675, 0.05),
+      distanceAu: reference(0.002439973, 0.000002),
+      angularDiameterDegrees: reference(0.545436, 0.003),
+      phaseAngleDegrees: reference(125.5661, 0.15),
+      illuminatedFraction: reference(0.2091558, 0.002),
+      librationLongitudeDegrees: reference(-2.298946, 0.2),
+      librationLatitudeDegrees: reference(-4.537606, 0.2),
+      northPolePositionAngleDegrees: reference(341.4902, 0.5),
+    },
+  },
+];
+
 function closeTo(actual, expected, tolerance, label) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: expected ${expected} ± ${tolerance}, received ${actual}`);
 }
 
-test('astronomical state matches USNO and JPL Horizons at a fixed eclipse instant', () => {
-  const state = astronomicalStateAt(ECLIPSE_REFERENCE);
-
-  // USNO Greenwich apparent sidereal time: 07:09:56.1442.
-  closeTo(state.earth.greenwichApparentSiderealDegrees, 107.483934, 0.01, 'GAST degrees');
-
-  // JPL Horizons DE441 geocentric ICRF values, 2024-04-08 18:00 UTC.
-  closeTo(state.sun.rightAscensionHours, 1.172219, 0.004, 'Sun right ascension hours');
-  closeTo(state.sun.declinationDegrees, 7.46025, 0.05, 'Sun declination degrees');
-  closeTo(state.sun.distanceAu, 1.001503576, 0.00005, 'Sun distance AU');
-  closeTo(state.sun.angularDiameterDegrees, 0.532106, 0.002, 'Sun angular diameter degrees');
-
-  closeTo(state.moon.rightAscensionHours, 1.151186, 0.004, 'Moon right ascension hours');
-  closeTo(state.moon.declinationDegrees, 7.687917, 0.05, 'Moon declination degrees');
-  closeTo(state.moon.distanceAu, 0.002404986, 0.000002, 'Moon distance AU');
-  closeTo(state.moon.angularDiameterDegrees, 0.553371, 0.003, 'Moon angular diameter degrees');
-  closeTo(state.moon.phaseAngleDegrees, 179.6121, 0.15, 'Moon phase angle degrees');
-  closeTo(state.moon.illuminatedFraction, 0.0000113, 0.0002, 'Moon illuminated fraction');
-  closeTo(Math.abs(state.moon.librationLongitudeDegrees), 1.951469, 0.2, 'Moon libration longitude degrees');
-  closeTo(state.moon.librationLatitudeDegrees, -0.437737, 0.2, 'Moon libration latitude degrees');
-  closeTo(state.moon.northPolePositionAngleDegrees, 339.2349, 0.5, 'Moon north-pole position angle degrees');
-});
-
-test('astronomical state matches USNO and JPL Horizons at the June solstice', () => {
-  const state = astronomicalStateAt(new Date('2025-06-21T12:00:00.000Z'));
-
-  // USNO Greenwich apparent sidereal time: 05:59:45.2590.
-  closeTo(state.earth.greenwichApparentSiderealDegrees, 89.938579, 0.01, 'solstice GAST degrees');
-
-  // JPL Horizons DE441 geocentric ICRF values, 2025-06-21 12:00 UTC.
-  closeTo(state.sun.rightAscensionHours, 6.001378, 0.004, 'solstice Sun right ascension hours');
-  closeTo(state.sun.declinationDegrees, 23.435972, 0.05, 'solstice Sun declination degrees');
-  closeTo(state.sun.distanceAu, 1.016231612, 0.00005, 'solstice Sun distance AU');
-  closeTo(state.sun.angularDiameterDegrees, 0.524394, 0.002, 'solstice Sun angular diameter degrees');
-
-  closeTo(state.moon.rightAscensionHours, 2.150403, 0.004, 'solstice Moon right ascension hours');
-  closeTo(state.moon.declinationDegrees, 16.73675, 0.05, 'solstice Moon declination degrees');
-  closeTo(state.moon.distanceAu, 0.002439973, 0.000002, 'solstice Moon distance AU');
-  closeTo(state.moon.angularDiameterDegrees, 0.545436, 0.003, 'solstice Moon angular diameter degrees');
-  closeTo(state.moon.phaseAngleDegrees, 125.5661, 0.15, 'solstice Moon phase angle degrees');
-  closeTo(state.moon.illuminatedFraction, 0.2091558, 0.002, 'solstice Moon illuminated fraction');
-  closeTo(state.moon.librationLongitudeDegrees, -2.298946, 0.2, 'solstice Moon libration longitude degrees');
-  closeTo(state.moon.librationLatitudeDegrees, -4.537606, 0.2, 'solstice Moon libration latitude degrees');
-  closeTo(state.moon.northPolePositionAngleDegrees, 341.4902, 0.5, 'solstice Moon north-pole position angle degrees');
-});
+for (const reference of ASTRONOMICAL_REFERENCES) {
+  test(`astronomical state matches USNO and JPL Horizons at the ${reference.name}`, () => {
+    const state = astronomicalStateAt(reference.date);
+    for (const body of ['earth', 'sun', 'moon']) {
+      for (const [property, expected] of Object.entries(reference[body])) {
+        closeTo(state[body][property], expected.expected, expected.tolerance, `${reference.name} ${body} ${property}`);
+      }
+    }
+  });
+}
 
 test('astronomical state rejects an invalid time instead of inventing a scene', () => {
   assert.throws(() => astronomicalStateAt(new Date(Number.NaN)), /valid date/i);

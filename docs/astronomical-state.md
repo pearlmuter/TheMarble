@@ -23,7 +23,7 @@ Astronomy Engine's EQJ vector is `[x, y, z]`, where `x` points toward the J2000 
 scene = [EQJ.x, EQJ.z, -EQJ.y]
 ```
 
-The star catalogue and Milky Way already use this mapping. The Earth body transform combines Greenwich apparent sidereal time with the equator-of-date to EQJ rotation, including precession and nutation. The Moon body transform uses its IAU north pole and prime-meridian angle, so the rendered texture presents the computed libration and pole orientation instead of always facing the camera.
+The star catalogue and Milky Way already use this mapping. The Earth body transform combines Greenwich apparent sidereal time with the equator-of-date to EQJ rotation, including precession and nutation. The camera receives one initial EQJ placement and is then left inertial, so an untouched view watches Earth rotate instead of silently following the Sun. The Moon body transform uses its IAU north pole and prime-meridian angle, so the rendered texture presents the computed libration and pole orientation instead of always facing the camera.
 
 UTC is the application time input. Greenwich rotation is therefore limited by the normal UTC–UT1 difference; UTC remains within 0.9 seconds of UT1. No screen-pixel tolerances are used.
 
