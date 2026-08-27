@@ -120,7 +120,10 @@ function validateRollingComposite(layer, path, datasetIds) {
   if (rolling.oldestPixelAgeDays !== null && rolling.newestPixelAgeDays !== null && rolling.oldestPixelAgeDays < rolling.newestPixelAgeDays) {
     fail(`${path}.rollingComposite.oldestPixelAgeDays`);
   }
-  if (!isRecord(rolling.normalization) || rolling.normalization.method !== 'robust-channel-gain-and-delta-limit' || !Number.isFinite(rolling.normalization.maxDailyChange) || rolling.normalization.maxDailyChange < 0) {
+  if (!isRecord(rolling.normalization) || rolling.normalization.method !== 'robust-channel-gain-delta-limit-and-inward-feather' || !Number.isFinite(rolling.normalization.maxDailyChange) || rolling.normalization.maxDailyChange < 0
+    || !Number.isSafeInteger(rolling.normalization.seamFeatherPixels) || rolling.normalization.seamFeatherPixels < 0
+    || !Array.isArray(rolling.normalization.gainRange) || rolling.normalization.gainRange.length !== 2
+    || rolling.normalization.gainRange[0] !== 0.75 || rolling.normalization.gainRange[1] !== 1.25) {
     fail(`${path}.rollingComposite.normalization`);
   }
   if (!datasetIds.has(layer.datasetId)) fail(`${path}.datasetId`);

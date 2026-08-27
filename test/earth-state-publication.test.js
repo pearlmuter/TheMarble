@@ -63,7 +63,7 @@ function sourceFixture({ rollingSurface = false } = {}) {
       newestPixelAgeDays: 1,
       sourceProducts: ['mcd43a4-nbar'],
       observationWindows: [{ index: 1, product: 'mcd43a4-nbar', version: 'MCD43A4.061', validAt: '2026-08-24T12:00:00Z', observedFrom: '2026-08-10T00:00:00Z', observedTo: '2026-08-24T23:59:59Z' }],
-      normalization: { method: 'robust-channel-gain-and-delta-limit', maxDailyChange: 0.12 },
+      normalization: { method: 'robust-channel-gain-delta-limit-and-inward-feather', maxDailyChange: 0.12, seamFeatherPixels: 3, gainRange: [0.75, 1.25] },
     };
     surfaceAge = { ...layer('surface-age'), datasetId: 'fixture-rolling' };
   }

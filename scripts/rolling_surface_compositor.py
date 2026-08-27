@@ -25,6 +25,73 @@ SOURCE_CODES = {
 }
 
 
+def decode_provider_observation(data: Any, product: str, window_index: int) -> dict[str, Any]:
+    """Decode documented MCD43A4/VNP09 QA fields into the compositor interface."""
+    if "reflectance" in data:
+        return {
+            "product": product,
+            "window_index": window_index,
+            **{name: np.asarray(data[name]) for name in [
+                "reflectance", "land", "quality", "cloud", "cloud_shadow", "haze", "geometry_quality", "age_days",
+            ]},
+        }
+    if product == "mcd43a4-nbar":
+        reflectance = np.asarray(data["nbar_rgb"], dtype=np.float32) * 0.0001
+        mandatory_quality = np.asarray(data["mandatory_quality_rgb"], dtype=np.uint8)
+        if mandatory_quality.shape != reflectance.shape:
+            raise ValueError("MCD43A4 mandatory_quality_rgb must match nbar_rgb")
+        shape = reflectance.shape[:2]
+        full_inversion = np.all((mandatory_quality & 1) == 0, axis=2)
+        valid = np.all(np.isfinite(reflectance) & (reflectance >= 0) & (reflectance <= 1.6), axis=2)
+        return {
+            "product": product,
+            "window_index": window_index,
+            "reflectance": reflectance,
+            "land": _array(data["land"], shape, "land", bool),
+            "quality": np.where(full_inversion & valid, 0.98, 0).astype(np.float32),
+            "cloud": np.zeros(shape, dtype=bool),
+            "cloud_shadow": np.zeros(shape, dtype=bool),
+            "haze": np.zeros(shape, dtype=bool),
+            "geometry_quality": np.ones(shape, dtype=np.float32),
+            "age_days": _array(data["age_days"], shape, "age_days", np.float32),
+        }
+    if product == "viirs-surface-reflectance":
+        reflectance = np.asarray(data["surface_reflectance_rgb"], dtype=np.float32) * 0.0001
+        shape = reflectance.shape[:2]
+        qf1 = _array(data["qf1"], shape, "qf1", np.uint8)
+        qf2 = _array(data["qf2"], shape, "qf2", np.uint8)
+        qf4 = _array(data["qf4"], shape, "qf4", np.uint8)
+        qf6 = _array(data["qf6"], shape, "qf6", np.uint8)
+        qf7 = _array(data["qf7"], shape, "qf7", np.uint8)
+        cloud_quality = qf1 & 0b11
+        cloud_confidence = (qf1 >> 2) & 0b11
+        cloud = (cloud_quality < 2) | (cloud_confidence >= 2) | ((qf1 & 0b00010000) != 0) | ((qf1 & 0b00100000) != 0)
+        land_class = qf2 & 0b111
+        land = (land_class == 0) | (land_class == 1)
+        shadow = (qf2 & 0b00001000) != 0
+        haze = ((qf2 & 0b11010000) != 0) | ((qf7 & 0b00010010) != 0) | (((qf7 >> 2) & 0b11) == 3)
+        bad_rgb = ((qf4 & 0b00001110) != 0) | ((qf6 & 0b00111000) != 0)
+        valid = np.all(np.isfinite(reflectance) & (reflectance >= -0.01) & (reflectance <= 1.6), axis=2)
+        geometry = np.ones(shape, dtype=np.float32)
+        if "sensor_zenith_degrees" in data:
+            sensor_zenith = np.abs(_array(data["sensor_zenith_degrees"], shape, "sensor_zenith_degrees", np.float32))
+            geometry = np.clip((70 - sensor_zenith) / 15, 0, 1)
+        accepted = land & ~cloud & ~shadow & ~haze & ~bad_rgb & valid
+        return {
+            "product": product,
+            "window_index": window_index,
+            "reflectance": reflectance,
+            "land": land,
+            "quality": np.where(accepted, 0.95, 0).astype(np.float32),
+            "cloud": cloud,
+            "cloud_shadow": shadow,
+            "haze": haze | bad_rgb,
+            "geometry_quality": geometry,
+            "age_days": _array(data["age_days"], shape, "age_days", np.float32),
+        }
+    raise ValueError(f"unsupported rolling-surface product: {product}")
+
+
 def _array(value: Any, shape: tuple[int, ...], name: str, dtype: Any | None = None) -> np.ndarray:
     array = np.asarray(value, dtype=dtype)
     if array.shape != shape:
@@ -57,6 +124,25 @@ def _normalize_observation(
     return np.clip(reflectance * gains, 0.0, 1.0), [float(value) for value in gains]
 
 
+def _erode(mask: np.ndarray) -> np.ndarray:
+    north = np.vstack((mask[:1], mask[:-1]))
+    south = np.vstack((mask[1:], mask[-1:]))
+    return mask & north & south & np.roll(mask, 1, axis=1) & np.roll(mask, -1, axis=1)
+
+
+def _feather_weights(mask: np.ndarray, pixels: int) -> np.ndarray:
+    if pixels <= 0:
+        return mask.astype(np.float32)
+    weights = np.zeros(mask.shape, dtype=np.float32)
+    remaining = mask.copy()
+    for distance in range(1, pixels + 1):
+        eroded = _erode(remaining)
+        weights[remaining & ~eroded] = distance / (pixels + 1)
+        remaining = eroded
+    weights[remaining] = 1
+    return weights
+
+
 def compose_rolling_surface(
     *,
     seasonal_baseline: np.ndarray,
@@ -69,6 +155,7 @@ def compose_rolling_surface(
     min_quality: float = 0.72,
     min_geometry_quality: float = 0.5,
     max_daily_change: float = 0.12,
+    seam_feather_pixels: int = 3,
 ) -> dict[str, Any]:
     """Return the next clean surface, age/provenance fields, and audit summary.
 
@@ -132,7 +219,9 @@ def compose_rolling_surface(
         )
         normalized, gains = _normalize_observation(reflectance, surface, eligible)
         limited = np.clip(normalized, surface - permitted_delta, surface + permitted_delta)
-        surface[eligible] = limited[eligible]
+        feather = _feather_weights(eligible, int(seam_feather_pixels))
+        alpha = feather[eligible][:, None]
+        surface[eligible] = surface[eligible] * (1 - alpha) + limited[eligible] * alpha
         source[eligible] = SOURCE_CODES[product]
         window_index[eligible] = observation_window_index
         age_days[eligible] = np.minimum(np.rint(observation_age[eligible]), BASELINE_AGE - 1).astype(np.uint16)
@@ -188,18 +277,7 @@ def _save_result(result: dict[str, Any], surface_path: Path, age_path: Path) -> 
 
 def _observation_from_npz(item: dict[str, Any]) -> dict[str, Any]:
     with np.load(item["path"], allow_pickle=False) as data:
-        return {
-            "product": item["product"],
-            "window_index": item["windowIndex"],
-            "reflectance": data["reflectance"].astype(np.float32),
-            "land": data["land"].astype(bool),
-            "quality": data["quality"].astype(np.float32),
-            "cloud": data["cloud"].astype(bool),
-            "cloud_shadow": data["cloud_shadow"].astype(bool),
-            "haze": data["haze"].astype(bool),
-            "geometry_quality": data["geometry_quality"].astype(np.float32),
-            "age_days": data["age_days"].astype(np.float32),
-        }
+        return decode_provider_observation(data, item["product"], item["windowIndex"])
 
 
 def _run_request(request_path: Path, surface_path: Path, age_path: Path, metadata_path: Path) -> None:
@@ -228,6 +306,7 @@ def _run_request(request_path: Path, surface_path: Path, age_path: Path, metadat
         min_quality=request.get("minQuality", 0.72),
         min_geometry_quality=request.get("minGeometryQuality", 0.5),
         max_daily_change=request.get("maxDailyChange", 0.12),
+        seam_feather_pixels=request.get("seamFeatherPixels", 3),
         **previous_args,
     )
     surface_path.parent.mkdir(parents=True, exist_ok=True)

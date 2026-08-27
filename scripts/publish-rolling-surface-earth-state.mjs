@@ -9,6 +9,7 @@ import { createFilePublicationStore } from '../src/earth-state-publication-file-
 import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 import { selectSeasonalSurfaceFrames } from '../src/seasonal-surface.js';
 import { withRollingSurfaceUpdate } from '../src/rolling-surface-manifest.js';
+import { rollingSurfaceProduct } from '../src/rolling-surface-products.js';
 import { selectRollingSurfaceObservations } from '../src/rolling-surface-selection.js';
 
 function parseArguments(argv) {
@@ -114,7 +115,7 @@ const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
 const { manifest: baseManifest } = await readBaseManifest(output, options['base-manifest']);
 const selected = selectRollingSurfaceObservations({
   targetTime,
-  previousValidAt: baseManifest.layers.surfaceAlbedo.rollingComposite?.validAt,
+  previousObservationWindows: baseManifest.layers.surfaceAlbedo.rollingComposite?.observationWindows ?? [],
   maxCandidateAgeDays: Number(options['max-candidate-age-days'] ?? 16),
   minAcceptedFraction: Number(options['min-accepted-fraction'] ?? 0.25),
   candidates: catalog.candidates ?? [],
@@ -162,7 +163,7 @@ try {
     previous = {
       surface: await materialize(baseManifest.layers.surfaceAlbedo.asset.href, temporary, 'previous-surface'),
       age: await materialize(baseManifest.layers.surfaceAge.asset.href, temporary, 'previous-age'),
-      windowSources: Object.fromEntries(priorWindows.map(window => [window.index, window.product === 'mcd43a4-nbar' ? 1 : 2])),
+      windowSources: Object.fromEntries(priorWindows.map(window => [window.index, rollingSurfaceProduct(window.product).sourceCode])),
     };
   }
   const previousValidAt = baseManifest.layers.surfaceAlbedo.rollingComposite?.validAt;
@@ -179,6 +180,7 @@ try {
     minQuality: Number(options['min-quality'] ?? 0.72),
     minGeometryQuality: Number(options['min-geometry-quality'] ?? 0.5),
     maxDailyChange: Number(options['max-daily-change'] ?? 0.12),
+    seamFeatherPixels: Number(options['seam-feather-pixels'] ?? 3),
   }, null, 2)}\n`);
   await runPython(options.python, [
     resolve('scripts/rolling_surface_compositor.py'),
@@ -219,7 +221,12 @@ try {
     newestPixelAgeDays: metadata.newestPixelAgeDays,
     sourceProducts: usedProducts,
     observationWindows: usedWindows,
-    normalization: { method: 'robust-channel-gain-and-delta-limit', maxDailyChange: Number(options['max-daily-change'] ?? 0.12) },
+    normalization: {
+      method: 'robust-channel-gain-delta-limit-and-inward-feather',
+      maxDailyChange: Number(options['max-daily-change'] ?? 0.12),
+      seamFeatherPixels: Number(options['seam-feather-pixels'] ?? 3),
+      gainRange: [0.75, 1.25],
+    },
   });
   const sourceManifestPath = join(temporary, 'manifest.json');
   await writeFile(sourceManifestPath, `${JSON.stringify(generated, null, 2)}\n`);

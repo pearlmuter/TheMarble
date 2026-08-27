@@ -16,7 +16,7 @@ export interface RollingSurfaceCandidate {
 
 export function selectRollingSurfaceObservations(options: {
   targetTime: string | Date;
-  previousValidAt?: string;
+  previousObservationWindows?: Array<Pick<RollingSurfaceCandidate, 'product' | 'version' | 'validAt' | 'observedFrom' | 'observedTo'>>;
   candidates: RollingSurfaceCandidate[];
   maxCandidateAgeDays?: number;
   minAcceptedFraction?: number;

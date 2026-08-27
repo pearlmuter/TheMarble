@@ -1,3 +1,5 @@
+import { rollingSurfaceProduct } from './rolling-surface-products.js';
+
 const percent = value => Math.round(value * 100);
 const shortDate = value => new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
@@ -6,7 +8,7 @@ export function formatRollingSurfaceStatus(rolling) {
   if (rolling.coverage.rollingFraction === 0) {
     return 'land seasonal fallback · no accepted contemporary surface observations';
   }
-  const products = rolling.sourceProducts.map(product => product === 'mcd43a4-nbar' ? 'MCD43A4' : 'VIIRS').join(' + ');
+  const products = rolling.sourceProducts.map(product => rollingSurfaceProduct(product).label).join(' + ');
   const ages = rolling.newestPixelAgeDays === rolling.oldestPixelAgeDays
     ? `${rolling.newestPixelAgeDays} d old`
     : `ages ${rolling.newestPixelAgeDays}–${rolling.oldestPixelAgeDays} d`;

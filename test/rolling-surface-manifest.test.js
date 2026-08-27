@@ -32,7 +32,7 @@ function update(overrides = {}) {
       { index: 1, product: 'mcd43a4-nbar', version: 'MCD43A4.061', validAt: '2026-08-24T12:00:00Z', observedFrom: '2026-08-12T00:00:00Z', observedTo: '2026-08-26T23:59:59Z' },
       { index: 2, product: 'viirs-surface-reflectance', version: 'VNP09GA.002', validAt: '2026-08-26T12:00:00Z', observedFrom: '2026-08-26T00:00:00Z', observedTo: '2026-08-26T23:59:59Z' },
     ],
-    normalization: { method: 'robust-channel-gain-and-delta-limit', maxDailyChange: 0.12 },
+    normalization: { method: 'robust-channel-gain-delta-limit-and-inward-feather', maxDailyChange: 0.12, seamFeatherPixels: 3, gainRange: [0.75, 1.25] },
     ...overrides,
   };
 }
