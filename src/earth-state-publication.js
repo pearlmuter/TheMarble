@@ -42,8 +42,11 @@ async function verifyPublished(store, path, reference) {
 }
 
 function publicationEntries(manifest) {
+  const topAsset = manifest.layers.surfaceAlbedo.asset;
   const seasonalSurfaceEntries = manifest.layers.surfaceAlbedo.seasonalCycle?.frames
-    .filter(frame => frame.month !== 1)
+    .filter(frame => frame.asset.href !== topAsset.href
+      || frame.asset.byteLength !== topAsset.byteLength
+      || frame.asset.checksum.value.toLowerCase() !== topAsset.checksum.value.toLowerCase())
     .map(frame => ({
       role: 'seasonal-layer-frame',
       name: 'surfaceAlbedo',
@@ -145,7 +148,7 @@ export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bu
         };
         await store.writeImmutable(path, entry.bytes);
         await verifyPublished(store, path, publishedDescriptor.asset);
-        if (entry.role === 'layer' && entry.name === 'surfaceAlbedo' && publishedDescriptor.seasonalCycle) {
+        if (entry.role === 'layer' && entry.name === 'surfaceAlbedo' && publishedDescriptor.seasonalCycle && !publishedDescriptor.rollingComposite) {
           publishedDescriptor.seasonalCycle.frames.find(frame => frame.month === 1).asset = structuredClone(publishedDescriptor.asset);
         }
         if (entry.role === 'layer' && Object.hasOwn(manifest.cloudSequence?.frames.at(-1)?.layers ?? {}, entry.name)) {

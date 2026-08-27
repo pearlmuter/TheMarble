@@ -1,13 +1,16 @@
+import type { RollingSurfaceProduct } from './rolling-surface-products.js';
+
 export type EarthStateClassification = 'static-fallback' | 'observed' | 'model-assisted';
 
 export const EARTH_STATE_REQUIRED_LAYERS: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_CRYOSPHERE_LAYERS: readonly ['snowCover', 'seaIce'];
 export const EARTH_STATE_PHYSICAL_CLOUD_LAYERS: readonly ['cloudPhysics', 'cloudAge'];
 export const EARTH_STATE_CLOUD_AUDIT_LAYERS: readonly ['cloudProvenance'];
-export const EARTH_STATE_OPTIONAL_LAYERS: readonly ['snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance'];
-export const EARTH_STATE_LAYER_NAMES: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity', 'snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance'];
+export const EARTH_STATE_OPTIONAL_LAYERS: readonly ['snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance', 'surfaceAge'];
+export const EARTH_STATE_LAYER_NAMES: readonly ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity', 'snowCover', 'seaIce', 'cloudPhysics', 'cloudAge', 'cloudProvenance', 'surfaceAge'];
 export const EARTH_STATE_REQUIRED_RESOURCES: readonly ['moonAlbedo', 'milkyWay', 'starCatalog'];
 export type EarthStateLayerName = typeof EARTH_STATE_LAYER_NAMES[number];
+export type EarthStateOptionalLayerName = typeof EARTH_STATE_OPTIONAL_LAYERS[number];
 export type EarthStateResourceName = typeof EARTH_STATE_REQUIRED_RESOURCES[number];
 export type EarthStateCloudLayerName = 'cloudOpacity' | 'cloudDensity' | 'cloudPhysics' | 'cloudAge' | 'cloudProvenance';
 
@@ -51,7 +54,42 @@ export interface EarthStateLayer {
   asset: EarthStateAssetReference;
 }
 
+export interface RollingSurfaceCoverage {
+  rollingFraction: number;
+  updatedFraction: number;
+  baselineFraction: number;
+}
+
+export interface RollingSurfaceObservationWindow {
+  index: number;
+  product: RollingSurfaceProduct;
+  version: string;
+  validAt: string;
+  observedFrom: string;
+  observedTo: string;
+}
+
+export interface RollingSurfaceComposite {
+  validAt: string;
+  observedFrom: string;
+  observedTo: string;
+  producedAt: string;
+  retrievedAt: string;
+  coverage: RollingSurfaceCoverage;
+  oldestPixelAgeDays: number | null;
+  newestPixelAgeDays: number | null;
+  sourceProducts: RollingSurfaceProduct[];
+  observationWindows: RollingSurfaceObservationWindow[];
+  normalization: {
+    method: 'robust-channel-gain-delta-limit-and-inward-feather';
+    maxDailyChange: number;
+    seamFeatherPixels: number;
+    gainRange: [number, number];
+  };
+}
+
 export interface EarthStateSurfaceLayer extends EarthStateLayer {
+  rollingComposite?: RollingSurfaceComposite;
   seasonalCycle?: {
     interpolation: 'linear';
     frames: Array<{
@@ -151,7 +189,7 @@ export interface EarthStateManifest {
   layers: Record<'nightLights' | 'cloudOpacity' | 'cloudDensity', EarthStateLayer>
     & { surfaceAlbedo: EarthStateSurfaceLayer }
     & Partial<Record<'snowCover' | 'seaIce', EarthStateCryosphereLayer>>
-    & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', EarthStateLayer>>;
+    & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance' | 'surfaceAge', EarthStateLayer>>;
   resources: Record<EarthStateResourceName, EarthStateResource>;
   cloudSequence?: EarthStateCloudSequence;
 }
@@ -172,7 +210,7 @@ export type EarthStateAssetRequest = {
   descriptor: EarthStateSurfaceLayer;
   url: string;
 } | {
-  name: Exclude<EarthStateLayerName, 'surfaceAlbedo'>;
+  name: Exclude<EarthStateLayerName, 'surfaceAlbedo'> | EarthStateOptionalLayerName;
   role: 'layer';
   descriptor: EarthStateLayer;
   url: string;

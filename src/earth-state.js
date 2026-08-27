@@ -1,10 +1,11 @@
 import { earthStateSha256 } from './earth-state-codec.js';
+import { isRollingSurfaceProduct } from './rolling-surface-products.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
 export const EARTH_STATE_PHYSICAL_CLOUD_LAYERS = ['cloudPhysics', 'cloudAge'];
 export const EARTH_STATE_CLOUD_AUDIT_LAYERS = ['cloudProvenance'];
-export const EARTH_STATE_OPTIONAL_LAYERS = [...EARTH_STATE_CRYOSPHERE_LAYERS, ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS, ...EARTH_STATE_CLOUD_AUDIT_LAYERS];
+export const EARTH_STATE_OPTIONAL_LAYERS = [...EARTH_STATE_CRYOSPHERE_LAYERS, ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS, ...EARTH_STATE_CLOUD_AUDIT_LAYERS, 'surfaceAge'];
 export const EARTH_STATE_LAYER_NAMES = [...EARTH_STATE_REQUIRED_LAYERS, ...EARTH_STATE_OPTIONAL_LAYERS];
 export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
@@ -66,8 +67,71 @@ function validateSeasonalCycle(layer, path, datasetIds) {
   });
   if (months.size !== 12) fail(`${path}.seasonalCycle.frames`);
 
-  const january = cycle.frames.find(frame => frame.month === 1);
-  if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
+  if (layer.rollingComposite === undefined) {
+    const january = cycle.frames.find(frame => frame.month === 1);
+    if (!sameAssetReference(layer.asset, january.asset)) fail(`${path}.seasonalCycle.frames.0.asset`);
+  }
+}
+
+function validateFraction(value, path) {
+  if (!Number.isFinite(value) || value < 0 || value > 1) fail(path);
+}
+
+function validateRollingComposite(layer, path, datasetIds) {
+  const rolling = layer.rollingComposite;
+  if (rolling === undefined) return;
+  if (!isRecord(rolling)) fail(`${path}.rollingComposite`);
+  for (const field of TIMESTAMP_FIELDS) {
+    if (typeof rolling[field] !== 'string' || Number.isNaN(Date.parse(rolling[field]))) fail(`${path}.rollingComposite.${field}`);
+  }
+  if (Date.parse(rolling.observedFrom) > Date.parse(rolling.observedTo)) fail(`${path}.rollingComposite.observedFrom`);
+  if (!isRecord(rolling.coverage)) fail(`${path}.rollingComposite.coverage`);
+  for (const field of ['rollingFraction', 'updatedFraction', 'baselineFraction']) {
+    validateFraction(rolling.coverage[field], `${path}.rollingComposite.coverage.${field}`);
+  }
+  if (Math.abs(rolling.coverage.rollingFraction + rolling.coverage.baselineFraction - 1) > 1e-6) {
+    fail(`${path}.rollingComposite.coverage`);
+  }
+  if (rolling.coverage.updatedFraction > rolling.coverage.rollingFraction) fail(`${path}.rollingComposite.coverage.updatedFraction`);
+  for (const field of ['oldestPixelAgeDays', 'newestPixelAgeDays']) {
+    const value = rolling[field];
+    if (value !== null && (!Number.isSafeInteger(value) || value < 0 || value >= 65535)) fail(`${path}.rollingComposite.${field}`);
+  }
+  if (rolling.coverage.rollingFraction === 0 && (rolling.oldestPixelAgeDays !== null || rolling.newestPixelAgeDays !== null)) {
+    fail(`${path}.rollingComposite.oldestPixelAgeDays`);
+  }
+  if (!Array.isArray(rolling.sourceProducts) || rolling.sourceProducts.some(product => !isRollingSurfaceProduct(product))) {
+    fail(`${path}.rollingComposite.sourceProducts`);
+  }
+  if (!Array.isArray(rolling.observationWindows)) fail(`${path}.rollingComposite.observationWindows`);
+  const windowIndices = new Set();
+  rolling.observationWindows.forEach((window, index) => {
+    const windowPath = `${path}.rollingComposite.observationWindows.${index}`;
+    if (!isRecord(window) || !Number.isSafeInteger(window.index) || window.index < 1 || window.index > 65534 || windowIndices.has(window.index)) fail(`${windowPath}.index`);
+    windowIndices.add(window.index);
+    if (!isRollingSurfaceProduct(window.product)) fail(`${windowPath}.product`);
+    requireString(window.version, `${windowPath}.version`);
+    for (const field of ['validAt', 'observedFrom', 'observedTo']) {
+      if (typeof window[field] !== 'string' || Number.isNaN(Date.parse(window[field]))) fail(`${windowPath}.${field}`);
+    }
+    if (Date.parse(window.observedFrom) > Date.parse(window.observedTo)) fail(`${windowPath}.observedFrom`);
+  });
+  const windowProducts = new Set(rolling.observationWindows.map(window => window.product));
+  if (new Set(rolling.sourceProducts).size !== rolling.sourceProducts.length || windowProducts.size !== rolling.sourceProducts.length || rolling.sourceProducts.some(product => !windowProducts.has(product))) {
+    fail(`${path}.rollingComposite.sourceProducts`);
+  }
+  if (rolling.coverage.rollingFraction > 0 && rolling.observationWindows.length === 0) fail(`${path}.rollingComposite.observationWindows`);
+  if (rolling.coverage.rollingFraction === 0 && rolling.observationWindows.length !== 0) fail(`${path}.rollingComposite.observationWindows`);
+  if (rolling.oldestPixelAgeDays !== null && rolling.newestPixelAgeDays !== null && rolling.oldestPixelAgeDays < rolling.newestPixelAgeDays) {
+    fail(`${path}.rollingComposite.oldestPixelAgeDays`);
+  }
+  if (!isRecord(rolling.normalization) || rolling.normalization.method !== 'robust-channel-gain-delta-limit-and-inward-feather' || !Number.isFinite(rolling.normalization.maxDailyChange) || rolling.normalization.maxDailyChange < 0
+    || !Number.isSafeInteger(rolling.normalization.seamFeatherPixels) || rolling.normalization.seamFeatherPixels < 0
+    || !Array.isArray(rolling.normalization.gainRange) || rolling.normalization.gainRange.length !== 2
+    || rolling.normalization.gainRange[0] !== 0.75 || rolling.normalization.gainRange[1] !== 1.25) {
+    fail(`${path}.rollingComposite.normalization`);
+  }
+  if (!datasetIds.has(layer.datasetId)) fail(`${path}.datasetId`);
 }
 
 function validateCoverage(coverage, path) {
@@ -312,9 +376,23 @@ export function validateEarthStateManifest(manifest) {
     if (!isRecord(layer.textureSemantics)) fail(`${path}.textureSemantics`);
     requireString(layer.textureSemantics.mapping, `${path}.textureSemantics.mapping`);
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
-    if (name === 'surfaceAlbedo') validateSeasonalCycle(layer, path, datasetIds);
+    if (name === 'surfaceAlbedo') {
+      validateRollingComposite(layer, path, datasetIds);
+      validateSeasonalCycle(layer, path, datasetIds);
+    }
     else if (layer.seasonalCycle !== undefined) fail(`${path}.seasonalCycle`);
     if (!EARTH_STATE_CRYOSPHERE_LAYERS.includes(name) && layer.provenance !== undefined) fail(`${path}.provenance`);
+  }
+
+  const rollingSurface = manifest.layers.surfaceAlbedo.rollingComposite;
+  const surfaceAge = manifest.layers.surfaceAge;
+  if (rollingSurface !== undefined && surfaceAge === undefined) fail('layers.surfaceAge');
+  if (rollingSurface === undefined && surfaceAge !== undefined) fail('layers.surfaceAge');
+  if (surfaceAge !== undefined) {
+    if (surfaceAge.datasetId !== manifest.layers.surfaceAlbedo.datasetId) fail('layers.surfaceAge.datasetId');
+    if (surfaceAge.dimensions.width !== manifest.layers.surfaceAlbedo.dimensions.width || surfaceAge.dimensions.height !== manifest.layers.surfaceAlbedo.dimensions.height) {
+      fail('layers.surfaceAge.dimensions');
+    }
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {

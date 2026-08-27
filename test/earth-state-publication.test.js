@@ -11,7 +11,7 @@ import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 const encoder = new TextEncoder();
 const checksum = bytes => createHash('sha256').update(bytes).digest('hex');
 
-function sourceFixture() {
+function sourceFixture({ rollingSurface = false } = {}) {
   const assets = new Map();
   const assetReference = (name, mediaType = 'image/png') => {
     const bytes = encoder.encode(`fixture:${name}`);
@@ -48,6 +48,25 @@ function sourceFixture() {
       asset: index === 0 ? surfaceAlbedo.asset : assetReference(`surface-${String(index + 1).padStart(2, '0')}`),
     })),
   };
+  let surfaceAge;
+  if (rollingSurface) {
+    surfaceAlbedo.asset = assetReference('surface-rolling');
+    surfaceAlbedo.datasetId = 'fixture-rolling';
+    surfaceAlbedo.rollingComposite = {
+      validAt: '2026-08-25T12:00:00Z',
+      observedFrom: '2026-08-10T00:00:00Z',
+      observedTo: '2026-08-24T23:59:59Z',
+      producedAt: '2026-08-25T06:00:00Z',
+      retrievedAt: '2026-08-25T07:00:00Z',
+      coverage: { rollingFraction: 0.75, updatedFraction: 0.08, baselineFraction: 0.25 },
+      oldestPixelAgeDays: 35,
+      newestPixelAgeDays: 1,
+      sourceProducts: ['mcd43a4-nbar'],
+      observationWindows: [{ index: 1, product: 'mcd43a4-nbar', version: 'MCD43A4.061', validAt: '2026-08-24T12:00:00Z', observedFrom: '2026-08-10T00:00:00Z', observedTo: '2026-08-24T23:59:59Z' }],
+      normalization: { method: 'robust-channel-gain-delta-limit-and-inward-feather', maxDailyChange: 0.12, seamFeatherPixels: 3, gainRange: [0.75, 1.25] },
+    };
+    surfaceAge = { ...layer('surface-age'), datasetId: 'fixture-rolling' };
+  }
   const manifest = {
     schemaVersion: 1,
     bundleId: 'source-fixture',
@@ -61,12 +80,14 @@ function sourceFixture() {
     datasets: [
       { id: 'fixture-earth', version: 'fixture-1', attribution: 'Fixture Earth' },
       { id: 'fixture-sky', version: 'fixture-1', attribution: 'Fixture sky' },
+      ...(rollingSurface ? [{ id: 'fixture-rolling', version: 'fixture-rolling-1', attribution: 'Fixture rolling Earth' }] : []),
     ],
     layers: {
       surfaceAlbedo,
       nightLights: layer('lights'),
       cloudOpacity: layer('clouds'),
       cloudDensity: layer('density'),
+      ...(rollingSurface ? { surfaceAge } : {}),
     },
     resources: {
       moonAlbedo: resource('moon', 'image/png'),
@@ -240,6 +261,23 @@ function addCryosphereToSource(source) {
   addLayer('seaIce', 'sea-ice');
   source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
 }
+test('a rolling surface publishes its top, audit texture, and all twelve independent fallback months', async () => {
+  const source = sourceFixture({ rollingSurface: true });
+  const store = memoryStore();
+  const publisher = createEarthStatePublisher({ loadSource: loadSourceFixture(source), store: store.adapter });
+
+  const publication = await publisher.publish({
+    targetTime: '2026-08-25T12:00:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+
+  const surface = publication.manifest.layers.surfaceAlbedo;
+  assert.match(surface.asset.href, /layer-surfaceAlbedo-/);
+  assert.match(publication.manifest.layers.surfaceAge.asset.href, /layer-surfaceAge-/);
+  assert.equal(surface.seasonalCycle.frames.length, 12);
+  assert.notEqual(surface.seasonalCycle.frames[0].asset.href, surface.asset.href);
+  assert.equal(surface.seasonalCycle.frames.every(frame => frame.asset.href.includes('seasonal-layer-frame-surfaceAlbedo-')), true);
+});
 
 function memoryStore() {
   const files = new Map();

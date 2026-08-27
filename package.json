@@ -12,6 +12,7 @@
     "publish:cloud-gaps": "node scripts/publish-cloud-gap-earth-state.mjs",
     "compose:satcorps": "python3 scripts/satcorps_compositor.py",
     "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
+    "publish:rolling-surface": "node scripts/publish-rolling-surface-earth-state.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"
