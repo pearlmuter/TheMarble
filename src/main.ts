@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import {
+  celestialSceneFrameAt,
+  EARTH_EQUATORIAL_RADIUS_KM,
+  MOON_EQUATORIAL_RADIUS_KM,
+  SUN_EQUATORIAL_RADIUS_KM,
+} from './astronomical-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
 import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
@@ -736,12 +742,10 @@ const moonMaterial = new THREE.ShaderMaterial({
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
   fragmentShader: `uniform sampler2D moonMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; void main(){ vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float light=smoothstep(-.07,.16,dot(normalize(vViewNormal),sunView)); vec3 albedo=texture2D(moonMap,vUv).rgb; gl_FragColor=vec4(albedo*mix(.014,1.0,light),1.0); }`
 });
-// Distances and radii below are expressed in Earth radii (Earth = 1.0).
-const earthRadiusKm = 6371.0088;
-const moon = new THREE.Mesh(new THREE.SphereGeometry(1737.4 / earthRadiusKm, 64, 64), moonMaterial);
+// Distances and radii below are expressed in equatorial Earth radii (Earth = 1.0).
+const moon = new THREE.Mesh(new THREE.SphereGeometry(MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM, 64, 64), moonMaterial);
 scene.add(moon);
-const sunDistance = 149597870.7 / earthRadiusKm; // mean Sun–Earth distance: 1 AU / Earth radius
-const sunRadius = 696340 / earthRadiusKm;
+const sunRadius = SUN_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM;
 const sun = new THREE.Mesh(
   new THREE.SphereGeometry(sunRadius, 48, 48),
   new THREE.ShaderMaterial({
@@ -852,38 +856,20 @@ const closestSunRayPoint = new THREE.Vector3();
 let skyExposure = .1;
 
 function radians(value: number) { return value * Math.PI / 180; }
-function degrees(value: number) { return value * 180 / Math.PI; }
-function wrap(value: number) { return ((value + 180) % 360 + 360) % 360 - 180; }
-function julianDay(date: Date) { return date.getTime() / 86400000 + 2440587.5; }
 function latLonVector(latitude: number, longitude: number, radius: number) {
   const phi = radians(90 - latitude); const theta = radians(longitude + 180);
   return new THREE.Vector3(-radius*Math.sin(phi)*Math.cos(theta),radius*Math.cos(phi),radius*Math.sin(phi)*Math.sin(theta));
 }
 
-function solarCoordinates(date: Date) {
-  const d=julianDay(date)-2451545.0; const meanLongitude=(280.46+.9856474*d)%360;
-  const meanAnomaly=radians((357.528+.9856003*d)%360);
-  const eclipticLongitude=radians(meanLongitude+1.915*Math.sin(meanAnomaly)+.02*Math.sin(2*meanAnomaly));
-  const obliquity=radians(23.439-.0000004*d);
-  const rightAscension=degrees(Math.atan2(Math.cos(obliquity)*Math.sin(eclipticLongitude),Math.cos(eclipticLongitude)))/15;
-  const latitude=degrees(Math.asin(Math.sin(obliquity)*Math.sin(eclipticLongitude)));
-  const gmst=(18.697374558+24.06570982441908*d)%24;
-  return { latitude, rightAscension, gmst, longitude: wrap((rightAscension-gmst)*15) };
-}
-
-function lunarCoordinates(date: Date) {
-  const d=julianDay(date)-2451545.0;
-  const meanLongitude=(218.316+13.176396*d)%360;
-  const anomaly=(134.963+13.064993*d)%360;
-  const elongation=(297.850+12.190749*d)%360;
-  const latitudeArgument=(93.272+13.22935*d)%360;
-  const longitude=radians(meanLongitude + 6.289*Math.sin(radians(anomaly)) + 1.274*Math.sin(radians(2*elongation-anomaly)) + .658*Math.sin(radians(2*elongation)) + .214*Math.sin(radians(2*anomaly)) - .186*Math.sin(radians((357.529+.98560028*d)%360)));
-  const latitude=radians(5.128*Math.sin(radians(latitudeArgument)) + .280*Math.sin(radians(anomaly+latitudeArgument)) + .277*Math.sin(radians(anomaly-latitudeArgument)) + .173*Math.sin(radians(2*elongation-latitudeArgument)));
-  const obliquity=radians(23.439-.0000004*d);
-  const rightAscension=degrees(Math.atan2(Math.sin(longitude)*Math.cos(obliquity)-Math.tan(latitude)*Math.sin(obliquity),Math.cos(longitude)))/15;
-  const declination=degrees(Math.asin(Math.sin(latitude)*Math.cos(obliquity)+Math.cos(latitude)*Math.sin(obliquity)*Math.sin(longitude)));
-  const distanceKm=385000.56 - 20905.36*Math.cos(radians(anomaly)) - 3699.11*Math.cos(radians(2*elongation-anomaly)) - 2955.97*Math.cos(radians(2*elongation)) - 569.93*Math.cos(radians(2*anomaly));
-  return { latitude: declination, rightAscension, distanceEarthRadii: distanceKm / earthRadiusKm };
+const celestialRotationMatrix = new THREE.Matrix4();
+function applyCelestialRotation(object: THREE.Object3D, matrix: readonly number[]) {
+  celestialRotationMatrix.set(
+    matrix[0], matrix[1], matrix[2], 0,
+    matrix[3], matrix[4], matrix[5], 0,
+    matrix[6], matrix[7], matrix[8], 0,
+    0, 0, 0, 1,
+  );
+  object.quaternion.setFromRotationMatrix(celestialRotationMatrix);
 }
 
 let cameraTracksSun = true;
@@ -896,10 +882,11 @@ canvas.addEventListener('pointerup', () => { pointerStart = undefined; }, { pass
 canvas.addEventListener('pointercancel', () => { pointerStart = undefined; }, { passive: true });
 canvas.addEventListener('wheel', () => { cameraTracksSun = false; }, { passive: true });
 function updateCelestialScene(now: Date) {
-  const solar=solarCoordinates(now);
-  // Greenwich sidereal rotation turns Earth beneath the inertial Hipparcos/Gaia sky.
-  planet.rotation.y=radians(solar.gmst*15);
-  const sunDirection=latLonVector(solar.latitude,solar.rightAscension*15,1).normalize();
+  const frame = celestialSceneFrameAt(now);
+  const solar = frame.astronomy.sun;
+  // The Earth body rotates in EQJ while the camera and Hipparcos/Gaia sky remain inertial.
+  applyCelestialRotation(planet, frame.earth.bodyToSceneMatrix);
+  const sunDirection = new THREE.Vector3(...frame.sun.inertialDirection);
   if (cameraTracksSun) {
     // Place the observer just outside the Sun–Earth occultation cone. The real, 0.53° solar disc
     // sits beyond the atmospheric limb; the camera then remains still while Earth rotates below.
@@ -918,10 +905,10 @@ function updateCelestialScene(now: Date) {
     controls.target.set(0, 0, 0);
   }
   earthMaterial.uniforms.sunDirection.value.copy(sunDirection);
-  earthMaterial.uniforms.sunLocalDirection.value.copy(sunDirection).applyQuaternion(planet.quaternion.clone().invert());
+  earthMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
   cloudMaterial.uniforms.sunDirection.value.copy(sunDirection);
   (atmosphere.material as THREE.ShaderMaterial).uniforms.sunDirection.value.copy(sunDirection);
-  sun.position.copy(sunDirection).multiplyScalar(sunDistance);
+  sun.position.copy(sunDirection).multiplyScalar(frame.sun.distanceEarthRadii);
   // Put camera optics just in front of the solar sphere so the sphere cannot depth-mask them;
   // Earth remains vastly nearer and therefore still occludes the complete optical effect.
   // A generous camera-space separation avoids far-plane depth quantization masking the
@@ -951,14 +938,13 @@ function updateCelestialScene(now: Date) {
   skyExposure = THREE.MathUtils.lerp(skyExposure, targetSkyExposure, sunInFrame ? .045 : .012);
   milkyWayMaterial.uniforms.exposure.value = skyExposure;
   if (starMaterial) starMaterial.uniforms.exposure.value = THREE.MathUtils.lerp(.18, 1, skyExposure);
-  const lunar=lunarCoordinates(now);
-  const moonDirection=latLonVector(lunar.latitude,lunar.rightAscension*15,1).normalize();
-  moon.position.copy(moonDirection).multiplyScalar(lunar.distanceEarthRadii);
-  moon.lookAt(camera.position);
+  const moonDirection = new THREE.Vector3(...frame.moon.inertialDirection);
+  moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
+  applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
   moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
-  sunStatus.textContent=`Sun over ${Math.abs(solar.latitude).toFixed(1)}°${solar.latitude>=0?'N':'S'}, ${Math.abs(solar.longitude).toFixed(1)}°${solar.longitude>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits`;
+  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits`;
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
