@@ -115,6 +115,51 @@ function addHourlyCloudSequence(manifest) {
   return frames;
 }
 
+function addSatcorpsCloudSequence(manifest) {
+  const physicalLayer = (href, channels) => ({
+    datasetId: 'earth',
+    units: 'normalized physical retrieval',
+    dimensions: { width: 4, height: 2 },
+    colorSpace: 'linear',
+    channels,
+    textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+    asset: { ...manifest.layers.cloudOpacity.asset, href },
+  });
+  manifest.layers.cloudPhysics = physicalLayer('./cloud-physics-1300.png', {
+    r: 'log optical depth / log(151)', g: 'thermodynamic phase', b: 'effective height / 20 km', a: 'retrieval quality',
+  });
+  manifest.layers.cloudAge = physicalLayer('./cloud-age-1300.png', { r: 'absolute observation age / 3 hours' });
+  const frame = (hour, suffix) => ({
+    validAt: `2026-08-25T${hour}:00:00Z`,
+    observedFrom: `2026-08-25T${hour}:00:00Z`,
+    observedTo: `2026-08-25T${hour}:09:59Z`,
+    producedAt: `2026-08-25T${hour}:30:00Z`,
+    retrievedAt: '2026-08-25T13:45:00Z',
+    coverage: { observedFraction: .97, latitudeRange: [-90, 90], usableFraction: .94 },
+    layers: Object.fromEntries(['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge'].map(name => [name, {
+      datasetId: 'earth',
+      asset: {
+        ...manifest.layers[name].asset,
+        href: `./${name}-${suffix}.png`,
+      },
+    }])),
+  });
+  const frames = [frame('12', '1200'), frame('13', '1300')];
+  manifest.cloudSequence = { provider: 'satcorps', interpolation: 'crossfade', transitionSeconds: 300, frames };
+  for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
+    manifest.layers[name].asset = structuredClone(frames[1].layers[name].asset);
+  }
+  manifest.times = {
+    observedFrom: frames[0].observedFrom,
+    observedTo: frames[1].observedTo,
+    validAt: frames[1].validAt,
+    producedAt: frames[1].producedAt,
+    retrievedAt: frames[1].retrievedAt,
+  };
+  manifest.classification = 'observed';
+  return frames;
+}
+
 function addDailyCryosphere(manifest) {
   const textureDescriptor = href => ({
     datasetId: 'cryosphere',
@@ -185,6 +230,45 @@ test('an hourly cloud sequence activates two complete observation states with tr
   assert.equal(activated.cloudSequence.frames[1].layers.cloudOpacity, activated.layers.cloudOpacity);
   assert.equal(activated.cloudSequence.frames[1].layers.cloudDensity, activated.layers.cloudDensity);
   assert.equal(loadedUrls.length, 9);
+});
+
+test('a SatCORPS sequence activates all physical fields as one coherent hourly observation pair', async () => {
+  const manifest = fixtureManifest();
+  addSatcorpsCloudSequence(manifest);
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => loaded(`loaded:${url}`),
+  });
+
+  const activated = await activator.activate('https://example.test/states/satcorps/manifest.json');
+
+  assert.equal(activated.cloudSequence.provider, 'satcorps');
+  assert.deepEqual(activated.cloudSequence.frames.map(frame => frame.validAt), [
+    '2026-08-25T12:00:00Z', '2026-08-25T13:00:00Z',
+  ]);
+  for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
+    assert.match(activated.cloudSequence.frames[0].layers[name], new RegExp(`${name}-1200\\.png$`));
+    assert.equal(activated.cloudSequence.frames[1].layers[name], activated.layers[name]);
+  }
+});
+
+test('a physical cloud observation is rejected atomically when one field is absent or unpaired', async () => {
+  for (const mutate of [
+    manifest => { delete manifest.layers.cloudAge; },
+    manifest => { delete manifest.cloudSequence.frames[0].layers.cloudPhysics; },
+    manifest => { manifest.cloudSequence.frames[1].coverage.usableFraction = .69; },
+  ]) {
+    const manifest = fixtureManifest();
+    addSatcorpsCloudSequence(manifest);
+    mutate(manifest);
+    let loads = 0;
+    const activator = createEarthStateActivator({
+      loadDocument: async () => jsonDocumentFixture(manifest),
+      loadAsset: async () => { loads += 1; return loaded('unused'); },
+    });
+    await assert.rejects(() => activator.activate('https://example.test/states/satcorps/manifest.json'), /cloudAge|cloudPhysics|usableFraction/);
+    assert.equal(loads, 0);
+  }
 });
 
 test('daily snow cover and sea ice activate as distinct layers with explicit provenance', async () => {

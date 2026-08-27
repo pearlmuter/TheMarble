@@ -9,3 +9,9 @@ test('the GMGSI compositor path is resolved beside the publisher instead of from
   assert.match(publisherSource, /join\(scriptDirectory, 'gmgsi_compositor\.py'\)/);
   assert.doesNotMatch(publisherSource, /resolve\('scripts\/gmgsi_compositor\.py'\)/);
 });
+
+test('GMGSI fallback removes SatCORPS-only layers and their dataset before validation', () => {
+  assert.match(publisherSource, /delete manifest\.layers\.cloudPhysics/);
+  assert.match(publisherSource, /delete manifest\.layers\.cloudAge/);
+  assert.match(publisherSource, /provider: 'gmgsi'/);
+});

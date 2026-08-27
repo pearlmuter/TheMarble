@@ -122,6 +122,48 @@ function addCloudSequenceToSource(source) {
   source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
 }
 
+function makeCloudSequencePhysical(source) {
+  const manifestUrl = 'https://fixtures.test/source/manifest.json';
+  const manifest = JSON.parse(new TextDecoder().decode(source.get(manifestUrl).bytes));
+  const physicalLayer = (name, suffix) => {
+    const bytes = encoder.encode(`fixture:${name}-${suffix}`);
+    const href = `./${name}-${suffix}.png`;
+    source.set(new URL(href, manifestUrl).href, { bytes, mediaType: 'image/png' });
+    return {
+      datasetId: 'fixture-earth',
+      units: 'normalized physical retrieval',
+      dimensions: { width: 4, height: 2 },
+      colorSpace: 'linear',
+      channels: { r: 'physical field' },
+      textureSemantics: { mapping: 'equirectangular', sampling: 'linear' },
+      asset: { href, mediaType: 'image/png', byteLength: bytes.byteLength, immutable: true, checksum: { algorithm: 'sha256', value: checksum(bytes) } },
+    };
+  };
+  manifest.layers.cloudPhysics = physicalLayer('cloudPhysics', '1300');
+  manifest.layers.cloudAge = physicalLayer('cloudAge', '1300');
+  const times = [
+    ['2026-08-25T12:00:00Z', '2026-08-25T12:09:59Z', '2026-08-25T13:00:00Z'],
+    ['2026-08-25T13:00:00Z', '2026-08-25T13:09:59Z', '2026-08-25T13:30:00Z'],
+  ];
+  manifest.cloudSequence.provider = 'satcorps';
+  manifest.cloudSequence.frames.forEach((frame, index) => {
+    [frame.validAt, frame.observedTo, frame.producedAt] = times[index];
+    frame.observedFrom = frame.validAt;
+    frame.retrievedAt = '2026-08-25T13:45:00Z';
+    frame.coverage = { observedFraction: .97, latitudeRange: [-90, 90], usableFraction: .94 };
+    for (const name of ['cloudPhysics', 'cloudAge']) {
+      const layer = index === 1 ? manifest.layers[name] : physicalLayer(name, '1200');
+      frame.layers[name] = { datasetId: layer.datasetId, asset: structuredClone(layer.asset) };
+    }
+  });
+  const [previous, current] = manifest.cloudSequence.frames;
+  manifest.times = {
+    observedFrom: previous.observedFrom, observedTo: current.observedTo, validAt: current.validAt,
+    producedAt: current.producedAt, retrievedAt: current.retrievedAt,
+  };
+  source.set(manifestUrl, { bytes: encoder.encode(JSON.stringify(manifest)), mediaType: 'application/json' });
+}
+
 function addCryosphereToSource(source) {
   const manifestUrl = 'https://fixtures.test/source/manifest.json';
   const manifest = JSON.parse(new TextDecoder().decode(source.get(manifestUrl).bytes));
@@ -236,6 +278,25 @@ test('publication carries both complete hourly cloud observations into the immut
     assert.deepEqual(current.layers[name].asset, publication.manifest.layers[name].asset);
     const previousPath = new URL(previous.layers[name].asset.href, `https://published.test/${publication.manifestPath}`).pathname.slice(1);
     assert.equal(store.files.has(previousPath), true);
+  }
+});
+
+test('publication carries every SatCORPS physical field atomically across both hourly frames', async () => {
+  const source = sourceFixture();
+  addCloudSequenceToSource(source);
+  makeCloudSequencePhysical(source);
+  const store = memoryStore();
+  const publisher = createEarthStatePublisher({ loadSource: loadSourceFixture(source), store: store.adapter });
+
+  const publication = await publisher.publish({
+    targetTime: '2026-08-25T13:45:00Z',
+    sourceManifestUrl: 'https://fixtures.test/source/manifest.json',
+  });
+
+  assert.equal(publication.manifest.cloudSequence.provider, 'satcorps');
+  for (const name of ['cloudOpacity', 'cloudDensity', 'cloudPhysics', 'cloudAge']) {
+    assert.deepEqual(publication.manifest.cloudSequence.frames[1].layers[name].asset, publication.manifest.layers[name].asset);
+    assert.match(publication.manifest.cloudSequence.frames[0].layers[name].asset.href, /cloud-observation-frame/);
   }
 });
 

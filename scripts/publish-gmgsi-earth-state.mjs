@@ -217,7 +217,11 @@ async function main() {
     const replacedDatasetIds = new Set([
       manifest.layers.cloudOpacity.datasetId,
       manifest.layers.cloudDensity.datasetId,
+      manifest.layers.cloudPhysics?.datasetId,
+      manifest.layers.cloudAge?.datasetId,
     ]);
+    delete manifest.layers.cloudPhysics;
+    delete manifest.layers.cloudAge;
     manifest.bundleId = `source-gmgsi-${frames[1].validAt}`;
     manifest.classification = 'observed';
     manifest.datasets = manifest.datasets.filter(dataset => !replacedDatasetIds.has(dataset.id));
@@ -230,7 +234,7 @@ async function main() {
     });
     manifest.layers.cloudOpacity = currentDescriptors.cloudOpacity;
     manifest.layers.cloudDensity = currentDescriptors.cloudDensity;
-    manifest.cloudSequence = { interpolation: 'crossfade', transitionSeconds: 300, frames };
+    manifest.cloudSequence = { provider: 'gmgsi', interpolation: 'crossfade', transitionSeconds: 300, frames };
     manifest.times = {
       observedFrom: frames[0].observedFrom,
       observedTo: frames[1].observedTo,

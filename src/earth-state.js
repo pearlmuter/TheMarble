@@ -1,7 +1,9 @@
 import { earthStateSha256 } from './earth-state-codec.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
-export const EARTH_STATE_OPTIONAL_LAYERS = ['snowCover', 'seaIce'];
+export const EARTH_STATE_CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
+export const EARTH_STATE_PHYSICAL_CLOUD_LAYERS = ['cloudPhysics', 'cloudAge'];
+export const EARTH_STATE_OPTIONAL_LAYERS = [...EARTH_STATE_CRYOSPHERE_LAYERS, ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS];
 export const EARTH_STATE_LAYER_NAMES = [...EARTH_STATE_REQUIRED_LAYERS, ...EARTH_STATE_OPTIONAL_LAYERS];
 export const EARTH_STATE_REQUIRED_RESOURCES = ['moonAlbedo', 'milkyWay', 'starCatalog'];
 const TIMESTAMP_FIELDS = ['observedFrom', 'observedTo', 'validAt', 'producedAt', 'retrievedAt'];
@@ -86,6 +88,11 @@ function validateCloudSequence(manifest, datasetIds) {
   const sequence = manifest.cloudSequence;
   if (sequence === undefined) return;
   if (!isRecord(sequence)) fail('cloudSequence');
+  const provider = sequence.provider ?? 'gmgsi';
+  if (!['gmgsi', 'satcorps'].includes(provider)) fail('cloudSequence.provider');
+  const layerNames = provider === 'satcorps'
+    ? ['cloudOpacity', 'cloudDensity', ...EARTH_STATE_PHYSICAL_CLOUD_LAYERS]
+    : ['cloudOpacity', 'cloudDensity'];
   if (sequence.interpolation !== 'crossfade') fail('cloudSequence.interpolation');
   if (!Number.isSafeInteger(sequence.transitionSeconds) || sequence.transitionSeconds <= 0) {
     fail('cloudSequence.transitionSeconds');
@@ -107,10 +114,17 @@ function validateCloudSequence(manifest, datasetIds) {
       }
     }
     if (!isRecord(frame.layers)) fail(`${path}.layers`);
-    for (const name of ['cloudOpacity', 'cloudDensity']) {
+    for (const name of Object.keys(frame.layers)) {
+      if (!layerNames.includes(name)) fail(`${path}.layers.${name}`);
+    }
+    for (const name of layerNames) {
       const descriptor = frame.layers[name];
       if (!isRecord(descriptor) || !datasetIds.has(descriptor.datasetId)) fail(`${path}.layers.${name}.datasetId`);
       validateAsset(descriptor.asset, `${path}.layers.${name}.asset`);
+    }
+    if (provider === 'satcorps' && (!Number.isFinite(frame.coverage.usableFraction)
+      || frame.coverage.usableFraction < .7 || frame.coverage.usableFraction > 1)) {
+      fail(`${path}.coverage.usableFraction`);
     }
     const observedFrom = Date.parse(frame.observedFrom);
     const observedTo = Date.parse(frame.observedTo);
@@ -121,17 +135,20 @@ function validateCloudSequence(manifest, datasetIds) {
       fail(`${path}.observedFrom`);
     }
     const validDate = new Date(validAt);
-    if (validDate.getUTCMinutes() !== 0 || validDate.getUTCSeconds() !== 0 || validDate.getUTCMilliseconds() !== 0) {
+    const validMinutes = [0];
+    if (!validMinutes.includes(validDate.getUTCMinutes()) || validDate.getUTCSeconds() !== 0 || validDate.getUTCMilliseconds() !== 0) {
       fail(`${path}.validAt`);
     }
   }
 
-  if (Date.parse(sequence.frames[1].validAt) - Date.parse(sequence.frames[0].validAt) !== 60 * 60 * 1000) {
+  const cadenceMs = 60 * 60 * 1000;
+  if (Date.parse(sequence.frames[1].validAt) - Date.parse(sequence.frames[0].validAt) !== cadenceMs) {
     fail('cloudSequence.frames.1.validAt');
   }
 
   const latest = sequence.frames[1];
-  for (const name of ['cloudOpacity', 'cloudDensity']) {
+  for (const name of layerNames) {
+    if (!manifest.layers[name]) fail(`layers.${name}`);
     if (manifest.layers[name].datasetId !== latest.layers[name].datasetId
       || !sameAssetReference(manifest.layers[name].asset, latest.layers[name].asset)) {
       fail(`cloudSequence.frames.1.layers.${name}.asset`);
@@ -154,7 +171,7 @@ function validateCryosphereLayers(manifest) {
   const hasSeaIce = Object.hasOwn(manifest.layers, 'seaIce');
   if (hasSnow !== hasSeaIce) fail(hasSnow ? 'layers.seaIce' : 'layers.snowCover');
   if (!hasSnow) return;
-  for (const name of EARTH_STATE_OPTIONAL_LAYERS) {
+  for (const name of EARTH_STATE_CRYOSPHERE_LAYERS) {
     const provenance = manifest.layers[name].provenance;
     const path = `layers.${name}.provenance`;
     if (!isRecord(provenance)) fail(path);
@@ -170,6 +187,14 @@ function validateCryosphereLayers(manifest) {
       fail(`${path}.coverage.fallbackFraction`);
     }
   }
+}
+
+function validatePhysicalCloudLayers(manifest) {
+  const hasPhysics = Object.hasOwn(manifest.layers, 'cloudPhysics');
+  const hasAge = Object.hasOwn(manifest.layers, 'cloudAge');
+  if (hasPhysics !== hasAge) fail(hasPhysics ? 'layers.cloudAge' : 'layers.cloudPhysics');
+  if (manifest.cloudSequence?.provider === 'satcorps' && !hasPhysics) fail('layers.cloudPhysics');
+  if (hasPhysics && manifest.cloudSequence?.provider !== 'satcorps') fail('cloudSequence.provider');
 }
 
 async function verifyLoadedAsset(loaded, reference, path) {
@@ -236,7 +261,7 @@ export function validateEarthStateManifest(manifest) {
     requireString(layer.textureSemantics.sampling, `${path}.textureSemantics.sampling`);
     if (name === 'surfaceAlbedo') validateSeasonalCycle(layer, path, datasetIds);
     else if (layer.seasonalCycle !== undefined) fail(`${path}.seasonalCycle`);
-    if (!EARTH_STATE_OPTIONAL_LAYERS.includes(name) && layer.provenance !== undefined) fail(`${path}.provenance`);
+    if (!EARTH_STATE_CRYOSPHERE_LAYERS.includes(name) && layer.provenance !== undefined) fail(`${path}.provenance`);
   }
 
   for (const [name, resource] of Object.entries(manifest.resources)) {
@@ -247,6 +272,7 @@ export function validateEarthStateManifest(manifest) {
 
   validateCloudSequence(manifest, datasetIds);
   validateCryosphereLayers(manifest);
+  validatePhysicalCloudLayers(manifest);
 }
 
 export function validateEarthStateLatest(latest) {
@@ -332,7 +358,7 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       const frames = [];
       for (const [frameIndex, frame] of manifest.cloudSequence.frames.entries()) {
         const frameLayers = {};
-        for (const name of ['cloudOpacity', 'cloudDensity']) {
+        for (const name of Object.keys(frame.layers)) {
           const frameDescriptor = frame.layers[name];
           if (sameAssetReference(manifest.layers[name].asset, frameDescriptor.asset)) {
             frameLayers[name] = layers[name];

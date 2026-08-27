@@ -148,7 +148,7 @@ export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bu
         if (entry.role === 'layer' && entry.name === 'surfaceAlbedo' && publishedDescriptor.seasonalCycle) {
           publishedDescriptor.seasonalCycle.frames.find(frame => frame.month === 1).asset = structuredClone(publishedDescriptor.asset);
         }
-        if (entry.role === 'layer' && ['cloudOpacity', 'cloudDensity'].includes(entry.name) && manifest.cloudSequence) {
+        if (entry.role === 'layer' && Object.hasOwn(manifest.cloudSequence?.frames.at(-1)?.layers ?? {}, entry.name)) {
           manifest.cloudSequence.frames.at(-1).layers[entry.name].asset = structuredClone(publishedDescriptor.asset);
         }
       }

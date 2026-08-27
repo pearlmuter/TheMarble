@@ -36,7 +36,7 @@ export function validateEarthStateScene(activeEarthState, isTexture, { isSeasona
     throw new Error('Earth-state scene asset starCatalog is invalid');
   }
   for (const [frameIndex, frame] of (activeEarthState?.cloudSequence?.frames ?? []).entries()) {
-    for (const name of ['cloudOpacity', 'cloudDensity']) {
+    for (const name of Object.keys(frame.layers)) {
       if (!isTexture(frame?.layers?.[name])) {
         throw new Error(`Earth-state scene asset cloudSequence.frames.${frameIndex}.layers.${name} is not a texture`);
       }
