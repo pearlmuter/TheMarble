@@ -16,6 +16,7 @@ export interface EarthStateBundleSnapshot {
   bundleId: string;
   validAt: string;
   latestUrl: string;
+  entrypointKind?: 'latest' | 'manifest';
   entries: EarthStateCacheEntry[];
 }
 
@@ -23,6 +24,7 @@ export interface EarthStateCacheCandidate {
   bundleId: string;
   validAt: string;
   latestUrl: string;
+  entrypointKind: 'latest' | 'manifest';
   read(url: string): EarthStateCacheEntry;
 }
 
@@ -35,6 +37,7 @@ export interface EarthStateBundleCache {
 export function createEarthStateBundleCache(options: {
   storage: EarthStateCacheStorage;
   maxRemoteBundles?: number;
+  maxBytes?: number;
 }): EarthStateBundleCache;
 
 export function activateEarthStateAtStartup<Result>(options: {

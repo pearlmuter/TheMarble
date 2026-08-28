@@ -39,6 +39,9 @@ function validateBundle(bundle) {
   if (!Array.isArray(bundle.entries) || bundle.entries.length === 0) {
     throw new Error('Invalid cached Earth-state entries');
   }
+  if (bundle.entrypointKind !== undefined && !['latest', 'manifest'].includes(bundle.entrypointKind)) {
+    throw new Error('Invalid cached Earth-state entrypoint kind');
+  }
   bundle.entries.forEach(validateEntry);
   const urls = new Set(bundle.entries.map(entry => entry.url));
   if (urls.size !== bundle.entries.length) throw new Error('Duplicate cached Earth-state entry URL');
@@ -52,8 +55,13 @@ function copyBundle(bundle) {
     bundleId: bundle.bundleId,
     validAt: bundle.validAt,
     latestUrl: bundle.latestUrl,
+    entrypointKind: bundle.entrypointKind ?? 'latest',
     entries: bundle.entries.map(copyEntry),
   };
+}
+
+function bundleByteLength(bundle) {
+  return bundle.entries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
 }
 
 function isIndex(value) {
@@ -77,6 +85,7 @@ function candidateFrom(record) {
     bundleId: record.bundleId,
     validAt: record.validAt,
     latestUrl: record.latestUrl,
+    entrypointKind: record.entrypointKind ?? 'latest',
     read(url) {
       const entry = entries.get(url);
       if (!entry) throw new Error(`Cached Earth-state entry is unavailable: ${url}`);
@@ -108,15 +117,18 @@ async function isVerifiedBundle(record) {
     },
   });
   try {
-    const active = await activator.activateLatest(candidate.latestUrl);
+    const active = candidate.entrypointKind === 'manifest'
+      ? await activator.activate(candidate.latestUrl)
+      : await activator.activateLatest(candidate.latestUrl);
     return active.manifest.bundleId === candidate.bundleId;
   } catch {
     return false;
   }
 }
 
-export function createEarthStateBundleCache({ storage, maxRemoteBundles = 2 }) {
-  if (!storage || !Number.isSafeInteger(maxRemoteBundles) || maxRemoteBundles < 1) {
+export function createEarthStateBundleCache({ storage, maxRemoteBundles = 2, maxBytes = Number.MAX_SAFE_INTEGER }) {
+  if (!storage || !Number.isSafeInteger(maxRemoteBundles) || maxRemoteBundles < 1
+    || !Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new Error('Invalid Earth-state bundle cache configuration');
   }
 
@@ -128,12 +140,20 @@ export function createEarthStateBundleCache({ storage, maxRemoteBundles = 2 }) {
   return {
     async remember(bundle) {
       const record = copyBundle(bundle);
+      let retainedBytes = bundleByteLength(record);
+      if (retainedBytes > maxBytes) throw new Error('Earth-state bundle exceeds cache byte limit');
       const previousIds = await readIndexIds();
       const readablePredecessors = [];
       for (const bundleId of previousIds) {
         if (bundleId === record.bundleId) continue;
         const previous = await storage.get(bundleKey(bundleId));
-        if (await isVerifiedBundle(previous)) readablePredecessors.push(bundleId);
+        if (await isVerifiedBundle(previous)) {
+          const previousBytes = bundleByteLength(previous);
+          if (retainedBytes + previousBytes <= maxBytes) {
+            readablePredecessors.push(bundleId);
+            retainedBytes += previousBytes;
+          }
+        }
         if (readablePredecessors.length === maxRemoteBundles - 1) break;
       }
       const retainedIds = [record.bundleId, ...readablePredecessors];

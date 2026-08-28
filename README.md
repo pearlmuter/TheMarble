@@ -31,7 +31,9 @@ npm run publish:earth-state -- \
 
 Publishing the same source set for the same target time produces identical asset, manifest, and latest-pointer bytes. A website can serve the output directory at `/earth-state/`; TheMarble checks `/earth-state/latest.json` every ten minutes while retaining its current verified globe through missing, malformed, corrupt, or timed-out replacements. Set `VITE_EARTH_STATE_LATEST_URL` when the desktop build should read a production `latest.json` from a separate HTTPS origin.
 
-The Tauri app keeps the two newest successfully activated remote bundles in its private persistent webview store. On startup it re-verifies cached manifests and every asset checksum before applying anything, tries the newest complete cache first, and falls back to the packaged seasonal Earth if storage is missing, evicted, partial, or corrupt. The website uses the same decoder and atomic activation path without the desktop cache.
+The Tauri app keeps up to the two newest successfully activated remote bundles, within a 384 MiB limit, in its private persistent webview store. On startup it re-verifies cached manifests and every asset checksum before applying anything, tries the newest complete cache first, and falls back to the packaged seasonal Earth if storage is missing, evicted, partial, or corrupt. The website uses the same decoder and atomic activation path without the desktop cache.
+
+For production display, `npm run publish:presentation-tiers` converts one verified scientific state into coherent 8K and, when the source genuinely supports it, 16K KTX2/Basis Universal bundles. The website and Tauri app select the highest complete tier that fits measured texture, memory, transfer, and cache limits; a failed high-tier preparation retries the whole 8K tier without mixing layers. The production endpoint is `/earth-state/latest-presentations.json` (or `VITE_EARTH_STATE_PRESENTATIONS_URL`). See [`docs/presentation-tiers.md`](docs/presentation-tiers.md) for the encoder command, performance budgets, and cache policy.
 
 ### Publish hourly NOAA clouds
 

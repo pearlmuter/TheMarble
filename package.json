@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node scripts/prepare-basis-transcoder.mjs && vite",
+    "build": "node scripts/prepare-basis-transcoder.mjs && tsc && vite build",
     "publish:earth-state": "node scripts/publish-earth-state.mjs",
     "publish:gmgsi": "node scripts/publish-gmgsi-earth-state.mjs",
     "publish:clouds": "node scripts/publish-cloud-earth-state.mjs",
@@ -13,6 +13,7 @@
     "compose:satcorps": "python3 scripts/satcorps_compositor.py",
     "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
     "publish:rolling-surface": "node scripts/publish-rolling-surface-earth-state.mjs",
+    "publish:presentation-tiers": "node scripts/publish-presentation-tiers.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"

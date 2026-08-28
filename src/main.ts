@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import {
   celestialSceneFrameAt,
   EARTH_EQUATORIAL_RADIUS_KM,
@@ -25,6 +26,8 @@ import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, 
 import { buildEarthStateProvenancePresentation } from './earth-state-provenance.js';
 import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
 import { createProvenanceDisclosure } from './provenance-disclosure.js';
+import { createEarthStatePresentationActivator } from './earth-state-presentation.js';
+import type { EarthStatePresentationCapabilities } from './earth-state-presentation.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
 import type { SeasonalPair } from './seasonal-surface-controller.js';
 import './style.css';
@@ -112,6 +115,9 @@ const planet = new THREE.Group();
 scene.add(planet);
 const loader = new THREE.TextureLoader();
 loader.setCrossOrigin('anonymous');
+const ktx2Loader = new KTX2Loader();
+ktx2Loader.setTranscoderPath('/basis/');
+ktx2Loader.detectSupport(renderer);
 
 function solidTexture(red: number, green: number, blue: number, alpha = 255) {
   const map = new THREE.DataTexture(new Uint8Array([red, green, blue, alpha]), 1, 1, THREE.RGBAFormat);
@@ -207,7 +213,9 @@ async function decodeSceneAsset(
     : Uint8Array.from(bytes);
   const objectUrl = URL.createObjectURL(new Blob([imageBytes], { type: descriptor.asset.mediaType }));
   try {
-    const map = await loader.loadAsync(objectUrl);
+    const map = descriptor.asset.mediaType === 'image/ktx2'
+      ? await ktx2Loader.loadAsync(objectUrl)
+      : await loader.loadAsync(objectUrl);
     verifyTextureDimensions(map, descriptor, name);
     if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
     if ('textureSemantics' in descriptor && descriptor.textureSemantics.sampling === 'nearest') {
@@ -228,7 +236,16 @@ async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes
     ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) as Uint8Array<ArrayBuffer>
     : Uint8Array.from(bytes);
   const blob = new Blob([imageBytes], { type: mediaType });
-  if ('createImageBitmap' in globalThis) {
+  if (mediaType === 'image/ktx2') {
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const map = await ktx2Loader.loadAsync(objectUrl);
+      verifyTextureDimensions(map, descriptor, `${name} deferred KTX2 image`);
+      map.dispose();
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } else if ('createImageBitmap' in globalThis) {
     const bitmap = await createImageBitmap(blob);
     try {
       verifyImageDimensions(bitmap, descriptor, `${name} deferred image`);
@@ -254,7 +271,8 @@ async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: Ab
   if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
+  if (request.descriptor.asset.mediaType !== 'image/ktx2'
+    && (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite))) {
     return { value: await createDeferredSceneTexture(request, bytes, mediaType), bytes, mediaType };
   }
   const loaded = await decodeSceneAsset(request, bytes, mediaType);
@@ -288,7 +306,8 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
     },
     async loadAsset(request) {
       const entry = candidate.read(request.url);
-      if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
+      if (request.descriptor.asset.mediaType !== 'image/ktx2'
+        && (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite))) {
         return {
           value: await createDeferredSceneTexture(request, entry.bytes, entry.mediaType),
           bytes: entry.bytes,
@@ -300,8 +319,9 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
 }
 
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+const DESKTOP_EARTH_STATE_CACHE_BYTES = 384 * 1024 * 1024;
 const desktopEarthStateCache: EarthStateBundleCache | undefined = isTauriRuntime && 'indexedDB' in globalThis
-  ? createEarthStateBundleCache({ storage: createIndexedDbEarthStateStorage() })
+  ? createEarthStateBundleCache({ storage: createIndexedDbEarthStateStorage(), maxBytes: DESKTOP_EARTH_STATE_CACHE_BYTES })
   : undefined;
 const bundledEarthStateLoaders = createNetworkEarthStateLoaders();
 let latestCapture: Map<string, EarthStateCacheEntry> | undefined;
@@ -310,6 +330,58 @@ let currentEarthStateLoaders = bundledEarthStateLoaders;
 const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   loadDocument: (url, options) => currentEarthStateLoaders.loadDocument(url, options),
   loadAsset: (request, options) => currentEarthStateLoaders.loadAsset(request, options),
+});
+
+async function measurePresentationCapabilities(): Promise<EarthStatePresentationCapabilities> {
+  const navigatorWithSignals = navigator as Navigator & {
+    deviceMemory?: number;
+    connection?: { downlink?: number };
+  };
+  const mebibyte = 1024 * 1024;
+  const deviceMemoryGiB = navigatorWithSignals.deviceMemory;
+  const decodedGpuMemoryBudgetBytes = deviceMemoryGiB
+    ? Math.max(256 * mebibyte, Math.min(768 * mebibyte, Math.floor(deviceMemoryGiB * 1024 * mebibyte * .1)))
+    : renderer.capabilities.maxTextureSize >= 16384 ? 640 * mebibyte : 256 * mebibyte;
+  const downlinkMbps = navigatorWithSignals.connection?.downlink;
+  const transferBudgetBytes = downlinkMbps && downlinkMbps > 0
+    ? Math.max(64 * mebibyte, Math.floor(downlinkMbps * 1_000_000 / 8 * 15))
+    : isTauriRuntime ? 192 * mebibyte : 80 * mebibyte;
+  let cacheBudgetBytes = Number.MAX_SAFE_INTEGER;
+  if (isTauriRuntime) {
+    cacheBudgetBytes = DESKTOP_EARTH_STATE_CACHE_BYTES;
+    try {
+      const estimate = await navigator.storage?.estimate();
+      if (estimate?.quota !== undefined) {
+        cacheBudgetBytes = Math.max(1, Math.min(cacheBudgetBytes, estimate.quota - (estimate.usage ?? 0)));
+      }
+    } catch {
+      // The explicit desktop cap remains the safe criterion when quota estimation is unavailable.
+    }
+  }
+  return {
+    maxTextureSize: renderer.capabilities.maxTextureSize,
+    basisUniversal: true,
+    decodedGpuMemoryBudgetBytes,
+    transferBudgetBytes,
+    cacheBudgetBytes,
+  };
+}
+
+const presentationCapabilities = measurePresentationCapabilities();
+const earthStatePresentationActivator = createEarthStatePresentationActivator({
+  async loadIndex(url, options) {
+    return (await remoteEarthStateLoaders.loadDocument(url, options)).value;
+  },
+  async prepareTier({ manifestUrl }, options) {
+    const capture = new Map<string, EarthStateCacheEntry>();
+    latestCapture = capture;
+    const active = validateRenderableEarthState(await activateWithLoaders(
+      remoteEarthStateLoaders,
+      () => earthStateActivator.activate(manifestUrl),
+    ));
+    if (options.signal.aborted) throw options.signal.reason;
+    return { active, capture, manifestUrl };
+  },
 });
 
 async function activateWithLoaders<Result>(loaders: SceneEarthStateLoaders, activate: () => Promise<Result>) {
@@ -399,6 +471,8 @@ animate();
 startScene();
 const configuredLatestEarthStateUrl = import.meta.env.VITE_EARTH_STATE_LATEST_URL as string | undefined;
 const latestEarthStateUrl = new URL(configuredLatestEarthStateUrl ?? '/earth-state/latest.json', window.location.href).href;
+const configuredPresentationIndexUrl = import.meta.env.VITE_EARTH_STATE_PRESENTATIONS_URL as string | undefined;
+const presentationIndexUrl = new URL(configuredPresentationIndexUrl ?? '/earth-state/latest-presentations.json', window.location.href).href;
 let latestRefreshInFlight = false;
 async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
@@ -406,13 +480,35 @@ async function refreshLatestEarthState() {
   const retainedSource = earthStateRuntime.source;
   earthStateRuntime = { ...earthStateRuntime, refresh: 'checking' };
   renderEarthStateProvenance(sceneNow(), true);
-  latestCapture = new Map();
   try {
     const previous = earthStateActivator.current;
-    const activeEarthState = validateRenderableEarthState(await activateWithLoaders(
-      remoteEarthStateLoaders,
-      () => earthStateActivator.activateLatest(latestEarthStateUrl),
-    ));
+    let selected: {
+      active: ActivatedEarthState<LoadedSceneAsset>;
+      capture: Map<string, EarthStateCacheEntry>;
+      entrypointUrl: string;
+      entrypointKind: 'latest' | 'manifest';
+    };
+    try {
+      const presentation = await earthStatePresentationActivator.activate(
+        presentationIndexUrl,
+        await presentationCapabilities,
+      );
+      selected = {
+        active: presentation.value.active,
+        capture: presentation.value.capture,
+        entrypointUrl: presentation.value.manifestUrl,
+        entrypointKind: 'manifest',
+      };
+    } catch {
+      const capture = new Map<string, EarthStateCacheEntry>();
+      latestCapture = capture;
+      const active = validateRenderableEarthState(await activateWithLoaders(
+        remoteEarthStateLoaders,
+        () => earthStateActivator.activateLatest(latestEarthStateUrl),
+      ));
+      selected = { active, capture, entrypointUrl: latestEarthStateUrl, entrypointKind: 'latest' };
+    }
+    const activeEarthState = selected.active;
     if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
     earthStateRuntime = { source: 'remote', refresh: 'current' };
     renderEarthStateProvenance(sceneNow(), true);
@@ -420,8 +516,9 @@ async function refreshLatestEarthState() {
       const snapshot = {
         bundleId: activeEarthState.manifest.bundleId,
         validAt: activeEarthState.manifest.times.validAt,
-        latestUrl: latestEarthStateUrl,
-        entries: [...latestCapture.values()],
+        latestUrl: selected.entrypointUrl,
+        entrypointKind: selected.entrypointKind,
+        entries: [...selected.capture.values()],
       };
       void desktopEarthStateCache.remember(snapshot).catch(() => {
         // Storage quota or eviction must not prevent a fully verified online bundle from rendering.
@@ -443,7 +540,9 @@ void activateEarthStateAtStartup({
   activateCached: async candidate => {
     const active = validateRenderableEarthState(await activateWithLoaders(
       createCachedEarthStateLoaders(candidate),
-      () => earthStateActivator.activateLatest(candidate.latestUrl),
+      () => candidate.entrypointKind === 'manifest'
+        ? earthStateActivator.activate(candidate.latestUrl)
+        : earthStateActivator.activateLatest(candidate.latestUrl),
     ));
     startupEarthStateSource = 'offline-cache';
     return active;
