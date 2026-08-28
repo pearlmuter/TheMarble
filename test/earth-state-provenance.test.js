@@ -66,6 +66,25 @@ test('presentation makes contemporary observations and every approximation inspe
   assert.match(text, /NASA Langley SatCORPS/);
   assert.match(presentation.accessibleSummary, /50 minutes old/);
   assert.match(presentation.accessibleSummary, /19% model-assisted/);
+  assert.match(presentation.accessibleSummary, /rolling surface.*20 Aug 2026.*27 Aug 2026.*82%/i);
+  assert.match(presentation.accessibleSummary, /Snow.*27 Aug 2026.*91% observed/i);
+  assert.match(presentation.accessibleSummary, /Sea ice.*28 Aug 2026.*97% observed/i);
+  assert.match(presentation.accessibleSummary, /5 dataset versions and attributions/i);
+});
+
+test('staleness follows the selected provider policy rather than gap-completion metadata', () => {
+  const manifest = contemporaryManifest();
+  delete manifest.cloudSequence.gapCompletion;
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest,
+    now: new Date('2026-08-28T13:30:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /2 h 20 min old.*stale/);
+  assert.match(text, /SatCORPS provider freshness limit 120 min from valid time/);
+  assert.doesNotMatch(text, /acceptance limit 360 min/);
 });
 
 test('offline cache and staleness are explicit and described as last-known-good', () => {

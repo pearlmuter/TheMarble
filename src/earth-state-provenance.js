@@ -1,3 +1,5 @@
+import { cloudProviderMaxAgeSeconds } from './cloud-provider-selection.js';
+
 const percent = value => Math.round((value ?? 0) * 100);
 
 function utcDate(value) {
@@ -33,16 +35,28 @@ function providerName(provider) {
   return 'Cloud dataset';
 }
 
-function cryosphereLine(label, layer) {
-  if (!layer?.provenance) return `${label} · contemporary product not present in this bundle`;
+function cryospherePresentation(label, layer) {
+  if (!layer?.provenance) return {
+    detail: `${label} · contemporary product not present in this bundle`,
+    summary: `${label} contemporary product is not present.`,
+  };
   const provenance = layer.provenance;
-  return `${label} · valid ${utcDate(provenance.validAt)} · ${percent(provenance.coverage.observedFraction)}% observed · ${percent(provenance.coverage.fallbackFraction)}% seasonal fallback · source ${provenance.sourceVersion} · ${provenance.attribution}`;
+  return {
+    detail: `${label} · valid ${utcDate(provenance.validAt)} · ${percent(provenance.coverage.observedFraction)}% observed · ${percent(provenance.coverage.fallbackFraction)}% seasonal fallback · source ${provenance.sourceVersion} · ${provenance.attribution}`,
+    summary: `${label} is valid ${utcDate(provenance.validAt)}, ${percent(provenance.coverage.observedFraction)}% observed and ${percent(provenance.coverage.fallbackFraction)}% seasonal fallback.`,
+  };
 }
 
-function surfaceLine(surface) {
+function surfacePresentation(surface) {
   const rolling = surface.rollingComposite;
-  if (!rolling) return 'Seasonal surface fallback · no rolling contemporary surface composite in this bundle';
-  return `Rolling surface · observations ${utcDate(rolling.observedFrom)} → ${utcDate(rolling.observedTo)} · ${percent(rolling.coverage.rollingFraction)}% rolling · ${percent(rolling.coverage.updatedFraction)}% refreshed · ${percent(rolling.coverage.baselineFraction)}% seasonal fallback · pixel ages ${rolling.newestPixelAgeDays ?? 'unknown'}–${rolling.oldestPixelAgeDays ?? 'unknown'} days`;
+  if (!rolling) return {
+    detail: 'Seasonal surface fallback · no rolling contemporary surface composite in this bundle',
+    summary: 'The surface uses a seasonal fallback with no rolling contemporary composite.',
+  };
+  return {
+    detail: `Rolling surface · observations ${utcDate(rolling.observedFrom)} → ${utcDate(rolling.observedTo)} · ${percent(rolling.coverage.rollingFraction)}% rolling · ${percent(rolling.coverage.updatedFraction)}% refreshed · ${percent(rolling.coverage.baselineFraction)}% seasonal fallback · pixel ages ${rolling.newestPixelAgeDays ?? 'unknown'}–${rolling.oldestPixelAgeDays ?? 'unknown'} days`,
+    summary: `The rolling surface covers ${utcDate(rolling.observedFrom)} through ${utcDate(rolling.observedTo)}, ${percent(rolling.coverage.rollingFraction)}% rolling and ${percent(rolling.coverage.baselineFraction)}% seasonal fallback.`,
+  };
 }
 
 function runtimePresentation(runtime) {
@@ -76,14 +90,15 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
 
   if (manifest.cloudSequence) {
     const [from, to] = manifest.cloudSequence.frames;
-    const thresholdSeconds = manifest.cloudSequence.gapCompletion?.maxObservationAgeSeconds ?? 21_600;
+    const provider = manifest.cloudSequence.provider ?? 'gmgsi';
+    const thresholdSeconds = cloudProviderMaxAgeSeconds(provider);
     age = ageParts(now.valueOf() - Date.parse(to.observedTo));
-    stale = age.totalMinutes * 60 > thresholdSeconds;
+    stale = (now.valueOf() - Date.parse(to.validAt)) / 1000 > thresholdSeconds;
     observed = percent(to.coverage.observedFraction);
     modelAssisted = percent(to.coverage.modelAssistedFraction);
-    cloudItems.push(`${providerName(manifest.cloudSequence.provider)} · ${cloudDataset?.version ?? 'version not recorded'}`);
+    cloudItems.push(`${providerName(provider)} · ${cloudDataset?.version ?? 'version not recorded'}`);
     cloudItems.push(`Observation window · ${utcWindow(to.observedFrom, to.observedTo)}`);
-    cloudItems.push(`Observation age · ${age.short} old · ${stale ? 'stale' : 'current'} (acceptance limit ${Math.round(thresholdSeconds / 60)} min)`);
+    cloudItems.push(`Observation age · ${age.short} old · ${stale ? 'stale' : 'current'} (${provider === 'satcorps' ? 'SatCORPS' : 'GMGSI'} provider freshness limit ${Math.round(thresholdSeconds / 60)} min from valid time)`);
     cloudItems.push(`Coverage · ${observed}% observed · ${percent(to.coverage.fallbackFraction)}% static fallback`);
     const model = to.assistance?.model;
     cloudItems.push(model && modelAssisted > 0
@@ -101,10 +116,13 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
 
   const dataItems = manifest.datasets.map(dataset => `${dataset.id} @ ${dataset.version}`);
   const attributionItems = [...new Set(manifest.datasets.map(dataset => dataset.attribution))];
+  const surface = surfacePresentation(manifest.layers.surfaceAlbedo);
+  const snow = cryospherePresentation('Snow', manifest.layers.snowCover);
+  const seaIce = cryospherePresentation('Sea ice', manifest.layers.seaIce);
   const sections = [
     { id: 'state', title: 'Active state', items: [runtimeState.detail, `Bundle · ${manifest.bundleId} · ${manifest.classification}`] },
     { id: 'clouds', title: 'Clouds', items: cloudItems },
-    { id: 'surface', title: 'Surface & cryosphere', items: [surfaceLine(manifest.layers.surfaceAlbedo), cryosphereLine('Snow', manifest.layers.snowCover), cryosphereLine('Sea ice', manifest.layers.seaIce)] },
+    { id: 'surface', title: 'Surface & cryosphere', items: [surface.detail, snow.detail, seaIce.detail] },
     { id: 'datasets', title: 'Dataset versions', items: dataItems },
     { id: 'attribution', title: 'Attribution', items: attributionItems },
   ];
@@ -114,6 +132,6 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
   return {
     stateLabel: runtimeState.label,
     sections,
-    accessibleSummary: `${runtimeState.label}. ${cloudSummary}`,
+    accessibleSummary: `${runtimeState.label}. ${cloudSummary} ${surface.summary} ${snow.summary} ${seaIce.summary} ${manifest.datasets.length} dataset versions and attributions are listed in Earth data details.`,
   };
 }

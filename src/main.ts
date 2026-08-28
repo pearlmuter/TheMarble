@@ -11,7 +11,6 @@ import type { FixedSceneView } from './inertial-camera.js';
 import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
 import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
-import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
 import { activateEarthStateAtStartup, createEarthStateBundleCache } from './earth-state-cache.js';
 import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
@@ -21,7 +20,6 @@ import { createIndexedDbEarthStateStorage } from './earth-state-indexeddb.js';
 import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene.js';
 import type { HipparcosPayload } from './earth-state-scene.js';
 import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
-import { formatRollingSurfaceStatus } from './rolling-surface-status.js';
 import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
 import { buildEarthStateProvenancePresentation } from './earth-state-provenance.js';
@@ -147,7 +145,7 @@ let seasonalSurfaceController: {
   update(date: Date): void;
 };
 let cloudObservationController: ReturnType<typeof createCloudObservationController<THREE.Texture>>;
-let weatherFeed = (_now: Date) => 'loading bundled Earth state';
+let activeEarthStateStatus = 'Loading bundled Earth state';
 let activeBundleId: string | undefined;
 let activeEarthStateManifest: ActivatedEarthState<LoadedSceneAsset>['manifest'] | undefined;
 let earthStateRuntime: EarthStateRuntimeProvenance = { source: 'bundled-fallback', refresh: 'checking' };
@@ -159,6 +157,7 @@ function renderEarthStateProvenance(now: Date, force = false) {
   if (!force && minute === renderedProvenanceMinute) return;
   renderedProvenanceMinute = minute;
   const presentation = buildEarthStateProvenancePresentation({ manifest: activeEarthStateManifest, now, runtime: earthStateRuntime });
+  activeEarthStateStatus = presentation.stateLabel;
   provenanceState.textContent = presentation.stateLabel;
   earthStateSummary.textContent = presentation.accessibleSummary;
   const sectionElements = presentation.sections.map(section => {
@@ -354,8 +353,6 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
   }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
-  const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
-  const surfaceStatus = formatRollingSurfaceStatus(activeEarthState.manifest.layers.surfaceAlbedo.rollingComposite);
   if (activeEarthState.cloudSequence) {
     const sequence = {
       transitionSeconds: activeEarthState.cloudSequence.transitionSeconds,
@@ -376,21 +373,6 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       ],
     };
     cloudObservationController.activate(sequence, sceneNow());
-    const [from, to] = activeEarthState.cloudSequence.frames;
-    weatherFeed = now => {
-      const ageMinutes = Math.max(0, Math.floor((now.valueOf() - Date.parse(to.observedTo)) / 60_000));
-      const coverage = Math.round(to.coverage.observedFraction * 100);
-      const latitude = Math.min(Math.abs(to.coverage.latitudeRange[0]), Math.abs(to.coverage.latitudeRange[1])).toFixed(1);
-      const provider = activeEarthState.cloudSequence?.provider === 'satcorps' ? 'NASA SatCORPS' : 'NOAA GMGSI';
-      const gapStatus = formatCloudGapStatus({
-        gapCompletion: activeEarthState.cloudSequence?.gapCompletion,
-        frame: to,
-      });
-      if (gapStatus) {
-        return [surfaceStatus, `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${gapStatus}`].filter(Boolean).join(' · ');
-      }
-      return [surfaceStatus, `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${coverage}% usable coverage to ±${latitude}°`].filter(Boolean).join(' · ');
-    };
   } else {
     cloudObservationController.activateStatic({
       cloudOpacity: requireLoadedTexture(activeEarthState.layers.cloudOpacity, 'cloudOpacity'),
@@ -399,7 +381,6 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       cloudAge: requireLoadedTexture(activeEarthState.layers.cloudAge ?? previewLayers.cloudAge, 'cloudAge'),
       cloudProvenance: requireLoadedTexture(activeEarthState.layers.cloudProvenance ?? previewLayers.cloudProvenance, 'cloudProvenance'),
     });
-    weatherFeed = () => [surfaceStatus, `clouds ${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`].filter(Boolean).join(' · ');
   }
   activeBundleId = activeEarthState.manifest.bundleId;
   activeEarthStateManifest = activeEarthState.manifest;
@@ -422,6 +403,7 @@ let latestRefreshInFlight = false;
 async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
   latestRefreshInFlight = true;
+  const retainedSource = earthStateRuntime.source;
   earthStateRuntime = { ...earthStateRuntime, refresh: 'checking' };
   renderEarthStateProvenance(sceneNow(), true);
   latestCapture = new Map();
@@ -431,9 +413,9 @@ async function refreshLatestEarthState() {
       remoteEarthStateLoaders,
       () => earthStateActivator.activateLatest(latestEarthStateUrl),
     ));
-    earthStateRuntime = { source: 'remote', refresh: 'current' };
     if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
-    else renderEarthStateProvenance(sceneNow(), true);
+    earthStateRuntime = { source: 'remote', refresh: 'current' };
+    renderEarthStateProvenance(sceneNow(), true);
     if (activeEarthState !== previous && desktopEarthStateCache) {
       const snapshot = {
         bundleId: activeEarthState.manifest.bundleId,
@@ -447,7 +429,7 @@ async function refreshLatestEarthState() {
     }
   } catch {
     // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
-    earthStateRuntime = { ...earthStateRuntime, refresh: 'failed' };
+    earthStateRuntime = { source: retainedSource, refresh: 'failed' };
     renderEarthStateProvenance(sceneNow(), true);
   } finally {
     latestCapture = undefined;
@@ -999,7 +981,7 @@ function updateCelestialScene(now: Date) {
   if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars;
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
-  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
+  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${activeEarthStateStatus} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
   renderEarthStateProvenance(now);
 }
 

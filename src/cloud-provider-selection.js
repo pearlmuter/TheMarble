@@ -3,6 +3,10 @@ const PROVIDER_RULES = Object.freeze({
   gmgsi: Object.freeze({ cadenceMs: 60 * 60 * 1000, maxAgeMs: 4 * 60 * 60 * 1000 }),
 });
 
+export function cloudProviderMaxAgeSeconds(provider) {
+  return PROVIDER_RULES[provider]?.maxAgeMs / 1000;
+}
+
 function timestamp(value) {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;

@@ -6,7 +6,8 @@ test('the hidden corner owns a labeled, initially hidden provenance region and c
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /id="provenance-trigger"[^>]*aria-controls="provenance-panel"[^>]*aria-expanded="false"[^>]*aria-describedby="earth-state-summary"/s);
   assert.match(html, /id="provenance-panel"[^>]*role="region"[^>]*aria-labelledby="provenance-title"[^>]*hidden/s);
-  assert.match(html, /id="earth-state-summary"[^>]*class="sr-only"[^>]*aria-live="polite"/s);
+  assert.match(html, /id="earth-state-summary"[^>]*class="sr-only"/s);
+  assert.doesNotMatch(html, /id="earth-state-summary"[^>]*aria-live=/s);
 });
 
 test('touch devices do not receive permanently visible provenance chrome', async () => {
