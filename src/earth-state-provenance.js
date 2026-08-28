@@ -35,14 +35,6 @@ function providerName(provider) {
   return 'Cloud source not recorded';
 }
 
-function resolveProvider(declaredProvider, dataset) {
-  if (declaredProvider === 'satcorps' || declaredProvider === 'gmgsi') return declaredProvider;
-  const signature = `${dataset?.id ?? ''} ${dataset?.attribution ?? ''}`.toLowerCase();
-  if (signature.includes('satcorps')) return 'satcorps';
-  if (signature.includes('gmgsi')) return 'gmgsi';
-  return undefined;
-}
-
 function cryospherePresentation(label, layer) {
   if (!layer?.provenance) return {
     detail: `${label} · contemporary product not present in this bundle`,
@@ -98,7 +90,7 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
 
   if (manifest.cloudSequence) {
     const [from, to] = manifest.cloudSequence.frames;
-    const provider = resolveProvider(manifest.cloudSequence.provider, cloudDataset);
+    const provider = manifest.cloudSequence.provider;
     const thresholdSeconds = provider ? cloudProviderMaxAgeSeconds(provider) : undefined;
     age = ageParts(now.valueOf() - Date.parse(to.observedTo));
     stale = thresholdSeconds === undefined ? undefined : (now.valueOf() - Date.parse(to.validAt)) / 1000 > thresholdSeconds;
