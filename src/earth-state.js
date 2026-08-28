@@ -523,13 +523,16 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       return current;
     },
 
-    async activate(manifestUrl) {
+    async activate(manifestUrl, reference) {
       return withinDeadline(async signal => {
         const document = await loadDocument(manifestUrl, { signal });
         if (!isRecord(document) || document.mediaType !== 'application/json') {
           throw new Error('Earth-state manifest document media type mismatch');
         }
-        return activateManifest(document.value, manifestUrl, signal);
+        const manifest = reference
+          ? await verifyLoadedAsset(document, reference, 'presentation.manifest')
+          : document.value;
+        return activateManifest(manifest, manifestUrl, signal);
       });
     },
 

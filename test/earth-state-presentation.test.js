@@ -5,7 +5,7 @@ import {
   selectEarthStatePresentationTiers,
 } from '../src/earth-state-presentation.js';
 
-const checksum = value => ({ algorithm: 'sha256', value: value.repeat(64).slice(0, 64) });
+const checksum = () => ({ algorithm: 'sha256', value: 'a'.repeat(64) });
 
 function tier(id, width, budgets) {
   return {
@@ -49,7 +49,7 @@ const highBudgets = {
 const index = {
   schemaVersion: 1,
   bundleId: 'earth-2026-08-28T12:00:00Z',
-  scientificContentId: 'sha256:one-observation-and-provenance-set',
+  scientificContentId: `sha256:${'c'.repeat(64)}`,
   tiers: [
     tier('8k', 8192, baselineBudgets),
     tier('16k', 16384, highBudgets),
@@ -63,9 +63,11 @@ test('an integrated-GPU profile selects only the coherent 8K presentation tier',
     decodedGpuMemoryBudgetBytes: 256 * 1024 * 1024,
     transferBudgetBytes: 80 * 1024 * 1024,
     cacheBudgetBytes: 180 * 1024 * 1024,
+    measuredSustainedFps: 35,
   });
 
   assert.deepEqual(candidates.map(candidate => candidate.id), ['8k']);
+  assert.deepEqual(candidates[0].budgets, baselineBudgets);
 });
 
 test('a capable desktop tries 16K first and retains 8K as its whole-bundle fallback', () => {
@@ -75,9 +77,21 @@ test('a capable desktop tries 16K first and retains 8K as its whole-bundle fallb
     decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
     transferBudgetBytes: 192 * 1024 * 1024,
     cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
   });
 
   assert.deepEqual(candidates.map(candidate => candidate.id), ['16k', '8k']);
+  assert.deepEqual(candidates.map(candidate => ({
+    id: candidate.id,
+    dimensions: candidate.dimensions,
+    timeToFirstCoherentGlobeMs: candidate.budgets.timeToFirstCoherentGlobeMs,
+    shaderCompilationMs: candidate.budgets.shaderCompilationMs,
+    minimumSustainedFps: candidate.budgets.minimumSustainedFps,
+    cloudCrossfadeOverheadBytes: candidate.budgets.cloudCrossfadeOverheadBytes,
+  })), [
+    { id: '16k', dimensions: { width: 16384, height: 8192 }, timeToFirstCoherentGlobeMs: 7_000, shaderCompilationMs: 900, minimumSustainedFps: 45, cloudCrossfadeOverheadBytes: 160 * 1024 * 1024 },
+    { id: '8k', dimensions: { width: 8192, height: 4096 }, timeToFirstCoherentGlobeMs: 4_000, shaderCompilationMs: 700, minimumSustainedFps: 30, cloudCrossfadeOverheadBytes: 48 * 1024 * 1024 },
+  ]);
 });
 
 test('explicit memory and bandwidth limits reject 16K without inspecting a device name', () => {
@@ -87,6 +101,7 @@ test('explicit memory and bandwidth limits reject 16K without inspecting a devic
     decodedGpuMemoryBudgetBytes: 300 * 1024 * 1024,
     transferBudgetBytes: 192 * 1024 * 1024,
     cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
   });
   const bandwidthConstrained = selectEarthStatePresentationTiers(index, {
     maxTextureSize: 16384,
@@ -94,6 +109,7 @@ test('explicit memory and bandwidth limits reject 16K without inspecting a devic
     decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
     transferBudgetBytes: 80 * 1024 * 1024,
     cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
   });
 
   assert.deepEqual(memoryConstrained.map(candidate => candidate.id), ['8k']);
@@ -107,6 +123,7 @@ test('a client without Basis Universal support cannot select a production tier',
     decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
     transferBudgetBytes: 192 * 1024 * 1024,
     cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
   }), /No coherent Earth presentation tier fits/);
 });
 
@@ -133,6 +150,7 @@ test('a failed 16K preparation falls back to one complete 8K tier without mixed 
     decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
     transferBudgetBytes: 192 * 1024 * 1024,
     cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
   });
 
   assert.deepEqual(attempts, [
@@ -142,4 +160,17 @@ test('a failed 16K preparation falls back to one complete 8K tier without mixed 
   assert.equal(active.tier.id, '8k');
   assert.deepEqual(active.value, { surface: '8k:surface', clouds: '8k:clouds', snow: '8k:snow' });
   assert.equal(activator.current, active);
+});
+
+test('a measured integrated-GPU frame rate keeps a nominally 16K-capable client on 8K', () => {
+  const candidates = selectEarthStatePresentationTiers(index, {
+    maxTextureSize: 16384,
+    basisUniversal: true,
+    decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
+    transferBudgetBytes: 192 * 1024 * 1024,
+    cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 35,
+  });
+
+  assert.deepEqual(candidates.map(candidate => candidate.id), ['8k']);
 });

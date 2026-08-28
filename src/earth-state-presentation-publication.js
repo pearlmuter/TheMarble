@@ -1,33 +1,17 @@
 import { earthStateSha256, parseEarthStateJson } from './earth-state-codec.js';
+import { encodeCanonicalEarthStateJson } from './earth-state-canonical-json.js';
 import { validateEarthStateManifest } from './earth-state.js';
 import { validateEarthStatePresentationIndex } from './earth-state-presentation.js';
 
-const encoder = new TextEncoder();
 const DEFAULT_TIERS = Object.freeze([
   Object.freeze({ id: '8k', width: 8192, height: 4096, timeToFirstCoherentGlobeMs: 5_000, shaderCompilationMs: 700, minimumSustainedFps: 30 }),
   Object.freeze({ id: '16k', width: 16384, height: 8192, timeToFirstCoherentGlobeMs: 8_000, shaderCompilationMs: 1_000, minimumSustainedFps: 45 }),
 ]);
 
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]));
-  }
-  return value;
-}
-
-function encodeJson(value) {
-  return encoder.encode(`${JSON.stringify(canonicalize(value), null, 2)}\n`);
-}
-
-function presentationIdentitySource(value) {
-  if (Array.isArray(value)) return value.map(presentationIdentitySource);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value)
-      .filter(([key]) => !['asset', 'dimensions', 'bundleId'].includes(key))
-      .map(([key, child]) => [key, presentationIdentitySource(child)]));
-  }
-  return value;
+function scientificIdentitySource(manifest) {
+  const identity = structuredClone(manifest);
+  delete identity.bundleId;
+  return identity;
 }
 
 function collectAssetSlots(root) {
@@ -99,16 +83,20 @@ export function createEarthStatePresentationPublisher({ loadSource, store, trans
       if (sourceDocument.mediaType !== 'application/json') throw new Error('Earth presentation source manifest must be application/json');
       const sourceManifest = parseEarthStateJson(sourceDocument.bytes, 'Earth presentation source manifest is malformed JSON');
       validateEarthStateManifest(sourceManifest);
-      if (sourceManifest.layers.surfaceAlbedo.dimensions.width < tiers[0].width) {
+      const surfaceDimensions = sourceManifest.layers.surfaceAlbedo.dimensions;
+      if (surfaceDimensions.width !== surfaceDimensions.height * 2) {
+        throw new Error('Scientific source must declare a 2:1 global surface');
+      }
+      if (surfaceDimensions.width < tiers[0].width || surfaceDimensions.height < tiers[0].height) {
         throw new Error('Scientific surface source does not justify an 8K presentation');
       }
 
-      const scientificContentId = `sha256:${await earthStateSha256(encodeJson(presentationIdentitySource(sourceManifest)))}`;
+      const scientificContentId = `sha256:${await earthStateSha256(encodeCanonicalEarthStateJson(scientificIdentitySource(sourceManifest)))}`;
       const baseDirectory = `presentations/${sourceManifest.bundleId}`;
       const manifests = {};
       const indexTiers = [];
 
-      for (const tier of tiers.filter(candidate => sourceManifest.layers.surfaceAlbedo.dimensions.width >= candidate.width)) {
+      for (const tier of tiers.filter(candidate => surfaceDimensions.width >= candidate.width && surfaceDimensions.height >= candidate.height)) {
         const manifest = structuredClone(sourceManifest);
         manifest.bundleId = `${sourceManifest.bundleId}-${tier.id}`;
         const publishedByKey = new Map();
@@ -175,7 +163,7 @@ export function createEarthStatePresentationPublisher({ loadSource, store, trans
         }
 
         validateEarthStateManifest(manifest);
-        const manifestBytes = encodeJson(manifest);
+        const manifestBytes = encodeCanonicalEarthStateJson(manifest);
         const manifestPath = `${baseDirectory}/${tier.id}/manifest.json`;
         await writeVerified(store, manifestPath, manifestBytes);
         transferBytes += manifestBytes.byteLength;
@@ -203,10 +191,12 @@ export function createEarthStatePresentationPublisher({ loadSource, store, trans
 
       const index = { schemaVersion: 1, bundleId: sourceManifest.bundleId, scientificContentId, tiers: indexTiers };
       validateEarthStatePresentationIndex(index);
-      const indexBytes = encodeJson(index);
+      const indexBytes = encodeCanonicalEarthStateJson(index);
       const indexPath = `${baseDirectory}/index.json`;
       await writeVerified(store, indexPath, indexBytes);
-      await store.replaceLatest('latest-presentations.json', indexBytes);
+      const latestIndex = structuredClone(index);
+      for (const tier of latestIndex.tiers) tier.manifest.href = `./${baseDirectory}/${tier.id}/manifest.json`;
+      await store.replaceLatest('latest-presentations.json', encodeCanonicalEarthStateJson(latestIndex));
       return { indexPath, index, manifests };
     },
   };

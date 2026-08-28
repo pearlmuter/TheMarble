@@ -246,7 +246,7 @@ export interface ActivatedEarthState<LoadedAsset> {
 
 export interface EarthStateActivator<LoadedAsset> {
   readonly current: ActivatedEarthState<LoadedAsset> | undefined;
-  activate(manifestUrl: string): Promise<ActivatedEarthState<LoadedAsset>>;
+  activate(manifestUrl: string, reference?: EarthStateAssetReference): Promise<ActivatedEarthState<LoadedAsset>>;
   activateLatest(latestUrl: string): Promise<ActivatedEarthState<LoadedAsset>>;
 }
 

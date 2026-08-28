@@ -1,5 +1,5 @@
 import type { EarthStateLoadedBytes, EarthStateManifest } from './earth-state.js';
-import type { EarthStatePresentationIndex } from './earth-state-presentation.js';
+import type { EarthStatePresentationIndex, EarthStatePresentationTierId } from './earth-state-presentation.js';
 import type { EarthStatePublicationStore } from './earth-state-publication.js';
 
 export function createEarthStatePresentationPublisher(adapters: {
@@ -10,18 +10,18 @@ export function createEarthStatePresentationPublisher(adapters: {
     mediaType: string;
     width?: number;
     height?: number;
-    tierId: '8k' | '16k';
+    tierId: EarthStatePresentationTierId;
     path: string;
     colorSpace?: string;
   }): Promise<{ bytes: Uint8Array; width: number; height: number }>;
   tiers?: Array<{
-    id: '8k' | '16k'; width: number; height: number;
+    id: EarthStatePresentationTierId; width: number; height: number;
     timeToFirstCoherentGlobeMs: number; shaderCompilationMs: number; minimumSustainedFps: number;
   }>;
 }): {
   publish(request: { sourceManifestUrl: string }): Promise<{
     indexPath: string;
     index: EarthStatePresentationIndex;
-    manifests: Record<'8k' | '16k', EarthStateManifest>;
+    manifests: Record<EarthStatePresentationTierId, EarthStateManifest>;
   }>;
 };

@@ -1,20 +1,7 @@
 import { validateEarthStateManifest } from './earth-state.js';
 import { earthStateSha256, parseEarthStateJson } from './earth-state-codec.js';
 import { earthStateExtensionForMediaType } from './earth-state-media-types.js';
-
-const encoder = new TextEncoder();
-
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]));
-  }
-  return value;
-}
-
-function encodeCanonicalJson(value) {
-  return encoder.encode(`${JSON.stringify(canonicalize(value), null, 2)}\n`);
-}
+import { encodeCanonicalEarthStateJson } from './earth-state-canonical-json.js';
 
 function normalizeTime(value) {
   const parsed = new Date(value);
@@ -101,7 +88,7 @@ export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bu
         return { ...entry, bytes: loaded.bytes, checksum };
       }));
 
-      const sourceSetBytes = encodeCanonicalJson({
+      const sourceSetBytes = encodeCanonicalEarthStateJson({
         manifest: sourceManifest,
         targetTime: targetIso,
         verifiedAssets: sourceEntries.map(({ role, name, month, frameIndex, checksum }) => ({
@@ -157,7 +144,7 @@ export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bu
       }
 
       validateEarthStateManifest(manifest);
-      const manifestBytes = encodeCanonicalJson(manifest);
+      const manifestBytes = encodeCanonicalEarthStateJson(manifest);
       const manifestPath = `${bundleDirectory}/manifest.json`;
       const manifestReference = {
         href: `./${manifestPath}`,
@@ -170,7 +157,7 @@ export function createEarthStatePublisher({ loadSource, store, assetLayout = 'bu
       await verifyPublished(store, manifestPath, manifestReference);
 
       const latest = { schemaVersion: 1, bundleId: manifest.bundleId, manifest: manifestReference };
-      await store.replaceLatest('latest.json', encodeCanonicalJson(latest));
+      await store.replaceLatest('latest.json', encodeCanonicalEarthStateJson(latest));
       return { manifestPath, manifest, latest };
     },
   };

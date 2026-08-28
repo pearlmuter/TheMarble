@@ -13,7 +13,7 @@ import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from '.
 import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
-import { activateEarthStateAtStartup, createEarthStateBundleCache } from './earth-state-cache.js';
+import { activateEarthStateAtStartup, activateEarthStateCacheCandidate, createEarthStateBundleCache } from './earth-state-cache.js';
 import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
 import { parseEarthStateJson } from './earth-state-codec.js';
 import { loadEarthStateJsonDocument } from './earth-state-document.js';
@@ -41,6 +41,10 @@ type DeferredSceneTexture = {
 };
 type LoadedSceneAsset = THREE.Texture | HipparcosPayload | DeferredSceneTexture;
 type PreparedSeasonalSurface = SeasonalPair<THREE.Texture, LoadedSceneAsset>;
+type PreparedEarthStateScene = {
+  active: ActivatedEarthState<LoadedSceneAsset>;
+  seasonalSurface: PreparedSeasonalSurface;
+};
 type SceneEarthStateLoaders = {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
   loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
@@ -65,6 +69,15 @@ function verifyImageDimensions(image: { naturalWidth?: number; naturalHeight?: n
 
 function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
   verifyImageDimensions(map.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }, descriptor, name);
+}
+
+function verifyKtx2Dimensions(bytes: Uint8Array, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
+  const identifier = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.byteLength < 68 || identifier.some((value, index) => bytes[index] !== value)) {
+    throw new Error(`Earth-state KTX2 asset is malformed for ${name}`);
+  }
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  verifyImageDimensions({ width: header.getUint32(20, true), height: header.getUint32(24, true) }, descriptor, name);
 }
 
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
@@ -237,14 +250,7 @@ async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes
     : Uint8Array.from(bytes);
   const blob = new Blob([imageBytes], { type: mediaType });
   if (mediaType === 'image/ktx2') {
-    const objectUrl = URL.createObjectURL(blob);
-    try {
-      const map = await ktx2Loader.loadAsync(objectUrl);
-      verifyTextureDimensions(map, descriptor, `${name} deferred KTX2 image`);
-      map.dispose();
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
+    verifyKtx2Dimensions(bytes, descriptor, `${name} deferred KTX2 image`);
   } else if ('createImageBitmap' in globalThis) {
     const bitmap = await createImageBitmap(blob);
     try {
@@ -265,14 +271,19 @@ async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes
   return { kind: 'deferred-scene-texture', request, bytes, mediaType } satisfies DeferredSceneTexture;
 }
 
+function shouldDeferSceneTexture(request: EarthStateAssetRequest) {
+  return request.role === 'seasonal-layer-frame'
+    || (request.role === 'layer' && request.name === 'surfaceAlbedo'
+      && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite);
+}
+
 async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
   const { descriptor, url } = request;
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (request.descriptor.asset.mediaType !== 'image/ktx2'
-    && (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite))) {
+  if (shouldDeferSceneTexture(request)) {
     return { value: await createDeferredSceneTexture(request, bytes, mediaType), bytes, mediaType };
   }
   const loaded = await decodeSceneAsset(request, bytes, mediaType);
@@ -306,8 +317,7 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
     },
     async loadAsset(request) {
       const entry = candidate.read(request.url);
-      if (request.descriptor.asset.mediaType !== 'image/ktx2'
-        && (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite))) {
+      if (shouldDeferSceneTexture(request)) {
         return {
           value: await createDeferredSceneTexture(request, entry.bytes, entry.mediaType),
           bytes: entry.bytes,
@@ -331,6 +341,25 @@ const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   loadDocument: (url, options) => currentEarthStateLoaders.loadDocument(url, options),
   loadAsset: (request, options) => currentEarthStateLoaders.loadAsset(request, options),
 });
+
+function supportsGpuCompressedBasisTarget() {
+  if (renderer.capabilities.isWebGL2) return true;
+  const context = renderer.getContext();
+  return ['WEBGL_compressed_texture_astc', 'EXT_texture_compression_bptc', 'WEBGL_compressed_texture_etc', 'WEBGL_compressed_texture_s3tc']
+    .some(name => context.getExtension(name) !== null);
+}
+
+function measureSustainedFrameRate(sampleCount = 12) {
+  return new Promise<number>(resolve => {
+    const samples: number[] = [];
+    const sample = (time: number) => {
+      samples.push(time);
+      if (samples.length < sampleCount) requestAnimationFrame(sample);
+      else resolve((samples.length - 1) * 1000 / (samples.at(-1)! - samples[0]));
+    };
+    requestAnimationFrame(sample);
+  });
+}
 
 async function measurePresentationCapabilities(): Promise<EarthStatePresentationCapabilities> {
   const navigatorWithSignals = navigator as Navigator & {
@@ -358,12 +387,14 @@ async function measurePresentationCapabilities(): Promise<EarthStatePresentation
       // The explicit desktop cap remains the safe criterion when quota estimation is unavailable.
     }
   }
+  const measuredSustainedFps = await measureSustainedFrameRate();
   return {
     maxTextureSize: renderer.capabilities.maxTextureSize,
-    basisUniversal: true,
+    basisUniversal: supportsGpuCompressedBasisTarget(),
     decodedGpuMemoryBudgetBytes,
     transferBudgetBytes,
     cacheBudgetBytes,
+    measuredSustainedFps,
   };
 }
 
@@ -372,15 +403,32 @@ const earthStatePresentationActivator = createEarthStatePresentationActivator({
   async loadIndex(url, options) {
     return (await remoteEarthStateLoaders.loadDocument(url, options)).value;
   },
-  async prepareTier({ manifestUrl }, options) {
+  async prepareTier({ manifestUrl, tier }, options) {
+    const startedAt = performance.now();
     const capture = new Map<string, EarthStateCacheEntry>();
     latestCapture = capture;
     const active = validateRenderableEarthState(await activateWithLoaders(
       remoteEarthStateLoaders,
-      () => earthStateActivator.activate(manifestUrl),
+      () => earthStateActivator.activate(manifestUrl, tier.manifest),
     ));
+    const surfaceDimensions = active.manifest.layers.surfaceAlbedo.dimensions;
+    if (surfaceDimensions.width !== tier.dimensions.width || surfaceDimensions.height !== tier.dimensions.height) {
+      throw new Error(`Earth presentation ${tier.id} surface dimensions do not match its tier`);
+    }
+    const transferBytes = [...capture.values()].reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+    if (transferBytes > tier.budgets.transferBytes) throw new Error(`Earth presentation ${tier.id} exceeds its transfer budget`);
+    const prepared = await prepareActivatedEarthState(active);
+    ensurePreparedEarthStateGpuResident(prepared);
+    const shaderStartedAt = performance.now();
+    await renderer.compileAsync(scene, camera);
+    if (performance.now() - shaderStartedAt > tier.budgets.shaderCompilationMs) {
+      throw new Error(`Earth presentation ${tier.id} exceeds its shader compilation budget`);
+    }
+    if (performance.now() - startedAt > tier.budgets.timeToFirstCoherentGlobeMs) {
+      throw new Error(`Earth presentation ${tier.id} exceeds its time-to-first-globe budget`);
+    }
     if (options.signal.aborted) throw options.signal.reason;
-    return { active, capture, manifestUrl };
+    return { active, capture, manifestUrl, prepared };
   },
 });
 
@@ -406,13 +454,46 @@ function isDeferredSceneTexture(asset: LoadedSceneAsset): asset is DeferredScene
   return typeof asset === 'object' && asset !== null && 'kind' in asset && asset.kind === 'deferred-scene-texture';
 }
 
-async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+async function prepareActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>): Promise<PreparedEarthStateScene> {
   const selectedSurface = selectEarthSurfaceForRendering(activeEarthState);
   const frames = selectedSurface.frames;
   const fallbackSurface = selectedSurface.fallbackAsset === undefined
     ? undefined
     : requireLoadedTexture(selectedSurface.fallbackAsset, 'surfaceAlbedo');
   const seasonalSurface = await seasonalSurfaceController.prepare({ frames, date: sceneNow(), fallbackTexture: fallbackSurface });
+  return { active: activeEarthState, seasonalSurface };
+}
+
+function ensurePreparedEarthStateGpuResident(prepared: PreparedEarthStateScene) {
+  const textures = new Set<THREE.Texture>();
+  const visit = (value: unknown) => {
+    if (value instanceof THREE.Texture) {
+      textures.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === 'object' && value !== null && !isDeferredSceneTexture(value as LoadedSceneAsset)) {
+      Object.values(value).forEach(visit);
+    }
+  };
+  visit(prepared.active.layers);
+  visit(prepared.active.resources);
+  visit(prepared.active.cloudSequence);
+  visit(prepared.seasonalSurface.from);
+  visit(prepared.seasonalSurface.to);
+  const context = renderer.getContext();
+  while (context.getError() !== context.NO_ERROR) { /* clear errors from the previous rendered state */ }
+  for (const texture of textures) renderer.initTexture(texture);
+  context.finish();
+  const error = context.getError();
+  if (context.isContextLost() || error === context.OUT_OF_MEMORY) throw new Error('GPU allocation failed for the complete Earth presentation tier');
+  if (error !== context.NO_ERROR) throw new Error(`GPU rejected the complete Earth presentation tier (${error})`);
+}
+
+function commitActivatedEarthState({ active: activeEarthState, seasonalSurface }: PreparedEarthStateScene) {
   for (const name of EARTH_STATE_REQUIRED_LAYERS) {
     if (!['surfaceAlbedo', 'cloudOpacity', 'cloudDensity'].includes(name)) {
       applyVerifiedLayer(name, activeEarthState.layers[name]);
@@ -459,6 +540,10 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
   renderEarthStateProvenance(sceneNow(), true);
 }
 
+async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+  commitActivatedEarthState(await prepareActivatedEarthState(activeEarthState));
+}
+
 let updateFrame: () => void = () => undefined;
 function animate() {
   requestAnimationFrame(animate);
@@ -487,6 +572,7 @@ async function refreshLatestEarthState() {
       capture: Map<string, EarthStateCacheEntry>;
       entrypointUrl: string;
       entrypointKind: 'latest' | 'manifest';
+      prepared?: PreparedEarthStateScene;
     };
     try {
       const presentation = await earthStatePresentationActivator.activate(
@@ -498,6 +584,7 @@ async function refreshLatestEarthState() {
         capture: presentation.value.capture,
         entrypointUrl: presentation.value.manifestUrl,
         entrypointKind: 'manifest',
+        prepared: presentation.value.prepared,
       };
     } catch {
       const capture = new Map<string, EarthStateCacheEntry>();
@@ -509,7 +596,10 @@ async function refreshLatestEarthState() {
       selected = { active, capture, entrypointUrl: latestEarthStateUrl, entrypointKind: 'latest' };
     }
     const activeEarthState = selected.active;
-    if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
+    if (activeEarthState.manifest.bundleId !== activeBundleId) {
+      if (selected.prepared) commitActivatedEarthState(selected.prepared);
+      else await applyActivatedEarthState(activeEarthState);
+    }
     earthStateRuntime = { source: 'remote', refresh: 'current' };
     renderEarthStateProvenance(sceneNow(), true);
     if (activeEarthState !== previous && desktopEarthStateCache) {
@@ -540,9 +630,7 @@ void activateEarthStateAtStartup({
   activateCached: async candidate => {
     const active = validateRenderableEarthState(await activateWithLoaders(
       createCachedEarthStateLoaders(candidate),
-      () => candidate.entrypointKind === 'manifest'
-        ? earthStateActivator.activate(candidate.latestUrl)
-        : earthStateActivator.activateLatest(candidate.latestUrl),
+      () => activateEarthStateCacheCandidate(earthStateActivator, candidate),
     ));
     startupEarthStateSource = 'offline-cache';
     return active;

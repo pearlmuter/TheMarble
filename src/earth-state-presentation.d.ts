@@ -33,6 +33,7 @@ export interface EarthStatePresentationCapabilities {
   decodedGpuMemoryBudgetBytes: number;
   transferBudgetBytes: number;
   cacheBudgetBytes: number;
+  measuredSustainedFps: number;
 }
 
 export function validateEarthStatePresentationIndex(index: unknown): asserts index is EarthStatePresentationIndex;

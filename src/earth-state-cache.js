@@ -117,13 +117,17 @@ async function isVerifiedBundle(record) {
     },
   });
   try {
-    const active = candidate.entrypointKind === 'manifest'
-      ? await activator.activate(candidate.latestUrl)
-      : await activator.activateLatest(candidate.latestUrl);
+    const active = await activateEarthStateCacheCandidate(activator, candidate);
     return active.manifest.bundleId === candidate.bundleId;
   } catch {
     return false;
   }
+}
+
+export function activateEarthStateCacheCandidate(activator, candidate) {
+  return candidate.entrypointKind === 'manifest'
+    ? activator.activate(candidate.latestUrl)
+    : activator.activateLatest(candidate.latestUrl);
 }
 
 export function createEarthStateBundleCache({ storage, maxRemoteBundles = 2, maxBytes = Number.MAX_SAFE_INTEGER }) {
