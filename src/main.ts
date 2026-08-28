@@ -550,7 +550,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
       vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*directLight*mix(vec3(1.0),sunlight,.72);
       vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
-      float roughness=.19; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
+      float roughness=.14; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
       float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
       float k=roughness*roughness*.5; float geometryView=nDotV/(nDotV*(1.0-k)+k); float geometryLight=nDotL/(nDotL*(1.0-k)+k);
       float fresnel=.0204+(1.0-.0204)*pow(1.0-vDotH,5.0);
@@ -558,7 +558,8 @@ const earthMaterial = new THREE.ShaderMaterial({
       float horizonFresnel=.0204+(1.0-.0204)*pow(1.0-nDotV,5.0);
       vec3 deepWater=vec3(.0022,.012,.026); vec3 waterDiffuse=deepWater*(.13+.48*nDotL)*mix(vec3(1.0),sunlight,.7);
       vec3 atmosphericReflection=vec3(.018,.075,.15)*horizonFresnel*(.3+.7*daylight);
-      vec3 sunGlint=vec3(1.0,.78,.5)*specular*nDotL*1.3;
+      float glintResponse=1.0-exp(-specular*.22);
+      vec3 sunGlint=vec3(1.0,.93,.82)*glintResponse*nDotL*.62;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
       vec3 seaIceLight=vec3(.68,.76,.82)*(.3+.92*nDotL)*mix(vec3(1.0),sunlight,.68)+atmosphericReflection*.28;
       vec3 day=mix(land,oceanLight,ocean);
@@ -732,10 +733,10 @@ const atmosphere = new THREE.Mesh(
         // It remains gated by the same tangent height, solar direction, and Earth shadow.
         float nearestTime=max(-dot(cameraPosition,rayDirection),0.0); vec3 tangentPoint=cameraPosition+rayDirection*nearestTime;
         float impact=length(tangentPoint); float tangentHeight=max(impact-GROUND_RADIUS,0.0);
-        float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*6.0));
+        float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*4.2));
         float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.018,.035,tangentSun);
         float forwardAureole=pow(max(mu,0.0),30.0);
-        vec3 exposedLimb=vec3(.018,.31,.78)*limbEnvelope*illuminated*.92;
+        vec3 exposedLimb=vec3(.014,.18,.42)*limbEnvelope*illuminated*.62;
         exposedLimb+=vec3(1.0,.36,.035)*limbEnvelope*illuminated*forwardAureole*.08;
         // Additive light carries its own physical intensity; an alpha derived from intensity
         // would multiply the already-dim limb a second time and erase it.
@@ -852,9 +853,9 @@ function flareTexture(kind: 'soft' | 'ring', color: [number, number, number]) {
 }
 
 const lensFlareGhosts = [
-  { factor: -.3, scale: .48, opacity: .16, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [166, 207, 255]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: -.66, scale: .31, opacity: .1, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('ring', [255, 198, 132]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: .22, scale: .2, opacity: .08, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [180, 232, 226]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: -.3, scale: .32, opacity: .045, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [166, 207, 255]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: -.66, scale: .22, opacity: .035, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('ring', [255, 198, 132]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: .22, scale: .14, opacity: .025, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [180, 232, 226]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
 ];
 lensFlareGhosts.forEach(({ sprite }) => { sprite.renderOrder = 20; scene.add(sprite); });
 const sunScreenPosition = new THREE.Vector3();
