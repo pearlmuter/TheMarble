@@ -757,9 +757,9 @@ const sunRadius = SUN_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM;
 const sun = new THREE.Mesh(
   new THREE.SphereGeometry(sunRadius, 48, 48),
   new THREE.ShaderMaterial({
-    // The physical sphere preserves the true solar angular size and position, while the
-    // exposed camera image is carried by the soft optical layers below.
-    colorWrite: false, depthWrite: false,
+    // The physical HDR sphere preserves the true solar angular size, atmospheric
+    // transmission, and tone mapping. The transparent layers below add only optics.
+    depthWrite: false,
     vertexShader: `varying vec3 vWorldPosition; varying vec3 vWorldNormal; void main(){ vWorldPosition=(modelMatrix*vec4(position,1.0)).xyz; vWorldNormal=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
       varying vec3 vWorldPosition; varying vec3 vWorldNormal;
@@ -782,18 +782,18 @@ coronaCanvas.width = 256; coronaCanvas.height = 256;
 const coronaContext = coronaCanvas.getContext('2d')!;
 const coronaGradient = coronaContext.createRadialGradient(128, 128, 0, 128, 128, 128);
 coronaGradient.addColorStop(0, 'rgba(255,255,252,1)');
-coronaGradient.addColorStop(.16, 'rgba(255,255,250,1)');
-coronaGradient.addColorStop(.28, 'rgba(255,248,229,.72)');
-coronaGradient.addColorStop(.48, 'rgba(255,220,170,.12)');
-coronaGradient.addColorStop(.76, 'rgba(168,190,220,.012)');
+coronaGradient.addColorStop(.35, 'rgba(255,255,250,.92)');
+coronaGradient.addColorStop(.52, 'rgba(255,248,229,.4)');
+coronaGradient.addColorStop(.76, 'rgba(255,220,170,.05)');
+coronaGradient.addColorStop(.88, 'rgba(168,190,220,.012)');
 coronaGradient.addColorStop(1, 'rgba(0,0,0,0)');
 coronaContext.fillStyle = coronaGradient;
 coronaContext.fillRect(0, 0, 256, 256);
 const coronaTexture = new THREE.CanvasTexture(coronaCanvas);
 const sunCorona = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
+  new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
 );
-sunCorona.scale.set(sunRadius * 4, sunRadius * 4, 1);
+sunCorona.scale.set(sunRadius * 5, sunRadius * 5, 1);
 scene.add(sunCorona);
 
 // A restrained camera starburst: the physical solar disc above stays unchanged while this
@@ -831,7 +831,7 @@ starburstContext.fillStyle = starburstCore;
 starburstContext.beginPath(); starburstContext.arc(0, 0, 104, 0, Math.PI * 2); starburstContext.fill();
 const starburstTexture = new THREE.CanvasTexture(starburstCanvas);
 const sunStarburst = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
+  new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
 );
 sunStarburst.scale.set(sunRadius * 10, sunRadius * 10, 1);
 scene.add(sunStarburst);

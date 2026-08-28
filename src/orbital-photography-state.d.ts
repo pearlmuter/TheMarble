@@ -15,6 +15,7 @@ export type OrbitalPhotographyState = {
     geometricRadius: number;
     earthOcclusionFraction: number;
     moonOcclusionFraction: number;
+    combinedOcclusionFraction: number;
     visibleFraction: number;
     inFrame: boolean;
   };

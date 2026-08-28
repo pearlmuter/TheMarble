@@ -59,6 +59,27 @@ test('the Moon can occult the geometric Sun without changing its physical source
   assert.equal(eclipse.sun.geometricRadius, SUN_RADIUS);
 });
 
+test('Earth and Moon coverage is combined when their silhouettes cover different solar regions', () => {
+  const cameraDistance = 7;
+  const sunDistance = 23_455;
+  const moonDistance = 58;
+  const earthLimbAngle = Math.asin(1 / cameraDistance);
+  const solarAngularRadius = Math.asin(SUN_RADIUS / sunDistance);
+  const sunAngle = earthLimbAngle;
+  const moonAngle = earthLimbAngle + solarAngularRadius * 0.5;
+  const combined = state({
+    sunPosition: [Math.sin(sunAngle) * sunDistance, 0, cameraDistance - Math.cos(sunAngle) * sunDistance],
+    moonPosition: [Math.sin(moonAngle) * moonDistance, 0, cameraDistance - Math.cos(moonAngle) * moonDistance],
+  });
+
+  assert.ok(combined.sun.earthOcclusionFraction > 0.45 && combined.sun.earthOcclusionFraction < 0.55);
+  assert.ok(combined.sun.moonOcclusionFraction > 0.65 && combined.sun.moonOcclusionFraction < 0.75);
+  assert.ok(combined.sun.combinedOcclusionFraction > combined.sun.moonOcclusionFraction);
+  assert.ok(combined.sun.combinedOcclusionFraction > 0.98);
+  assert.ok(combined.sun.visibleFraction < 0.02);
+  assert.ok(combined.optics.flareStrength < 0.06);
+});
+
 test('camera flare weakens smoothly toward the frame edge and vanishes behind the camera', () => {
   const center = state();
   const edge = state({ sunNdc: [1.05, 0, 0.5] });

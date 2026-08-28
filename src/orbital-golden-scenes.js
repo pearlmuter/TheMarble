@@ -30,7 +30,7 @@ export const ORBITAL_GOLDEN_SCENES = Object.freeze([
     id: 'sunrise-limb',
     time: '2025-06-21T12:00:00.000Z',
     description: 'The Sun grazing Earth’s atmosphere to reveal the compact aerosol aureole and warm-to-blue tangent layers.',
-    observerPhaseDegrees: 171.35,
+    observerPhaseDegrees: 171.7,
     cameraDistanceEarthRadii: 7,
     fovDegrees: 22,
     target: 'earth',
