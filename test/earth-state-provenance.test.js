@@ -87,6 +87,24 @@ test('staleness follows the selected provider policy rather than gap-completion 
   assert.doesNotMatch(text, /acceptance limit 360 min/);
 });
 
+test('a legacy sequence without an identifiable provider never invents GMGSI provenance', () => {
+  const manifest = contemporaryManifest();
+  delete manifest.cloudSequence.provider;
+  for (const frame of manifest.cloudSequence.frames) frame.layers.cloudOpacity.datasetId = 'legacy-clouds';
+  manifest.datasets.push({ id: 'legacy-clouds', version: 'legacy-v1', attribution: 'Cloud source was not recorded' });
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest,
+    now: new Date('2026-08-28T18:30:00Z'),
+    runtime: { source: 'offline-cache', refresh: 'failed' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /Cloud source not recorded.*legacy-v1/);
+  assert.match(text, /staleness unknown.*provider freshness policy unavailable/);
+  assert.doesNotMatch(text, /NOAA GMGSI/);
+  assert.match(presentation.accessibleSummary, /freshness is unknown/i);
+});
+
 test('offline cache and staleness are explicit and described as last-known-good', () => {
   const presentation = buildEarthStateProvenancePresentation({
     manifest: contemporaryManifest(),

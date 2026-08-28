@@ -32,7 +32,15 @@ function datasetFor(manifest, datasetId) {
 function providerName(provider) {
   if (provider === 'satcorps') return 'NASA SatCORPS';
   if (provider === 'gmgsi') return 'NOAA GMGSI';
-  return 'Cloud dataset';
+  return 'Cloud source not recorded';
+}
+
+function resolveProvider(declaredProvider, dataset) {
+  if (declaredProvider === 'satcorps' || declaredProvider === 'gmgsi') return declaredProvider;
+  const signature = `${dataset?.id ?? ''} ${dataset?.attribution ?? ''}`.toLowerCase();
+  if (signature.includes('satcorps')) return 'satcorps';
+  if (signature.includes('gmgsi')) return 'gmgsi';
+  return undefined;
 }
 
 function cryospherePresentation(label, layer) {
@@ -84,21 +92,23 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
   const cloudDataset = datasetFor(manifest, cloudDatasetId);
   const cloudItems = [];
   let age;
-  let stale = false;
+  let stale;
   let observed = 0;
   let modelAssisted = 0;
 
   if (manifest.cloudSequence) {
     const [from, to] = manifest.cloudSequence.frames;
-    const provider = manifest.cloudSequence.provider ?? 'gmgsi';
-    const thresholdSeconds = cloudProviderMaxAgeSeconds(provider);
+    const provider = resolveProvider(manifest.cloudSequence.provider, cloudDataset);
+    const thresholdSeconds = provider ? cloudProviderMaxAgeSeconds(provider) : undefined;
     age = ageParts(now.valueOf() - Date.parse(to.observedTo));
-    stale = (now.valueOf() - Date.parse(to.validAt)) / 1000 > thresholdSeconds;
+    stale = thresholdSeconds === undefined ? undefined : (now.valueOf() - Date.parse(to.validAt)) / 1000 > thresholdSeconds;
     observed = percent(to.coverage.observedFraction);
     modelAssisted = percent(to.coverage.modelAssistedFraction);
     cloudItems.push(`${providerName(provider)} · ${cloudDataset?.version ?? 'version not recorded'}`);
     cloudItems.push(`Observation window · ${utcWindow(to.observedFrom, to.observedTo)}`);
-    cloudItems.push(`Observation age · ${age.short} old · ${stale ? 'stale' : 'current'} (${provider === 'satcorps' ? 'SatCORPS' : 'GMGSI'} provider freshness limit ${Math.round(thresholdSeconds / 60)} min from valid time)`);
+    cloudItems.push(thresholdSeconds === undefined
+      ? `Observation age · ${age.short} old · staleness unknown (provider freshness policy unavailable)`
+      : `Observation age · ${age.short} old · ${stale ? 'stale' : 'current'} (${provider === 'satcorps' ? 'SatCORPS' : 'GMGSI'} provider freshness limit ${Math.round(thresholdSeconds / 60)} min from valid time)`);
     cloudItems.push(`Coverage · ${observed}% observed · ${percent(to.coverage.fallbackFraction)}% static fallback`);
     const model = to.assistance?.model;
     cloudItems.push(model && modelAssisted > 0
@@ -126,8 +136,9 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
     { id: 'datasets', title: 'Dataset versions', items: dataItems },
     { id: 'attribution', title: 'Attribution', items: attributionItems },
   ];
+  const freshnessSummary = stale === undefined ? 'freshness is unknown' : stale ? 'stale' : 'current';
   const cloudSummary = manifest.cloudSequence
-    ? `Cloud observations are ${age.spoken} old and ${stale ? 'stale' : 'current'}, with ${observed}% observed and ${modelAssisted}% model-assisted coverage.`
+    ? `Cloud observations are ${age.spoken} old and ${freshnessSummary}, with ${observed}% observed and ${modelAssisted}% model-assisted coverage.`
     : 'Static bundled clouds are displayed with no interpolation or model assistance.';
   return {
     stateLabel: runtimeState.label,

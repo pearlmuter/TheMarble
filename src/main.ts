@@ -461,6 +461,8 @@ void activateEarthStateAtStartup({
   await applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
   loading.setAttribute('aria-hidden', 'true');
+  loading.removeAttribute('role');
+  loading.removeAttribute('aria-label');
   void refreshLatestEarthState();
   window.setInterval(refreshLatestEarthState, 10 * 60 * 1000);
 }).catch(error => {
