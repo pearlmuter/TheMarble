@@ -24,6 +24,9 @@ import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
 import { formatRollingSurfaceStatus } from './rolling-surface-status.js';
 import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
+import { buildEarthStateProvenancePresentation } from './earth-state-provenance.js';
+import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
+import { createProvenanceDisclosure } from './provenance-disclosure.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
 import type { SeasonalPair } from './seasonal-surface-controller.js';
 import './style.css';
@@ -66,7 +69,14 @@ function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: 
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
 const clock = document.querySelector<HTMLElement>('#clock')!;
 const sunStatus = document.querySelector<HTMLElement>('#sun-status')!;
+const provenanceDisclosureRoot = document.querySelector<HTMLElement>('#provenance-disclosure')!;
+const provenanceTrigger = document.querySelector<HTMLButtonElement>('#provenance-trigger')!;
+const provenancePanel = document.querySelector<HTMLElement>('#provenance-panel')!;
+const provenanceState = document.querySelector<HTMLElement>('#provenance-state')!;
+const provenanceSections = document.querySelector<HTMLElement>('#provenance-sections')!;
+const earthStateSummary = document.querySelector<HTMLElement>('#earth-state-summary')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
+createProvenanceDisclosure({ root: provenanceDisclosureRoot, trigger: provenanceTrigger, panel: provenancePanel, ownerDocument: document });
 const sceneParameters = new URLSearchParams(window.location.search);
 const goldenScene = orbitalGoldenScene(sceneParameters.get('golden'));
 const fixedSceneTime = goldenScene?.time ?? sceneParameters.get('time');
@@ -139,6 +149,34 @@ let seasonalSurfaceController: {
 let cloudObservationController: ReturnType<typeof createCloudObservationController<THREE.Texture>>;
 let weatherFeed = (_now: Date) => 'loading bundled Earth state';
 let activeBundleId: string | undefined;
+let activeEarthStateManifest: ActivatedEarthState<LoadedSceneAsset>['manifest'] | undefined;
+let earthStateRuntime: EarthStateRuntimeProvenance = { source: 'bundled-fallback', refresh: 'checking' };
+let renderedProvenanceMinute = '';
+
+function renderEarthStateProvenance(now: Date, force = false) {
+  if (!activeEarthStateManifest) return;
+  const minute = now.toISOString().slice(0, 16);
+  if (!force && minute === renderedProvenanceMinute) return;
+  renderedProvenanceMinute = minute;
+  const presentation = buildEarthStateProvenancePresentation({ manifest: activeEarthStateManifest, now, runtime: earthStateRuntime });
+  provenanceState.textContent = presentation.stateLabel;
+  earthStateSummary.textContent = presentation.accessibleSummary;
+  const sectionElements = presentation.sections.map(section => {
+    const element = document.createElement('section');
+    element.className = `provenance-section${['clouds', 'datasets', 'attribution'].includes(section.id) ? ' provenance-section-wide' : ''}`;
+    const heading = document.createElement('h2');
+    heading.textContent = section.title;
+    const list = document.createElement('ul');
+    for (const item of section.items) {
+      const row = document.createElement('li');
+      row.textContent = item;
+      list.append(row);
+    }
+    element.append(heading, list);
+    return element;
+  });
+  provenanceSections.replaceChildren(...sectionElements);
+}
 
 async function decodeSceneAsset(
   { name, descriptor }: EarthStateAssetRequest,
@@ -364,6 +402,8 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
     weatherFeed = () => [surfaceStatus, `clouds ${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`].filter(Boolean).join(' · ');
   }
   activeBundleId = activeEarthState.manifest.bundleId;
+  activeEarthStateManifest = activeEarthState.manifest;
+  renderEarthStateProvenance(sceneNow(), true);
 }
 
 let updateFrame: () => void = () => undefined;
@@ -382,6 +422,8 @@ let latestRefreshInFlight = false;
 async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
   latestRefreshInFlight = true;
+  earthStateRuntime = { ...earthStateRuntime, refresh: 'checking' };
+  renderEarthStateProvenance(sceneNow(), true);
   latestCapture = new Map();
   try {
     const previous = earthStateActivator.current;
@@ -389,7 +431,9 @@ async function refreshLatestEarthState() {
       remoteEarthStateLoaders,
       () => earthStateActivator.activateLatest(latestEarthStateUrl),
     ));
+    earthStateRuntime = { source: 'remote', refresh: 'current' };
     if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
+    else renderEarthStateProvenance(sceneNow(), true);
     if (activeEarthState !== previous && desktopEarthStateCache) {
       const snapshot = {
         bundleId: activeEarthState.manifest.bundleId,
@@ -403,25 +447,38 @@ async function refreshLatestEarthState() {
     }
   } catch {
     // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
+    earthStateRuntime = { ...earthStateRuntime, refresh: 'failed' };
+    renderEarthStateProvenance(sceneNow(), true);
   } finally {
     latestCapture = undefined;
     latestRefreshInFlight = false;
   }
 }
 
+let startupEarthStateSource: EarthStateRuntimeProvenance['source'] = 'bundled-fallback';
 void activateEarthStateAtStartup({
   cache: desktopEarthStateCache,
-  activateCached: async candidate => validateRenderableEarthState(await activateWithLoaders(
-    createCachedEarthStateLoaders(candidate),
-    () => earthStateActivator.activateLatest(candidate.latestUrl),
-  )),
-  activateBundled: async () => validateRenderableEarthState(await activateWithLoaders(
-    bundledEarthStateLoaders,
-    () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
-  )),
+  activateCached: async candidate => {
+    const active = validateRenderableEarthState(await activateWithLoaders(
+      createCachedEarthStateLoaders(candidate),
+      () => earthStateActivator.activateLatest(candidate.latestUrl),
+    ));
+    startupEarthStateSource = 'offline-cache';
+    return active;
+  },
+  activateBundled: async () => {
+    const active = validateRenderableEarthState(await activateWithLoaders(
+      bundledEarthStateLoaders,
+      () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
+    ));
+    startupEarthStateSource = 'bundled-fallback';
+    return active;
+  },
 }).then(async activeEarthState => {
+  earthStateRuntime = { source: startupEarthStateSource, refresh: 'checking' };
   await applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
+  loading.setAttribute('aria-hidden', 'true');
   void refreshLatestEarthState();
   window.setInterval(refreshLatestEarthState, 10 * 60 * 1000);
 }).catch(error => {
@@ -943,6 +1000,7 @@ function updateCelestialScene(now: Date) {
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
   sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
+  renderEarthStateProvenance(now);
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
