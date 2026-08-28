@@ -8,6 +8,8 @@ import {
 } from './astronomical-state.js';
 import { createOneTimeInertialCameraPlacement } from './inertial-camera.js';
 import type { FixedSceneView } from './inertial-camera.js';
+import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
+import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
 import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
@@ -66,7 +68,8 @@ const clock = document.querySelector<HTMLElement>('#clock')!;
 const sunStatus = document.querySelector<HTMLElement>('#sun-status')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
 const sceneParameters = new URLSearchParams(window.location.search);
-const fixedSceneTime = sceneParameters.get('time');
+const goldenScene = orbitalGoldenScene(sceneParameters.get('golden'));
+const fixedSceneTime = goldenScene?.time ?? sceneParameters.get('time');
 const requestedSceneView = sceneParameters.get('view');
 const fixedSceneView: FixedSceneView = requestedSceneView === 'day' || requestedSceneView === 'terminator'
   ? requestedSceneView
@@ -88,7 +91,7 @@ renderer.toneMappingExposure = 1.08;
 
 const scene = new THREE.Scene();
 // A full-Earth orbital view: Earth stays jewel-sized while the Sun retains its true 0.53° disc.
-const camera = new THREE.PerspectiveCamera(22, window.innerWidth / window.innerHeight, .1, 30000);
+const camera = new THREE.PerspectiveCamera(goldenScene?.fovDegrees ?? 22, window.innerWidth / window.innerHeight, .1, 30000);
 camera.position.set(6, 1.4, 3.6);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -533,7 +536,7 @@ const earthMaterial = new THREE.ShaderMaterial({
     void main() {
       vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz);
       float solar=dot(normal,sunView); float nDotL=max(solar,0.0); float nDotV=max(dot(normal,viewDirection),.001);
-      float daylight=smoothstep(-.075,.14,solar); float directLight=.48+1.22*smoothstep(-.08,.72,solar);
+      float daylight=smoothstep(-.012,.028,solar); float directLight=.055+1.32*smoothstep(-.015,.72,solar);
       float zenithDegrees=degrees(acos(clamp(solar,0.0,1.0))); float airMass=1.0/(max(solar,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
       vec3 surface=mix(texture2D(dayMapFrom,vUv).rgb,texture2D(dayMapTo,vUv).rgb,seasonalMix);
@@ -598,7 +601,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       float casterDensity=mix(.72,1.18,casterWeather.r)*casterWeather.g;
       float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
       day*=1.0-cloudShadow*daylight*mix(.12,.34,clamp(casterOpticalDepth/18.0,0.0,1.0))*casterQuality;
-      float nightFalloff=1.0-smoothstep(-.12,.025,solar);
+      float nightFalloff=1.0-smoothstep(-.035,.008,solar);
       vec3 night=texture2D(nightMap,vUv).rgb*nightFalloff*1.8;
       night*=cloudTransmission(opticalDepth,cloudQuality);
       gl_FragColor=vec4(mix(night,day,daylight),1.0);
@@ -644,7 +647,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float icePhase=physics.g;
       float density=mix(mix(.72,1.18,weather.r),1.0-exp(-opticalDepth*.35),physicalWeight)*cloudQuality;
       vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); vec3 viewDirection=normalize(-vViewPosition);
-      float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.025,.12,solarRaw);
+      float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.012,.035,solarRaw);
       float zenithDegrees=degrees(acos(clamp(solarRaw,0.0,1.0)));
       float airMass=1.0/(max(solarRaw,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
@@ -730,13 +733,13 @@ const atmosphere = new THREE.Mesh(
         float nearestTime=max(-dot(cameraPosition,rayDirection),0.0); vec3 tangentPoint=cameraPosition+rayDirection*nearestTime;
         float impact=length(tangentPoint); float tangentHeight=max(impact-GROUND_RADIUS,0.0);
         float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*6.0));
-        float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.055,.08,tangentSun);
+        float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.018,.035,tangentSun);
         float forwardAureole=pow(max(mu,0.0),30.0);
-        vec3 exposedLimb=vec3(.008,.16,1.05)*limbEnvelope*illuminated*.92;
+        vec3 exposedLimb=vec3(.018,.31,.78)*limbEnvelope*illuminated*.92;
         exposedLimb+=vec3(1.0,.36,.035)*limbEnvelope*illuminated*forwardAureole*.08;
         // Additive light carries its own physical intensity; an alpha derived from intensity
         // would multiply the already-dim limb a second time and erase it.
-        vec3 color=radiance*13.0+exposedLimb; gl_FragColor=vec4(color,1.0);
+        vec3 color=radiance*vec3(13.0,13.0,10.0)+exposedLimb; gl_FragColor=vec4(color,1.0);
       }`
   })
 );
@@ -745,7 +748,7 @@ planet.add(atmosphere);
 const moonMaterial = new THREE.ShaderMaterial({
   uniforms: { moonMap: { value: moonMap }, sunDirection: { value: new THREE.Vector3(1, 0, 0) } },
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-  fragmentShader: `uniform sampler2D moonMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; void main(){ vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float light=smoothstep(-.07,.16,dot(normalize(vViewNormal),sunView)); vec3 albedo=texture2D(moonMap,vUv).rgb; gl_FragColor=vec4(albedo*mix(.014,1.0,light),1.0); }`
+  fragmentShader: `uniform sampler2D moonMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; void main(){ vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float light=smoothstep(-.004,.018,dot(normalize(vViewNormal),sunView)); vec3 albedo=texture2D(moonMap,vUv).rgb; gl_FragColor=vec4(albedo*mix(.003,1.0,light),1.0); }`
 });
 // Distances and radii below are expressed in equatorial Earth radii (Earth = 1.0).
 const moon = new THREE.Mesh(new THREE.SphereGeometry(MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM, 64, 64), moonMaterial);
@@ -779,10 +782,10 @@ coronaCanvas.width = 256; coronaCanvas.height = 256;
 const coronaContext = coronaCanvas.getContext('2d')!;
 const coronaGradient = coronaContext.createRadialGradient(128, 128, 0, 128, 128, 128);
 coronaGradient.addColorStop(0, 'rgba(255,255,252,1)');
-coronaGradient.addColorStop(.32, 'rgba(255,255,248,1)');
-coronaGradient.addColorStop(.45, 'rgba(255,247,226,.54)');
-coronaGradient.addColorStop(.63, 'rgba(255,218,166,.09)');
-coronaGradient.addColorStop(.84, 'rgba(168,190,220,.015)');
+coronaGradient.addColorStop(.16, 'rgba(255,255,250,1)');
+coronaGradient.addColorStop(.28, 'rgba(255,248,229,.72)');
+coronaGradient.addColorStop(.48, 'rgba(255,220,170,.12)');
+coronaGradient.addColorStop(.76, 'rgba(168,190,220,.012)');
 coronaGradient.addColorStop(1, 'rgba(0,0,0,0)');
 coronaContext.fillStyle = coronaGradient;
 coronaContext.fillRect(0, 0, 256, 256);
@@ -790,7 +793,7 @@ const coronaTexture = new THREE.CanvasTexture(coronaCanvas);
 const sunCorona = new THREE.Sprite(
   new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
 );
-sunCorona.scale.set(sunRadius * 8, sunRadius * 8, 1);
+sunCorona.scale.set(sunRadius * 4, sunRadius * 4, 1);
 scene.add(sunCorona);
 
 // A restrained camera starburst: the physical solar disc above stays unchanged while this
@@ -819,7 +822,7 @@ for (let rayIndex = 0; rayIndex < 16; rayIndex += 1) {
   starburstContext.fill();
   starburstContext.restore();
 }
-const starburstCore = starburstContext.createRadialGradient(0, 0, 0, 0, 0, 104);
+const starburstCore = starburstContext.createRadialGradient(0, 0, 0, 0, 0, 58);
 starburstCore.addColorStop(0, 'rgba(255,255,248,.95)');
 starburstCore.addColorStop(.22, 'rgba(255,252,235,.82)');
 starburstCore.addColorStop(.48, 'rgba(255,208,132,.16)');
@@ -830,7 +833,7 @@ const starburstTexture = new THREE.CanvasTexture(starburstCanvas);
 const sunStarburst = new THREE.Sprite(
   new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
 );
-sunStarburst.scale.set(sunRadius * 18, sunRadius * 18, 1);
+sunStarburst.scale.set(sunRadius * 10, sunRadius * 10, 1);
 scene.add(sunStarburst);
 const sunOpticsPosition = new THREE.Vector3();
 
@@ -856,8 +859,6 @@ const lensFlareGhosts = [
 lensFlareGhosts.forEach(({ sprite }) => { sprite.renderOrder = 20; scene.add(sprite); });
 const sunScreenPosition = new THREE.Vector3();
 const flareDirection = new THREE.Vector3();
-const cameraToSun = new THREE.Vector3();
-const closestSunRayPoint = new THREE.Vector3();
 let skyExposure = .1;
 
 function radians(value: number) { return value * Math.PI / 180; }
@@ -878,26 +879,33 @@ function applyCelestialRotation(object: THREE.Object3D, matrix: readonly number[
 }
 
 const takeInitialCameraPosition = createOneTimeInertialCameraPlacement(fixedSceneView);
+const takeGoldenCameraPose = goldenScene ? createOneTimeOrbitalGoldenCameraPlacement(goldenScene) : null;
 function updateCelestialScene(now: Date) {
   const frame = celestialSceneFrameAt(now);
   const solar = frame.astronomy.sun;
   // The Earth body rotates in EQJ while the camera and Hipparcos/Gaia sky remain inertial.
   applyCelestialRotation(planet, frame.earth.bodyToSceneMatrix);
   const sunDirection = new THREE.Vector3(...frame.sun.inertialDirection);
-  const initialCameraPosition = takeInitialCameraPosition(frame);
+  const goldenPose = takeGoldenCameraPose?.(frame) ?? null;
+  const initialCameraPosition = goldenScene ? goldenPose?.position ?? null : takeInitialCameraPosition(frame);
   if (initialCameraPosition) {
     // Place the observer just outside the Sun–Earth occultation cone. The real, 0.53° solar disc
     // sits beyond the atmospheric limb. This placement happens once: afterwards the observer
     // remains inertial while Earth rotates and the Sun advances through the EQJ sky.
     camera.position.fromArray(initialCameraPosition);
-    camera.lookAt(0, 0, 0);
-    controls.target.set(0, 0, 0);
+    const cameraTarget = goldenPose?.target ?? [0, 0, 0];
+    camera.lookAt(...cameraTarget);
+    controls.target.fromArray(cameraTarget);
   }
   earthMaterial.uniforms.sunDirection.value.copy(sunDirection);
   earthMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
   cloudMaterial.uniforms.sunDirection.value.copy(sunDirection);
   (atmosphere.material as THREE.ShaderMaterial).uniforms.sunDirection.value.copy(sunDirection);
   sun.position.copy(sunDirection).multiplyScalar(frame.sun.distanceEarthRadii);
+  const moonDirection = new THREE.Vector3(...frame.moon.inertialDirection);
+  moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
+  applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
+  moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
   // Put camera optics just in front of the solar sphere so the sphere cannot depth-mask them;
   // Earth remains vastly nearer and therefore still occludes the complete optical effect.
   // A generous camera-space separation avoids far-plane depth quantization masking the
@@ -906,34 +914,34 @@ function updateCelestialScene(now: Date) {
   sunCorona.position.copy(sunOpticsPosition);
   sunStarburst.position.copy(sunOpticsPosition);
   sunScreenPosition.copy(sun.position).project(camera);
-  cameraToSun.copy(sun.position).sub(camera.position);
-  const nearestFraction = THREE.MathUtils.clamp(-camera.position.dot(cameraToSun) / cameraToSun.lengthSq(), 0, 1);
-  const sunEarthImpact = closestSunRayPoint.copy(camera.position).addScaledVector(cameraToSun, nearestFraction).length();
-  const sunInFront = camera.getWorldDirection(flareDirection).dot(cameraToSun) > 0;
-  const sunOcculted = nearestFraction > 0 && nearestFraction < 1 && sunEarthImpact < 1;
-  const frameDistance = Math.max(Math.abs(sunScreenPosition.x), Math.abs(sunScreenPosition.y));
-  const sunInFrame = sunInFront && sunScreenPosition.z > -1 && sunScreenPosition.z < 1 && frameDistance < 1.3;
-  const flareStrength = sunInFrame && !sunOcculted ? 1 - THREE.MathUtils.smoothstep(frameDistance, .72, 1.3) : 0;
-  sunCorona.visible = !sunOcculted && sunInFront;
-  sunStarburst.visible = !sunOcculted && sunInFront;
+  const photograph = orbitalPhotographyState({
+    cameraPosition: [camera.position.x, camera.position.y, camera.position.z],
+    sunPosition: [sun.position.x, sun.position.y, sun.position.z],
+    sunRadius,
+    moonPosition: [moon.position.x, moon.position.y, moon.position.z],
+    moonRadius: MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM,
+    sunNdc: [sunScreenPosition.x, sunScreenPosition.y, sunScreenPosition.z],
+  });
+  const coronaMaterial = sunCorona.material as THREE.SpriteMaterial;
+  const starburstMaterial = sunStarburst.material as THREE.SpriteMaterial;
+  coronaMaterial.opacity = photograph.optics.bloomStrength * .84;
+  starburstMaterial.opacity = photograph.optics.diffractionStrength * .58;
+  sunCorona.visible = photograph.optics.bloomStrength > .001;
+  sunStarburst.visible = photograph.optics.diffractionStrength > .001;
   lensFlareGhosts.forEach(({ factor, scale, opacity, sprite }) => {
     const ndc = new THREE.Vector3(sunScreenPosition.x * factor, sunScreenPosition.y * factor, .2).unproject(camera);
     flareDirection.copy(ndc).sub(camera.position).normalize();
     sprite.position.copy(camera.position).addScaledVector(flareDirection, 30); sprite.scale.setScalar(scale);
-    (sprite.material as THREE.SpriteMaterial).opacity = opacity * flareStrength; sprite.visible = flareStrength > .001;
+    (sprite.material as THREE.SpriteMaterial).opacity = opacity * photograph.optics.flareStrength;
+    sprite.visible = photograph.optics.flareStrength > .001;
   });
   // Human eyes and ordinary cameras cannot expose a direct Sun and a rich Milky Way at once.
-  const targetSkyExposure = sunInFrame && !sunOcculted ? .09 : .72;
-  skyExposure = THREE.MathUtils.lerp(skyExposure, targetSkyExposure, sunInFrame ? .045 : .012);
+  skyExposure = THREE.MathUtils.lerp(skyExposure, photograph.exposure.milkyWay, photograph.sun.inFrame ? .045 : .012);
   milkyWayMaterial.uniforms.exposure.value = skyExposure;
-  if (starMaterial) starMaterial.uniforms.exposure.value = THREE.MathUtils.lerp(.18, 1, skyExposure);
-  const moonDirection = new THREE.Vector3(...frame.moon.inertialDirection);
-  moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
-  applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
-  moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
+  if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars;
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
-  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits`;
+  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
