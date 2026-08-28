@@ -29,6 +29,10 @@ The client ranks complete bundles using only explicit capabilities:
 
 It does not inspect user-agent strings, GPU names, or product names. A capable client tries 16K first and retains 8K as a fallback. If download, checksum verification, KTX2 transcoding, texture allocation, or scene preparation fails, the client retries the complete lower tier. It never activates a surface from one tier with clouds or cryosphere from another.
 
+Capability selection is only a preflight filter. Before a candidate tier becomes visible, the client uploads every texture in that tier, verifies the two active surface frames at the tier's exact dimensions and color-sampling settings, and renders the complete live Earth scene off-screen at a fixed 1440×900 workload. The qualification includes a two-frame warm-up and 24 measured frames with a GPU synchronization barrier. The candidate must meet its shader-compilation, sustained-frame-rate, and end-to-end time-to-first-coherent-globe budgets on the machine that is actually running TheMarble. A failing candidate's GPU textures are released before the next complete tier is prepared.
+
+This on-device qualification applies identically in the website and Tauri builds. It deliberately avoids model-name guesses: an integrated-GPU machine that cannot sustain 16K receives 8K, while a capable desktop receives 16K only when the real renderer proves it can carry the complete presentation. The unit profiles exercise both selection paths and the atomic cleanup ordering; production acceptance should additionally load a published index on at least one representative integrated-GPU system and one capable desktop, then confirm the selected `-8k` or `-16k` bundle in the hidden data-provenance panel.
+
 ## Declared budgets
 
 Each presentation index records these budgets for every tier:

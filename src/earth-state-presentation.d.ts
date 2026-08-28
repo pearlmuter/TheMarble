@@ -1,6 +1,10 @@
 import type { EarthStateAssetReference } from './earth-state.js';
 
 export type EarthStatePresentationTierId = '8k' | '16k';
+export const EARTH_STATE_PRESENTATION_TIER_DIMENSIONS: Readonly<Record<
+  EarthStatePresentationTierId,
+  Readonly<{ width: number; height: number }>
+>>;
 
 export interface EarthStatePresentationBudgets {
   timeToFirstCoherentGlobeMs: number;
@@ -48,12 +52,26 @@ export interface ActivatedEarthStatePresentation<Value> {
   value: Value;
 }
 
+export interface EarthStatePresentationTierRequest {
+  index: EarthStatePresentationIndex;
+  tier: EarthStatePresentationTier;
+  manifestUrl: string;
+  activationStartedAt: number;
+}
+
 export function createEarthStatePresentationActivator<Value>(adapters: {
   loadIndex(url: string, options: { signal: AbortSignal }): Promise<unknown>;
   prepareTier(
-    request: { index: EarthStatePresentationIndex; tier: EarthStatePresentationTier; manifestUrl: string },
+    request: EarthStatePresentationTierRequest,
     options: { signal: AbortSignal },
   ): Promise<Value>;
+  qualifyTier?(
+    request: EarthStatePresentationTierRequest,
+    value: Value,
+    options: { signal: AbortSignal },
+  ): Promise<void> | void;
+  disposeTier?(value: Value): Promise<void> | void;
+  now?(): number;
 }): {
   readonly current: ActivatedEarthStatePresentation<Value> | undefined;
   activate(

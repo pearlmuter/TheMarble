@@ -27,7 +27,7 @@ import { buildEarthStateProvenancePresentation } from './earth-state-provenance.
 import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
 import { createProvenanceDisclosure } from './provenance-disclosure.js';
 import { createEarthStatePresentationActivator } from './earth-state-presentation.js';
-import type { EarthStatePresentationCapabilities } from './earth-state-presentation.js';
+import type { EarthStatePresentationCapabilities, EarthStatePresentationTier } from './earth-state-presentation.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
 import type { SeasonalPair } from './seasonal-surface-controller.js';
 import './style.css';
@@ -44,6 +44,12 @@ type PreparedSeasonalSurface = SeasonalPair<THREE.Texture, LoadedSceneAsset>;
 type PreparedEarthStateScene = {
   active: ActivatedEarthState<LoadedSceneAsset>;
   seasonalSurface: PreparedSeasonalSurface;
+};
+type EarthStatePresentationQualification = {
+  shaderCompilationMs: number;
+  sustainedFps: number;
+  benchmarkWidth: number;
+  benchmarkHeight: number;
 };
 type SceneEarthStateLoaders = {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
@@ -164,6 +170,10 @@ let seasonalSurfaceController: {
   update(date: Date): void;
 };
 let cloudObservationController: ReturnType<typeof createCloudObservationController<THREE.Texture>>;
+let qualifyPreparedEarthStateRendering: (
+  prepared: PreparedEarthStateScene,
+  tier: EarthStatePresentationTier,
+) => Promise<EarthStatePresentationQualification>;
 let activeEarthStateStatus = 'Loading bundled Earth state';
 let activeBundleId: string | undefined;
 let activeEarthStateManifest: ActivatedEarthState<LoadedSceneAsset>['manifest'] | undefined;
@@ -404,31 +414,46 @@ const earthStatePresentationActivator = createEarthStatePresentationActivator({
     return (await remoteEarthStateLoaders.loadDocument(url, options)).value;
   },
   async prepareTier({ manifestUrl, tier }, options) {
-    const startedAt = performance.now();
     const capture = new Map<string, EarthStateCacheEntry>();
     latestCapture = capture;
-    const active = validateRenderableEarthState(await activateWithLoaders(
-      remoteEarthStateLoaders,
-      () => earthStateActivator.activate(manifestUrl, tier.manifest),
-    ));
-    const surfaceDimensions = active.manifest.layers.surfaceAlbedo.dimensions;
-    if (surfaceDimensions.width !== tier.dimensions.width || surfaceDimensions.height !== tier.dimensions.height) {
-      throw new Error(`Earth presentation ${tier.id} surface dimensions do not match its tier`);
+    let active: ActivatedEarthState<LoadedSceneAsset> | undefined;
+    let prepared: PreparedEarthStateScene | undefined;
+    try {
+      active = validateRenderableEarthState(await activateWithLoaders(
+        remoteEarthStateLoaders,
+        () => earthStateActivator.activate(manifestUrl, tier.manifest),
+      ));
+      const surfaceDimensions = active.manifest.layers.surfaceAlbedo.dimensions;
+      if (surfaceDimensions.width !== tier.dimensions.width || surfaceDimensions.height !== tier.dimensions.height) {
+        throw new Error(`Earth presentation ${tier.id} surface dimensions do not match its tier`);
+      }
+      const transferBytes = [...capture.values()].reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+      if (transferBytes > tier.budgets.transferBytes) throw new Error(`Earth presentation ${tier.id} exceeds its transfer budget`);
+      prepared = await prepareActivatedEarthState(active);
+      ensurePreparedEarthStateGpuResident(prepared);
+      if (options.signal.aborted) throw options.signal.reason;
+      return { active, capture, manifestUrl, prepared };
+    } catch (error) {
+      if (prepared) disposeEarthStateTextures(prepared);
+      else if (active) disposeEarthStateTextures(active);
+      throw error;
     }
-    const transferBytes = [...capture.values()].reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
-    if (transferBytes > tier.budgets.transferBytes) throw new Error(`Earth presentation ${tier.id} exceeds its transfer budget`);
-    const prepared = await prepareActivatedEarthState(active);
-    ensurePreparedEarthStateGpuResident(prepared);
-    const shaderStartedAt = performance.now();
-    await renderer.compileAsync(scene, camera);
-    if (performance.now() - shaderStartedAt > tier.budgets.shaderCompilationMs) {
+  },
+  async qualifyTier({ tier, activationStartedAt }, value, options) {
+    const qualification = await qualifyPreparedEarthStateRendering(value.prepared, tier);
+    if (qualification.shaderCompilationMs > tier.budgets.shaderCompilationMs) {
       throw new Error(`Earth presentation ${tier.id} exceeds its shader compilation budget`);
     }
-    if (performance.now() - startedAt > tier.budgets.timeToFirstCoherentGlobeMs) {
+    if (qualification.sustainedFps < tier.budgets.minimumSustainedFps) {
+      throw new Error(`Earth presentation ${tier.id} sustains ${qualification.sustainedFps.toFixed(1)} FPS, below its ${tier.budgets.minimumSustainedFps} FPS budget`);
+    }
+    if (performance.now() - activationStartedAt > tier.budgets.timeToFirstCoherentGlobeMs) {
       throw new Error(`Earth presentation ${tier.id} exceeds its time-to-first-globe budget`);
     }
     if (options.signal.aborted) throw options.signal.reason;
-    return { active, capture, manifestUrl, prepared };
+  },
+  disposeTier(value) {
+    disposeEarthStateTextures(value.prepared);
   },
 });
 
@@ -465,6 +490,17 @@ async function prepareActivatedEarthState(activeEarthState: ActivatedEarthState<
 }
 
 function ensurePreparedEarthStateGpuResident(prepared: PreparedEarthStateScene) {
+  const textures = collectEarthStateTextures(prepared);
+  const context = renderer.getContext();
+  while (context.getError() !== context.NO_ERROR) { /* clear errors from the previous rendered state */ }
+  for (const texture of textures) renderer.initTexture(texture);
+  context.finish();
+  const error = context.getError();
+  if (context.isContextLost() || error === context.OUT_OF_MEMORY) throw new Error('GPU allocation failed for the complete Earth presentation tier');
+  if (error !== context.NO_ERROR) throw new Error(`GPU rejected the complete Earth presentation tier (${error})`);
+}
+
+function collectEarthStateTextures(value: PreparedEarthStateScene | ActivatedEarthState<LoadedSceneAsset>) {
   const textures = new Set<THREE.Texture>();
   const visit = (value: unknown) => {
     if (value instanceof THREE.Texture) {
@@ -479,18 +515,23 @@ function ensurePreparedEarthStateGpuResident(prepared: PreparedEarthStateScene) 
       Object.values(value).forEach(visit);
     }
   };
-  visit(prepared.active.layers);
-  visit(prepared.active.resources);
-  visit(prepared.active.cloudSequence);
-  visit(prepared.seasonalSurface.from);
-  visit(prepared.seasonalSurface.to);
-  const context = renderer.getContext();
-  while (context.getError() !== context.NO_ERROR) { /* clear errors from the previous rendered state */ }
-  for (const texture of textures) renderer.initTexture(texture);
-  context.finish();
-  const error = context.getError();
-  if (context.isContextLost() || error === context.OUT_OF_MEMORY) throw new Error('GPU allocation failed for the complete Earth presentation tier');
-  if (error !== context.NO_ERROR) throw new Error(`GPU rejected the complete Earth presentation tier (${error})`);
+  if ('active' in value) {
+    visit(value.active.layers);
+    visit(value.active.resources);
+    visit(value.active.cloudSequence);
+    visit(value.seasonalSurface.from);
+    visit(value.seasonalSurface.to);
+  } else {
+    visit(value.layers);
+    visit(value.resources);
+    visit(value.cloudSequence);
+  }
+  return textures;
+}
+
+function disposeEarthStateTextures(value: PreparedEarthStateScene | ActivatedEarthState<LoadedSceneAsset>) {
+  for (const texture of collectEarthStateTextures(value)) texture.dispose();
+  renderer.getContext().finish();
 }
 
 function commitActivatedEarthState({ active: activeEarthState, seasonalSurface }: PreparedEarthStateScene) {
@@ -1228,6 +1269,96 @@ applyVerifiedResource = (name, asset) => {
   }
   else if (name === 'starCatalog') loadHipparcosStars(requireStarCatalog(asset));
 };
+
+qualifyPreparedEarthStateRendering = async (prepared, tier) => {
+  const { active, seasonalSurface } = prepared;
+  const assertSharpSurface = (texture: THREE.Texture, label: string) => {
+    verifyTextureDimensions(texture, { dimensions: tier.dimensions }, `${tier.id} ${label}`);
+    if (texture.magFilter === THREE.NearestFilter || texture.colorSpace !== THREE.SRGBColorSpace) {
+      throw new Error(`Earth presentation ${tier.id} ${label} is not configured for sharp color rendering`);
+    }
+  };
+  assertSharpSurface(seasonalSurface.from, 'surface from-frame');
+  assertSharpSurface(seasonalSurface.to, 'surface to-frame');
+
+  const cloudFrames = active.cloudSequence?.frames;
+  const cloudFrom = cloudFrames?.[0]?.layers ?? active.layers;
+  const cloudTo = cloudFrames?.[1]?.layers ?? cloudFrom;
+  const texture = (value: LoadedSceneAsset | undefined, fallback: LoadedSceneAsset, name: string) => (
+    requireLoadedTexture(value ?? fallback, `${tier.id} qualification ${name}`)
+  );
+  const assignments: Array<{ uniform: { value: unknown }; value: unknown; previous?: unknown }> = [];
+  const assign = (material: THREE.ShaderMaterial, name: string, value: unknown) => {
+    const uniform = material.uniforms[name];
+    if (!uniform) throw new Error(`Earth presentation shader is missing ${name}`);
+    assignments.push({ uniform, value });
+  };
+  assign(earthMaterial, 'dayMapFrom', seasonalSurface.from);
+  assign(earthMaterial, 'dayMapTo', seasonalSurface.to);
+  assign(earthMaterial, 'seasonalMix', seasonalSurface.mix);
+  assign(earthMaterial, 'nightMap', texture(active.layers.nightLights, previewLayers.nightLights, 'nightLights'));
+  assign(earthMaterial, 'snowCoverMap', texture(active.layers.snowCover, previewLayers.snowCover, 'snowCover'));
+  assign(earthMaterial, 'seaIceMap', texture(active.layers.seaIce, previewLayers.seaIce, 'seaIce'));
+  for (const material of [earthMaterial, cloudMaterial]) {
+    assign(material, 'cloudMapFrom', texture(cloudFrom.cloudOpacity, previewLayers.cloudOpacity, 'cloudOpacity from-frame'));
+    assign(material, 'cloudMapTo', texture(cloudTo.cloudOpacity, previewLayers.cloudOpacity, 'cloudOpacity to-frame'));
+    assign(material, 'cloudDensityFrom', texture(cloudFrom.cloudDensity, previewLayers.cloudDensity, 'cloudDensity from-frame'));
+    assign(material, 'cloudDensityTo', texture(cloudTo.cloudDensity, previewLayers.cloudDensity, 'cloudDensity to-frame'));
+    assign(material, 'cloudPhysicsFrom', texture(cloudFrom.cloudPhysics, previewLayers.cloudPhysics, 'cloudPhysics from-frame'));
+    assign(material, 'cloudPhysicsTo', texture(cloudTo.cloudPhysics, previewLayers.cloudPhysics, 'cloudPhysics to-frame'));
+    assign(material, 'cloudAgeFrom', texture(cloudFrom.cloudAge, previewLayers.cloudAge, 'cloudAge from-frame'));
+    assign(material, 'cloudAgeTo', texture(cloudTo.cloudAge, previewLayers.cloudAge, 'cloudAge to-frame'));
+    assign(material, 'cloudMix', cloudFrames ? .5 : 0);
+  }
+  assign(moonMaterial, 'moonMap', texture(active.resources.moonAlbedo, previewResources.moonAlbedo, 'moonAlbedo'));
+  assign(milkyWayMaterial, 'map', texture(active.resources.milkyWay, previewResources.milkyWay, 'milkyWay'));
+
+  const shaderStartedAt = performance.now();
+  await renderer.compileAsync(scene, camera);
+  renderer.getContext().finish();
+  const shaderCompilationMs = performance.now() - shaderStartedAt;
+
+  // Render the complete live scene at a fixed desktop workload. The tier textures are swapped
+  // only while JavaScript is synchronously drawing to an off-screen target, so no partial tier
+  // can appear on the user's canvas.
+  const benchmarkWidth = 1440;
+  const benchmarkHeight = 900;
+  const target = new THREE.WebGLRenderTarget(benchmarkWidth, benchmarkHeight, { depthBuffer: true });
+  const previousTarget = renderer.getRenderTarget();
+  const context = renderer.getContext();
+  while (context.getError() !== context.NO_ERROR) { /* isolate qualification from earlier rendering errors */ }
+  try {
+    for (const assignment of assignments) {
+      assignment.previous = assignment.uniform.value;
+      assignment.uniform.value = assignment.value;
+    }
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+    renderer.render(scene, camera);
+    context.finish();
+    const sampleFrames = 24;
+    const renderStartedAt = performance.now();
+    for (let frame = 0; frame < sampleFrames; frame += 1) renderer.render(scene, camera);
+    context.finish();
+    const renderElapsedMs = performance.now() - renderStartedAt;
+    const error = context.getError();
+    if (context.isContextLost() || error === context.OUT_OF_MEMORY) {
+      throw new Error(`GPU allocation failed while rendering the complete ${tier.id} Earth presentation`);
+    }
+    if (error !== context.NO_ERROR) throw new Error(`GPU rejected the rendered ${tier.id} Earth presentation (${error})`);
+    return {
+      shaderCompilationMs,
+      sustainedFps: sampleFrames * 1000 / Math.max(renderElapsedMs, .001),
+      benchmarkWidth,
+      benchmarkHeight,
+    };
+  } finally {
+    for (const assignment of assignments) assignment.uniform.value = assignment.previous;
+    renderer.setRenderTarget(previousTarget);
+    target.dispose();
+  }
+};
+
 updateFrame = () => {
   const now = sceneNow();
   seasonalSurfaceController.update(now);

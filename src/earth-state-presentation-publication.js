@@ -1,11 +1,11 @@
 import { earthStateSha256, parseEarthStateJson } from './earth-state-codec.js';
 import { encodeCanonicalEarthStateJson } from './earth-state-canonical-json.js';
 import { validateEarthStateManifest } from './earth-state.js';
-import { validateEarthStatePresentationIndex } from './earth-state-presentation.js';
+import { EARTH_STATE_PRESENTATION_TIER_DIMENSIONS, validateEarthStatePresentationIndex } from './earth-state-presentation.js';
 
 const DEFAULT_TIERS = Object.freeze([
-  Object.freeze({ id: '8k', width: 8192, height: 4096, timeToFirstCoherentGlobeMs: 5_000, shaderCompilationMs: 700, minimumSustainedFps: 30 }),
-  Object.freeze({ id: '16k', width: 16384, height: 8192, timeToFirstCoherentGlobeMs: 8_000, shaderCompilationMs: 1_000, minimumSustainedFps: 45 }),
+  Object.freeze({ id: '8k', ...EARTH_STATE_PRESENTATION_TIER_DIMENSIONS['8k'], timeToFirstCoherentGlobeMs: 5_000, shaderCompilationMs: 700, minimumSustainedFps: 30 }),
+  Object.freeze({ id: '16k', ...EARTH_STATE_PRESENTATION_TIER_DIMENSIONS['16k'], timeToFirstCoherentGlobeMs: 8_000, shaderCompilationMs: 1_000, minimumSustainedFps: 45 }),
 ]);
 
 function scientificIdentitySource(manifest) {

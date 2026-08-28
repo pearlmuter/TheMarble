@@ -174,3 +174,44 @@ test('a measured integrated-GPU frame rate keeps a nominally 16K-capable client 
 
   assert.deepEqual(candidates.map(candidate => candidate.id), ['8k']);
 });
+
+test('a tier that fails on-device rendering is disposed completely before the lower tier is prepared', async () => {
+  const events = [];
+  let clock = 100;
+  const activator = createEarthStatePresentationActivator({
+    now: () => clock,
+    async loadIndex() {
+      clock = 145;
+      return index;
+    },
+    async prepareTier({ tier, activationStartedAt }) {
+      events.push(`prepare:${tier.id}:${activationStartedAt}`);
+      return { id: tier.id, textures: [`${tier.id}:surface`, `${tier.id}:clouds`] };
+    },
+    async qualifyTier({ tier }, value) {
+      events.push(`qualify:${tier.id}:${value.id}`);
+      if (tier.id === '16k') throw new Error('16K sustained frame-rate budget missed');
+    },
+    async disposeTier(value) {
+      events.push(`dispose:${value.textures.join(',')}`);
+    },
+  });
+
+  const active = await activator.activate('https://earth.test/latest-presentations.json', {
+    maxTextureSize: 16384,
+    basisUniversal: true,
+    decodedGpuMemoryBudgetBytes: 768 * 1024 * 1024,
+    transferBudgetBytes: 192 * 1024 * 1024,
+    cacheBudgetBytes: 512 * 1024 * 1024,
+    measuredSustainedFps: 60,
+  });
+
+  assert.equal(active.tier.id, '8k');
+  assert.deepEqual(events, [
+    'prepare:16k:100',
+    'qualify:16k:16k',
+    'dispose:16k:surface,16k:clouds',
+    'prepare:8k:100',
+    'qualify:8k:8k',
+  ]);
+});
