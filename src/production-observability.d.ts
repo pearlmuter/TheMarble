@@ -38,6 +38,7 @@ export interface EarthProductionHealthSnapshot {
   delivery: {
     originAvailable: boolean; cdnAvailable: boolean; originBundleId: string; cdnBundleId: string;
     latestManifestRetrievedAt: string;
+    latestManifestAdvancedAt: string;
   };
   client: { bundleId: string; visualSmoke: { ok: boolean; artifacts: string[]; error?: string } };
 }

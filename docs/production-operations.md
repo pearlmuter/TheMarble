@@ -32,17 +32,33 @@ The health snapshot has this shape:
       "qualityFlags": [],
       "processingDurationMs": 40000
     },
-    "gmgsi": { "sameFields": "as satcorps" }
+    "gmgsi": {
+      "latestObservationAt": "2026-08-29T07:00:00Z",
+      "discoveredAt": "2026-08-29T07:42:00Z",
+      "expectedObservations": 1,
+      "missingObservations": 0,
+      "schemaFingerprint": "gmgsi-v2",
+      "expectedSchemaFingerprint": "gmgsi-v2",
+      "dimensions": { "width": 4096, "height": 2048 },
+      "expectedDimensions": { "width": 4096, "height": 2048 },
+      "corruptProducts": 0,
+      "coverageFraction": 0.95,
+      "qualityFlags": [],
+      "processingDurationMs": 42000
+    }
   },
   "transformation": { "ok": true, "durationMs": 18000 },
   "compositor": { "ok": true, "durationMs": 64000 },
   "publication": { "outcome": "published", "durationMs": 12000, "bundleId": "earth-current" },
-  "delivery": { "latestManifestRetrievedAt": "2026-08-29T07:40:00Z" },
+  "delivery": {
+    "latestManifestRetrievedAt": "2026-08-29T07:40:00Z",
+    "latestManifestAdvancedAt": "2026-08-29T07:00:00Z"
+  },
   "interSourceDisagreementFraction": 0.08
 }
 ```
 
-Each real provider object must contain the complete field set shown for SatCORPS. `publication.outcome` is healthy when it is `published` or `unchanged`. The versioned thresholds live in [`config/earth-production-policy.json`](../config/earth-production-policy.json).
+Each provider object must contain the complete field set shown above. `latestManifestRetrievedAt` measures delivery availability; `latestManifestAdvancedAt` is the publisher-maintained time when the bundle identity last advanced and is the timestamp used for content-freshness policy. Re-fetching an unchanged pointer therefore cannot hide stale content. `publication.outcome` is healthy when it is `published` or `unchanged`. The versioned thresholds live in [`config/earth-production-policy.json`](../config/earth-production-policy.json).
 
 ## Diagnoses and artifacts
 
@@ -69,7 +85,7 @@ This separation prevents an upstream delay from being reported as a renderer or 
 
 ## SatCORPS promotion
 
-GMGSI remains the operational cloud source until SatCORPS passes the complete soak policy. The default gate requires at least 21 days and 454 samples, then checks p95 discovery latency, missing observations, global coverage, corrupt products, schema and dimension stability, quality flags, and p95 disagreement against GMGSI. There is no manual preference switch in the selector.
+GMGSI remains the operational cloud source until SatCORPS passes the complete soak policy. The default gate requires at least 21 days and 454 unique samples with no evidence gap longer than two hours, then checks p95 discovery latency, missing observations, global coverage, corrupt products, actual schema and dimension transitions, quality flags, and p95 disagreement against GMGSI. The complete audit history is retained, while qualification evaluates the latest clean candidate within a 35-day rolling window; an outage, gap, or source-shape change resets the candidate, but cannot poison all future operation after 21 clean days. The report must carry the active policy version and every required threshold exactly once, and the publisher recomputes each result from the report metrics and active policy rather than trusting stored pass booleans. Truncated, altered, or obsolete reports are rejected. There is no manual preference switch in the selector.
 
 After a successful soak, pass the fresh report to the cloud publisher:
 
@@ -77,11 +93,13 @@ After a successful soak, pass the fresh report to the cloud publisher:
 npm run publish:clouds -- \
   --catalog <catalog.json> \
   --soak-report artifacts/production-health/diagnostics/satcorps-promotion.json \
+  --soak-history artifacts/production-health/soak.ndjson \
+  --soak-policy config/earth-production-policy.json \
   --python <venv-python> \
   --output <earth-state-directory>
 ```
 
-The report must still be valid and no more than 36 hours old. Missing, stale, malformed, or failing reports retain GMGSI automatically.
+The publisher recomputes the report from `--soak-history` and the active `--soak-policy`; the result must match exactly and be no more than 36 hours old. Missing, stale, malformed, altered, or failing evidence retains GMGSI automatically. If the monitor finds malformed NDJSON, it preserves the original as a timestamped `soak-history-corrupt-*.ndjson` diagnostic, recovers valid rows into a fresh atomic history file, emits a nonqualified promotion report, and fails the scheduled run.
 
 ## Recovery runbook
 
@@ -94,10 +112,10 @@ Never advance `latest.json` to an unverified candidate. Begin every recovery by 
 | Compositor crash | Restart the compositor, then retry publication. | No partial output becomes current. |
 | Corrupt output | Quarantine the candidate bundle. | Replace latest with last-known-good if the active pointer is no longer verified. |
 | Publication interruption | Retry publication from the last-known-good base. | The atomic pointer remains on a complete bundle. |
-| CDN failure | Restore delivery of the last-known-good bundle and compare CDN with origin. | Origin, CDN, and client converge on one bundle. |
+| CDN failure | Restore delivery of the last-known-good bundle and explicitly verify CDN/origin identity. | Origin, CDN, and client converge on one bundle; a no-op repair fails closed. |
 | Requested rollback | Atomically replace latest with the verified last-known-good document. | The previous bundle is active and re-verified. |
 
-The `createEarthProductionRecoveryController` module encodes and tests all seven paths. If an attempted repair throws or leaves an unverifiable latest pointer, it replaces latest with the verified last-known-good document and verifies that result again.
+The `createEarthProductionRecoveryController` module encodes and tests all seven paths. If an attempted repair throws, the latest pointer cannot be read, delivery remains inconsistent, or a valid but wrong bundle survives an explicit rollback, it replaces latest with the verified last-known-good document and verifies that exact identity and delivery again.
 
 ## Local diagnosis
 

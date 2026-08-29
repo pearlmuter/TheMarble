@@ -40,6 +40,7 @@ function healthySnapshot(overrides = {}) {
       originBundleId: 'earth-2026-08-29T07:00Z',
       cdnBundleId: 'earth-2026-08-29T07:00Z',
       latestManifestRetrievedAt: '2026-08-29T07:40:00Z',
+      latestManifestAdvancedAt: '2026-08-29T07:00:00Z',
     },
     client: {
       bundleId: 'earth-2026-08-29T07:00Z',
@@ -56,6 +57,7 @@ test('a scheduled health record preserves every source-to-client diagnostic and 
   assert.deepEqual(report.alerts, []);
   assert.deepEqual(report.metrics.providers.satcorps, {
     discoveryLatencyMinutes: 35,
+    temporalInvalid: false,
     missingObservations: 0,
     schemaDrift: false,
     dimensionsChanged: false,
@@ -68,7 +70,8 @@ test('a scheduled health record preserves every source-to-client diagnostic and 
   assert.equal(report.metrics.compositor.durationMs, 64_000);
   assert.equal(report.metrics.publication.outcome, 'published');
   assert.equal(report.metrics.delivery.cdnAvailable, true);
-  assert.equal(report.metrics.latestManifestAgeMinutes, 20);
+  assert.equal(report.metrics.latestManifestRetrievalAgeMinutes, 20);
+  assert.equal(report.metrics.latestBundleAgeMinutes, 60);
   assert.deepEqual(report.metrics.client.visualArtifacts, ['day.png', 'terminator.png', 'night.png']);
 });
 
@@ -87,6 +90,7 @@ test('alerts identify the failing production stage instead of collapsing every p
       originBundleId: 'earth-current',
       cdnBundleId: 'earth-old',
       latestManifestRetrievedAt: '2026-08-29T03:00:00Z',
+      latestManifestAdvancedAt: '2026-08-29T03:00:00Z',
     },
     client: { bundleId: 'earth-old', visualSmoke: { ok: false, artifacts: ['failed.png'], error: 'fallback visible' } },
   }), policy);
@@ -100,6 +104,30 @@ test('alerts identify the failing production stage instead of collapsing every p
     'client-currentness',
   ]));
   assert.equal(report.status, 'failing');
+});
+
+test('publication identity, content age, and impossible future telemetry cannot be reported healthy', () => {
+  const report = evaluateEarthProductionHealth(healthySnapshot({
+    providers: {
+      satcorps: provider({ latestObservationAt: '2026-08-29T08:10:00Z', discoveredAt: '2026-08-29T08:20:00Z' }),
+      gmgsi: provider(),
+    },
+    publication: { outcome: 'published', durationMs: 12_000, bundleId: 'earth-new-undelivered' },
+    delivery: {
+      originAvailable: true,
+      cdnAvailable: true,
+      originBundleId: 'earth-2026-08-29T07:00Z',
+      cdnBundleId: 'earth-2026-08-29T07:00Z',
+      latestManifestRetrievedAt: '2026-08-29T08:10:00Z',
+      latestManifestAdvancedAt: '2026-08-29T04:00:00Z',
+    },
+  }), policy);
+
+  assert.equal(report.status, 'failing');
+  assert.ok(report.alerts.some(alert => alert.code === 'provider-time-invalid'));
+  assert.ok(report.alerts.some(alert => alert.code === 'published-bundle-not-delivered'));
+  assert.ok(report.alerts.some(alert => alert.code === 'latest-content-stale'));
+  assert.ok(report.alerts.some(alert => alert.code === 'latest-retrieval-time-invalid'));
 });
 
 test('schema, dimension, corruption, coverage, and quality regressions remain explicit transformation diagnostics', () => {
@@ -123,4 +151,17 @@ test('schema, dimension, corruption, coverage, and quality regressions remain ex
   assert.equal(satcorps.coverageFraction, .82);
   assert.deepEqual(satcorps.qualityFlags, ['retrieval-quality-below-threshold']);
   assert.ok(report.alerts.some(alert => alert.stage === 'transformation' && alert.provider === 'satcorps'));
+});
+
+test('a bundle cannot claim advancement after the pointer was retrieved', () => {
+  const report = evaluateEarthProductionHealth(healthySnapshot({
+    delivery: {
+      originAvailable: true, cdnAvailable: true,
+      originBundleId: 'earth-2026-08-29T07:00Z', cdnBundleId: 'earth-2026-08-29T07:00Z',
+      latestManifestRetrievedAt: '2026-08-29T01:00:00Z',
+      latestManifestAdvancedAt: '2026-08-29T07:59:00Z',
+    },
+  }), policy);
+  assert.equal(report.status, 'failing');
+  assert.ok(report.alerts.some(alert => alert.code === 'latest-chronology-invalid'));
 });

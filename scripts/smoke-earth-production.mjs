@@ -37,18 +37,25 @@ async function main() {
         });
         page.on('pageerror', error => pageErrors.push(error.message));
         try {
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-          await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: 120_000 });
-          await page.waitForFunction(() => {
-            const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
-            return refresh === 'current' || refresh === 'failed';
-          }, undefined, { timeout: 120_000 });
-          await page.waitForTimeout(1_000);
+          try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+            await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: 120_000 });
+            await page.waitForFunction(() => {
+              const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
+              return refresh === 'current' || refresh === 'failed';
+            }, undefined, { timeout: 120_000 });
+            await page.waitForTimeout(1_000);
+          } catch (error) {
+            pageErrors.push(`Production view did not become ready: ${error.message ?? String(error)}`);
+          }
           const currentness = await page.locator('#earth-state-summary').evaluate(element => ({
             bundleId: element.getAttribute('data-bundle-id') ?? '',
             runtimeSource: element.getAttribute('data-runtime-source') ?? '',
             refresh: element.getAttribute('data-refresh') ?? '',
-          }));
+          })).catch(error => {
+            pageErrors.push(`Production currentness marker unavailable: ${error.message ?? String(error)}`);
+            return { bundleId: '', runtimeSource: '', refresh: '' };
+          });
           return {
             ...currentness,
             consoleErrors,

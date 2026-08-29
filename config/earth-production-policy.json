@@ -15,8 +15,11 @@
     "maximumLatestManifestAgeMinutes": 180
   },
   "soak": {
+    "version": "themarble-cloud-soak-v1",
     "minimumDurationDays": 21,
     "minimumSamples": 454,
+    "maximumSampleGapHours": 2,
+    "maximumEvaluationWindowDays": 35,
     "maximumP95DiscoveryLatencyMinutes": 90,
     "maximumMissingFraction": 0.02,
     "minimumMeanCoverageFraction": 0.9,

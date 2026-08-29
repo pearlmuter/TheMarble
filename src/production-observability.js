@@ -36,7 +36,7 @@ function dimensionsEqual(left, right) {
   return left.width === right.width && left.height === right.height;
 }
 
-function providerMetrics(provider, observation, rules) {
+function providerMetrics(provider, observation, rules, checkedAt) {
   record(observation, `providers.${provider}`);
   record(rules, `policy.providers.${provider}`);
   const latestObservationAt = timestamp(observation.latestObservationAt, `providers.${provider}.latestObservationAt`);
@@ -51,6 +51,7 @@ function providerMetrics(provider, observation, rules) {
   }
   return {
     discoveryLatencyMinutes: (discoveredAt - latestObservationAt) / 60_000,
+    temporalInvalid: latestObservationAt > discoveredAt || discoveredAt > checkedAt || latestObservationAt > checkedAt,
     missingObservations: number(observation.missingObservations, `providers.${provider}.missingObservations`),
     schemaDrift: string(observation.schemaFingerprint, `providers.${provider}.schemaFingerprint`)
       !== string(observation.expectedSchemaFingerprint, `providers.${provider}.expectedSchemaFingerprint`),
@@ -74,8 +75,11 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
   const providers = {};
   for (const provider of PROVIDERS) {
     const rules = policy.providers?.[provider];
-    const metrics = providerMetrics(provider, snapshot.providers?.[provider], rules);
+    const metrics = providerMetrics(provider, snapshot.providers?.[provider], rules, checkedAt);
     providers[provider] = metrics;
+    if (metrics.temporalInvalid) {
+      alerts.push(alert('upstream-provider-lateness', 'provider-time-invalid', `${provider} observation timestamps are future-dated or out of order`, { provider }));
+    }
     if (metrics.discoveryLatencyMinutes > number(rules.maximumDiscoveryLatencyMinutes, `policy.providers.${provider}.maximumDiscoveryLatencyMinutes`)
       || metrics.missingObservations > number(rules.maximumMissingObservations, `policy.providers.${provider}.maximumMissingObservations`)) {
       alerts.push(alert('upstream-provider-lateness', 'provider-late-or-missing', `${provider} observations are late or missing`, { provider }));
@@ -111,10 +115,25 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
   if (!originAvailable || !cdnAvailable || delivery.originBundleId !== delivery.cdnBundleId) {
     alerts.push(alert('delivery', 'latest-delivery-failed', 'Origin and CDN do not expose the same available latest bundle'));
   }
-  const latestManifestAgeMinutes = (checkedAt - timestamp(delivery.latestManifestRetrievedAt, 'delivery.latestManifestRetrievedAt')) / 60_000;
+  if (publication.bundleId !== delivery.originBundleId) {
+    alerts.push(alert('delivery', 'published-bundle-not-delivered', 'The publisher, origin, and CDN do not expose one bundle identity'));
+  }
+  const latestManifestRetrievedAt = timestamp(delivery.latestManifestRetrievedAt, 'delivery.latestManifestRetrievedAt');
+  const latestManifestAdvancedAt = timestamp(delivery.latestManifestAdvancedAt, 'delivery.latestManifestAdvancedAt');
+  const latestManifestRetrievalAgeMinutes = (checkedAt - latestManifestRetrievedAt) / 60_000;
+  const latestBundleAgeMinutes = (checkedAt - latestManifestAdvancedAt) / 60_000;
+  if (latestManifestRetrievalAgeMinutes < 0) {
+    alerts.push(alert('client-currentness', 'latest-retrieval-time-invalid', 'The latest-pointer retrieval time is in the future'));
+  }
+  if (latestManifestAdvancedAt > latestManifestRetrievedAt) {
+    alerts.push(alert('publication', 'latest-chronology-invalid', 'The latest bundle claims advancement after the pointer was retrieved'));
+  } else if (latestBundleAgeMinutes < 0) {
+    alerts.push(alert('publication', 'latest-advancement-time-invalid', 'The latest bundle advancement time is in the future'));
+  } else if (latestBundleAgeMinutes > number(policy.maximumLatestManifestAgeMinutes, 'policy.maximumLatestManifestAgeMinutes')) {
+    alerts.push(alert('client-currentness', 'latest-content-stale', 'The delivered latest bundle has not advanced within policy'));
+  }
   const visualOk = boolean(visualSmoke.ok, 'client.visualSmoke.ok');
-  if (latestManifestAgeMinutes > number(policy.maximumLatestManifestAgeMinutes, 'policy.maximumLatestManifestAgeMinutes')
-    || client.bundleId !== delivery.originBundleId || !visualOk) {
+  if (client.bundleId !== delivery.originBundleId || !visualOk) {
     alerts.push(alert('client-currentness', 'client-not-current', visualSmoke.error ?? 'Client is stale or visual smoke failed'));
   }
 
@@ -137,7 +156,8 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
         originBundleId: string(delivery.originBundleId, 'delivery.originBundleId'),
         cdnBundleId: string(delivery.cdnBundleId, 'delivery.cdnBundleId'),
       },
-      latestManifestAgeMinutes,
+      latestManifestRetrievalAgeMinutes,
+      latestBundleAgeMinutes,
       client: {
         bundleId: string(client.bundleId, 'client.bundleId'),
         visualSmokeOk: visualOk,

@@ -68,11 +68,16 @@ async function readCatalog(value) {
   };
 }
 
-async function readSatcorpsPromotion(path, now) {
+async function readSatcorpsPromotion(path, historyPath, policyPath, now) {
   if (!path) return false;
   try {
-    const report = JSON.parse(await readFile(resolve(path), 'utf8'));
-    return cloudProviderPromotionIsCurrent(report, { now, maximumAgeHours: 36 });
+    const [report, historySource, policyDocument] = await Promise.all([
+      readFile(resolve(path), 'utf8').then(JSON.parse),
+      readFile(resolve(historyPath), 'utf8'),
+      readFile(resolve(policyPath), 'utf8').then(JSON.parse),
+    ]);
+    const samples = historySource.split('\n').filter(line => line.trim() !== '').map(JSON.parse);
+    return cloudProviderPromotionIsCurrent(report, { now, maximumAgeHours: 36, policy: policyDocument.soak, samples });
   } catch (error) {
     process.stderr.write(`SatCORPS soak report is unavailable or invalid; retaining GMGSI: ${error.message}\n`);
     return false;
@@ -214,7 +219,12 @@ async function main() {
   const outputDirectory = resolve(options.output ?? 'public/earth-state');
   const publicRoot = resolve(options['public-root'] ?? 'public');
   const python = options.python ?? 'python3';
-  const satcorpsPromoted = await readSatcorpsPromotion(options['soak-report'], retrievedAt);
+  const satcorpsPromoted = await readSatcorpsPromotion(
+    options['soak-report'],
+    options['soak-history'] ?? 'artifacts/production-health/soak.ndjson',
+    options['soak-policy'] ?? 'config/earth-production-policy.json',
+    retrievedAt,
+  );
   const baseManifestPath = await resolveEarthStateBaseManifest({
     explicitPath: options['base-manifest'],
     outputDirectory,

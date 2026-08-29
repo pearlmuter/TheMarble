@@ -15,6 +15,7 @@ export interface LastKnownGoodEarthPublication {
 export function createEarthProductionRecoveryController(adapters: {
   readLatest(): Promise<{ bundleId: string; [key: string]: unknown }>;
   verifyBundle(document: { bundleId: string; [key: string]: unknown }): Promise<boolean>;
+  verifyDelivery(bundleId: string): Promise<boolean>;
   restartCompositor(): Promise<void>;
   retryPublication(baseBundleId: string): Promise<void>;
   quarantineCandidate(bundleId: string): Promise<void>;

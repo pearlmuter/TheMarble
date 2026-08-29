@@ -13,7 +13,7 @@ function requireAdapter(adapters, name) {
 }
 
 export function createEarthProductionRecoveryController(adapters) {
-  for (const name of ['readLatest', 'verifyBundle', 'restartCompositor', 'retryPublication', 'quarantineCandidate', 'restoreDelivery', 'replaceLatest']) {
+  for (const name of ['readLatest', 'verifyBundle', 'verifyDelivery', 'restartCompositor', 'retryPublication', 'quarantineCandidate', 'restoreDelivery', 'replaceLatest']) {
     requireAdapter(adapters, name);
   }
 
@@ -49,13 +49,33 @@ export function createEarthProductionRecoveryController(adapters) {
         actionError = error;
       }
 
-      let latest = await adapters.readLatest();
-      const latestVerified = await adapters.verifyBundle(latest).catch(() => false);
-      if (actionError || !latestVerified) {
-        await adapters.replaceLatest(lastKnownGood.latestDocument);
+      let latest;
+      let inspectionError;
+      let latestVerified = false;
+      try {
         latest = await adapters.readLatest();
-        if (!await adapters.verifyBundle(latest) || latest.bundleId !== lastKnownGood.bundleId) {
-          throw new AggregateError(actionError ? [actionError] : [], 'Production rollback could not restore the verified last-known-good Earth');
+        latestVerified = await adapters.verifyBundle(latest);
+      } catch (error) {
+        inspectionError = error;
+      }
+      let deliveryVerified = latest
+        ? await adapters.verifyDelivery(latest.bundleId).catch(() => false)
+        : false;
+      const exactLastKnownGoodRequired = incident.kind === 'rollback' || incident.kind === 'cdn-failure';
+      const exactLastKnownGoodMissing = exactLastKnownGoodRequired && latest?.bundleId !== lastKnownGood.bundleId;
+      if (actionError || inspectionError || !latestVerified || !deliveryVerified || exactLastKnownGoodMissing) {
+        await adapters.replaceLatest(lastKnownGood.latestDocument);
+        await adapters.restoreDelivery(lastKnownGood.bundleId);
+        try {
+          latest = await adapters.readLatest();
+          latestVerified = await adapters.verifyBundle(latest);
+          deliveryVerified = await adapters.verifyDelivery(lastKnownGood.bundleId);
+        } catch (error) {
+          inspectionError = error;
+          latestVerified = false;
+        }
+        if (!latestVerified || latest.bundleId !== lastKnownGood.bundleId || !deliveryVerified) {
+          throw new AggregateError([actionError, inspectionError].filter(Boolean), 'Production recovery could not restore verified last-known-good publication and delivery');
         }
       }
 
@@ -66,7 +86,7 @@ export function createEarthProductionRecoveryController(adapters) {
           : retained ? 'retained-last-known-good' : 'recovered',
         activeBundleId: latest.bundleId,
         incident: incident.kind,
-        ...(actionError ? { recoveryError: actionError.message ?? String(actionError) } : {}),
+        ...(actionError || inspectionError ? { recoveryError: (actionError ?? inspectionError).message ?? String(actionError ?? inspectionError) } : {}),
       };
     },
   };
