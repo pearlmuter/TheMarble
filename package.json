@@ -14,6 +14,8 @@
     "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
     "publish:rolling-surface": "node scripts/publish-rolling-surface-earth-state.mjs",
     "publish:presentation-tiers": "node scripts/publish-presentation-tiers.mjs",
+    "smoke:production": "node scripts/smoke-earth-production.mjs",
+    "monitor:production": "node scripts/monitor-earth-production.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
     "@types/three": "^0.167.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.5.4",
     "vite": "^5.4.0"
   }

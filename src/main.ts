@@ -189,6 +189,9 @@ function renderEarthStateProvenance(now: Date, force = false) {
   activeEarthStateStatus = presentation.stateLabel;
   provenanceState.textContent = presentation.stateLabel;
   earthStateSummary.textContent = presentation.accessibleSummary;
+  earthStateSummary.dataset.bundleId = activeEarthStateManifest.bundleId;
+  earthStateSummary.dataset.runtimeSource = earthStateRuntime.source;
+  earthStateSummary.dataset.refresh = earthStateRuntime.refresh;
   const sectionElements = presentation.sections.map(section => {
     const element = document.createElement('section');
     element.className = `provenance-section${['clouds', 'datasets', 'attribution'].includes(section.id) ? ' provenance-section-wide' : ''}`;

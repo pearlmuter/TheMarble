@@ -23,6 +23,7 @@ export function selectCloudProviderSequence(options: {
   sequences: CloudProviderSequence[];
   retrievedAt: string;
   lastPublishedValidAt?: string;
+  satcorpsPromoted?: boolean;
 }): {
   provider: CloudProvider;
   frames: [CloudProviderFrame, CloudProviderFrame];
