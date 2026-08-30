@@ -8,6 +8,10 @@ test('the operational cloud publisher prefers SatCORPS and invokes GMGSI on reje
   assert.match(source, /addSatcorpsCloudSequence/);
   assert.match(source, /createEarthStatePublisher/);
   assert.match(source, /publish-gmgsi-earth-state\.mjs/);
+  assert.match(source, /cloudProviderPromotionIsCurrent/);
+  assert.match(source, /soak-report/);
+  assert.match(source, /soak-history/);
+  assert.match(source, /satcorpsPromoted/);
   assert.match(source, /catch \(satcorpsError\)/);
   assert.match(source, /await publishGmgsiFallback/);
 });

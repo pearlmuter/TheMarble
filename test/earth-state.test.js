@@ -247,6 +247,31 @@ test('a complete Earth-state manifest activates one coherent scene asset set', a
   assert.equal(activator.current, activated);
 });
 
+test('a presentation manifest must match its tier index reference before any asset loads', async () => {
+  const manifest = fixtureManifest();
+  const document = jsonDocumentFixture(manifest);
+  let assetLoads = 0;
+  const activator = createEarthStateActivator({
+    loadDocument: async () => document,
+    loadAsset: async () => {
+      assetLoads += 1;
+      return loaded('not reached');
+    },
+  });
+  const reference = {
+    href: './manifest.json', mediaType: 'application/json', byteLength: document.bytes.byteLength,
+    immutable: true, checksum: { algorithm: 'sha256', value: '0'.repeat(64) },
+  };
+
+  await assert.rejects(
+    activator.activate('https://example.test/presentations/8k/manifest.json', reference),
+    /checksum mismatch for presentation\.manifest/,
+  );
+
+  assert.equal(assetLoads, 0);
+  assert.equal(activator.current, undefined);
+});
+
 test('an hourly cloud sequence activates two complete observation states with truthful windows', async () => {
   const manifest = fixtureManifest();
   addHourlyCloudSequence(manifest);

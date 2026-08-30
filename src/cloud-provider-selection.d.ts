@@ -1,5 +1,7 @@
 export type CloudProvider = 'satcorps' | 'gmgsi';
 
+export function cloudProviderMaxAgeSeconds(provider: CloudProvider): number;
+
 export interface CloudProviderFrame {
   provider: CloudProvider;
   validAt: string;
@@ -21,6 +23,7 @@ export function selectCloudProviderSequence(options: {
   sequences: CloudProviderSequence[];
   retrievedAt: string;
   lastPublishedValidAt?: string;
+  satcorpsPromoted?: boolean;
 }): {
   provider: CloudProvider;
   frames: [CloudProviderFrame, CloudProviderFrame];

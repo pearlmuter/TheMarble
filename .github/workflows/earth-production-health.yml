@@ -1,0 +1,81 @@
+name: Earth production health
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: earth-production-health
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/cache/restore@v4
+        with:
+          path: artifacts/production-health/soak.ndjson
+          key: ${{ runner.os }}-earth-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-earth-soak-
+      - name: Build monitored client
+        env:
+          VITE_EARTH_STATE_LATEST_URL: ${{ vars.THEMARBLE_CDN_LATEST_URL }}
+        run: npm run build
+      - name: Start monitored client
+        run: npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/themarble-preview.log 2>&1 &
+      - name: Wait for monitored client
+        run: |
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:4173/ > /dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+      - name: Capture fixed production views
+        id: smoke
+        continue-on-error: true
+        run: npm run smoke:production -- --app-url http://127.0.0.1:4173/ --output artifacts/production-health/visual-smoke
+      - name: Evaluate production health and provider soak
+        id: monitor
+        if: always()
+        continue-on-error: true
+        run: >-
+          npm run monitor:production --
+          --snapshot "${{ vars.THEMARBLE_HEALTH_SNAPSHOT_URL }}"
+          --origin-latest "${{ vars.THEMARBLE_ORIGIN_LATEST_URL }}"
+          --cdn-latest "${{ vars.THEMARBLE_CDN_LATEST_URL }}"
+          --smoke-report artifacts/production-health/visual-smoke/smoke-report.json
+          --policy config/earth-production-policy.json
+          --history artifacts/production-health/soak.ndjson
+          --output artifacts/production-health/diagnostics
+      - name: Persist provider soak history
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/production-health/soak.ndjson
+          key: ${{ runner.os }}-earth-soak-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Retain diagnostics and visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: earth-production-health-${{ github.run_id }}
+          path: artifacts/production-health
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Enforce production health
+        if: always()
+        run: |
+          test "${{ steps.smoke.outcome }}" = success
+          test "${{ steps.monitor.outcome }}" = success

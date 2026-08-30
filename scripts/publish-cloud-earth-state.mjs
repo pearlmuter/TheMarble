@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { selectCloudProviderSequence } from '../src/cloud-provider-selection.js';
+import { cloudProviderPromotionIsCurrent } from '../src/cloud-provider-soak.js';
 import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
 import { resolveEarthStateBaseManifest } from '../src/earth-state-publication-base.js';
 import { createFilePublicationStore } from '../src/earth-state-publication-file-store.js';
@@ -67,6 +68,22 @@ async function readCatalog(value) {
   };
 }
 
+async function readSatcorpsPromotion(path, historyPath, policyPath, now) {
+  if (!path) return false;
+  try {
+    const [report, historySource, policyDocument] = await Promise.all([
+      readFile(resolve(path), 'utf8').then(JSON.parse),
+      readFile(resolve(historyPath), 'utf8'),
+      readFile(resolve(policyPath), 'utf8').then(JSON.parse),
+    ]);
+    const samples = historySource.split('\n').filter(line => line.trim() !== '').map(JSON.parse);
+    return cloudProviderPromotionIsCurrent(report, { now, maximumAgeHours: 36, policy: policyDocument.soak, samples });
+  } catch (error) {
+    process.stderr.write(`SatCORPS soak report is unavailable or invalid; retaining GMGSI: ${error.message}\n`);
+    return false;
+  }
+}
+
 async function existingValidAt(outputDirectory) {
   try {
     const latest = JSON.parse(await readFile(join(outputDirectory, 'latest.json'), 'utf8'));
@@ -122,11 +139,12 @@ async function composeFrame({ frame, index, python, stage }) {
   };
 }
 
-async function publishSatcorps({ baseManifestPath, outputDirectory, publicRoot, python, retrievedAt, catalog }) {
+async function publishSatcorps({ baseManifestPath, outputDirectory, publicRoot, python, retrievedAt, catalog, satcorpsPromoted }) {
   const selection = selectCloudProviderSequence({
     sequences: catalog.sequences,
     retrievedAt,
     lastPublishedValidAt: await existingValidAt(outputDirectory),
+    satcorpsPromoted,
   });
   if (selection.provider !== 'satcorps') throw new Error('No usable SatCORPS sequence was selected');
   if (!selection.publish) return { status: 'unchanged', validAt: selection.frames[1].validAt };
@@ -201,6 +219,12 @@ async function main() {
   const outputDirectory = resolve(options.output ?? 'public/earth-state');
   const publicRoot = resolve(options['public-root'] ?? 'public');
   const python = options.python ?? 'python3';
+  const satcorpsPromoted = await readSatcorpsPromotion(
+    options['soak-report'],
+    options['soak-history'] ?? 'artifacts/production-health/soak.ndjson',
+    options['soak-policy'] ?? 'config/earth-production-policy.json',
+    retrievedAt,
+  );
   const baseManifestPath = await resolveEarthStateBaseManifest({
     explicitPath: options['base-manifest'],
     outputDirectory,
@@ -215,6 +239,7 @@ async function main() {
       python,
       retrievedAt,
       catalog: await readCatalog(options.catalog),
+      satcorpsPromoted,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (satcorpsError) {

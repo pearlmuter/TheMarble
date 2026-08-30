@@ -2,6 +2,7 @@ const MEDIA_TYPE_EXTENSIONS = Object.freeze({
   'application/json': 'json',
   'image/jpeg': 'jpg',
   'image/png': 'png',
+  'image/ktx2': 'ktx2',
 });
 
 export function earthStateExtensionForMediaType(mediaType) {

@@ -1,9 +1,19 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import {
+  celestialSceneFrameAt,
+  EARTH_EQUATORIAL_RADIUS_KM,
+  MOON_EQUATORIAL_RADIUS_KM,
+  SUN_EQUATORIAL_RADIUS_KM,
+} from './astronomical-state.js';
+import { createOneTimeInertialCameraPlacement } from './inertial-camera.js';
+import type { FixedSceneView } from './inertial-camera.js';
+import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
+import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
-import { formatCloudGapStatus } from './cloud-gap-status.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
-import { activateEarthStateAtStartup, createEarthStateBundleCache } from './earth-state-cache.js';
+import { activateEarthStateAtStartup, activateEarthStateCacheCandidate, createEarthStateBundleCache } from './earth-state-cache.js';
 import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
 import { parseEarthStateJson } from './earth-state-codec.js';
 import { loadEarthStateJsonDocument } from './earth-state-document.js';
@@ -11,9 +21,13 @@ import { createIndexedDbEarthStateStorage } from './earth-state-indexeddb.js';
 import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene.js';
 import type { HipparcosPayload } from './earth-state-scene.js';
 import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
-import { formatRollingSurfaceStatus } from './rolling-surface-status.js';
 import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
+import { buildEarthStateProvenancePresentation } from './earth-state-provenance.js';
+import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
+import { createProvenanceDisclosure } from './provenance-disclosure.js';
+import { createEarthStatePresentationActivator } from './earth-state-presentation.js';
+import type { EarthStatePresentationCapabilities, EarthStatePresentationTier } from './earth-state-presentation.js';
 import { createSeasonalSurfaceController } from './seasonal-surface-controller.js';
 import type { SeasonalPair } from './seasonal-surface-controller.js';
 import './style.css';
@@ -27,6 +41,16 @@ type DeferredSceneTexture = {
 };
 type LoadedSceneAsset = THREE.Texture | HipparcosPayload | DeferredSceneTexture;
 type PreparedSeasonalSurface = SeasonalPair<THREE.Texture, LoadedSceneAsset>;
+type PreparedEarthStateScene = {
+  active: ActivatedEarthState<LoadedSceneAsset>;
+  seasonalSurface: PreparedSeasonalSurface;
+};
+type EarthStatePresentationQualification = {
+  shaderCompilationMs: number;
+  sustainedFps: number;
+  benchmarkWidth: number;
+  benchmarkHeight: number;
+};
 type SceneEarthStateLoaders = {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
   loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
@@ -53,13 +77,33 @@ function verifyTextureDimensions(map: THREE.Texture, descriptor: { dimensions?: 
   verifyImageDimensions(map.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number }, descriptor, name);
 }
 
+function verifyKtx2Dimensions(bytes: Uint8Array, descriptor: { dimensions?: { width: number; height: number } }, name: string) {
+  const identifier = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.byteLength < 68 || identifier.some((value, index) => bytes[index] !== value)) {
+    throw new Error(`Earth-state KTX2 asset is malformed for ${name}`);
+  }
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  verifyImageDimensions({ width: header.getUint32(20, true), height: header.getUint32(24, true) }, descriptor, name);
+}
+
 const canvas = document.querySelector<HTMLCanvasElement>('#globe')!;
 const clock = document.querySelector<HTMLElement>('#clock')!;
 const sunStatus = document.querySelector<HTMLElement>('#sun-status')!;
+const provenanceDisclosureRoot = document.querySelector<HTMLElement>('#provenance-disclosure')!;
+const provenanceTrigger = document.querySelector<HTMLButtonElement>('#provenance-trigger')!;
+const provenancePanel = document.querySelector<HTMLElement>('#provenance-panel')!;
+const provenanceState = document.querySelector<HTMLElement>('#provenance-state')!;
+const provenanceSections = document.querySelector<HTMLElement>('#provenance-sections')!;
+const earthStateSummary = document.querySelector<HTMLElement>('#earth-state-summary')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
+createProvenanceDisclosure({ root: provenanceDisclosureRoot, trigger: provenanceTrigger, panel: provenancePanel, ownerDocument: document });
 const sceneParameters = new URLSearchParams(window.location.search);
-const fixedSceneTime = sceneParameters.get('time');
-const fixedSceneView = sceneParameters.get('view');
+const goldenScene = orbitalGoldenScene(sceneParameters.get('golden'));
+const fixedSceneTime = goldenScene?.time ?? sceneParameters.get('time');
+const requestedSceneView = sceneParameters.get('view');
+const fixedSceneView: FixedSceneView = requestedSceneView === 'day' || requestedSceneView === 'terminator'
+  ? requestedSceneView
+  : 'night';
 function sceneNow() {
   if (fixedSceneTime) {
     const date = new Date(fixedSceneTime);
@@ -77,7 +121,7 @@ renderer.toneMappingExposure = 1.08;
 
 const scene = new THREE.Scene();
 // A full-Earth orbital view: Earth stays jewel-sized while the Sun retains its true 0.53° disc.
-const camera = new THREE.PerspectiveCamera(22, window.innerWidth / window.innerHeight, .1, 30000);
+const camera = new THREE.PerspectiveCamera(goldenScene?.fovDegrees ?? 22, window.innerWidth / window.innerHeight, .1, 30000);
 camera.position.set(6, 1.4, 3.6);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -90,6 +134,9 @@ const planet = new THREE.Group();
 scene.add(planet);
 const loader = new THREE.TextureLoader();
 loader.setCrossOrigin('anonymous');
+const ktx2Loader = new KTX2Loader();
+ktx2Loader.setTranscoderPath('/basis/');
+ktx2Loader.detectSupport(renderer);
 
 function solidTexture(red: number, green: number, blue: number, alpha = 255) {
   const map = new THREE.DataTexture(new Uint8Array([red, green, blue, alpha]), 1, 1, THREE.RGBAFormat);
@@ -123,8 +170,44 @@ let seasonalSurfaceController: {
   update(date: Date): void;
 };
 let cloudObservationController: ReturnType<typeof createCloudObservationController<THREE.Texture>>;
-let weatherFeed = (_now: Date) => 'loading bundled Earth state';
+let qualifyPreparedEarthStateRendering: (
+  prepared: PreparedEarthStateScene,
+  tier: EarthStatePresentationTier,
+) => Promise<EarthStatePresentationQualification>;
+let activeEarthStateStatus = 'Loading bundled Earth state';
 let activeBundleId: string | undefined;
+let activeEarthStateManifest: ActivatedEarthState<LoadedSceneAsset>['manifest'] | undefined;
+let earthStateRuntime: EarthStateRuntimeProvenance = { source: 'bundled-fallback', refresh: 'checking' };
+let renderedProvenanceMinute = '';
+
+function renderEarthStateProvenance(now: Date, force = false) {
+  if (!activeEarthStateManifest) return;
+  const minute = now.toISOString().slice(0, 16);
+  if (!force && minute === renderedProvenanceMinute) return;
+  renderedProvenanceMinute = minute;
+  const presentation = buildEarthStateProvenancePresentation({ manifest: activeEarthStateManifest, now, runtime: earthStateRuntime });
+  activeEarthStateStatus = presentation.stateLabel;
+  provenanceState.textContent = presentation.stateLabel;
+  earthStateSummary.textContent = presentation.accessibleSummary;
+  earthStateSummary.dataset.bundleId = activeEarthStateManifest.bundleId;
+  earthStateSummary.dataset.runtimeSource = earthStateRuntime.source;
+  earthStateSummary.dataset.refresh = earthStateRuntime.refresh;
+  const sectionElements = presentation.sections.map(section => {
+    const element = document.createElement('section');
+    element.className = `provenance-section${['clouds', 'datasets', 'attribution'].includes(section.id) ? ' provenance-section-wide' : ''}`;
+    const heading = document.createElement('h2');
+    heading.textContent = section.title;
+    const list = document.createElement('ul');
+    for (const item of section.items) {
+      const row = document.createElement('li');
+      row.textContent = item;
+      list.append(row);
+    }
+    element.append(heading, list);
+    return element;
+  });
+  provenanceSections.replaceChildren(...sectionElements);
+}
 
 async function decodeSceneAsset(
   { name, descriptor }: EarthStateAssetRequest,
@@ -156,7 +239,9 @@ async function decodeSceneAsset(
     : Uint8Array.from(bytes);
   const objectUrl = URL.createObjectURL(new Blob([imageBytes], { type: descriptor.asset.mediaType }));
   try {
-    const map = await loader.loadAsync(objectUrl);
+    const map = descriptor.asset.mediaType === 'image/ktx2'
+      ? await ktx2Loader.loadAsync(objectUrl)
+      : await loader.loadAsync(objectUrl);
     verifyTextureDimensions(map, descriptor, name);
     if (descriptor.colorSpace === 'srgb') map.colorSpace = THREE.SRGBColorSpace;
     if ('textureSemantics' in descriptor && descriptor.textureSemantics.sampling === 'nearest') {
@@ -177,7 +262,9 @@ async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes
     ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) as Uint8Array<ArrayBuffer>
     : Uint8Array.from(bytes);
   const blob = new Blob([imageBytes], { type: mediaType });
-  if ('createImageBitmap' in globalThis) {
+  if (mediaType === 'image/ktx2') {
+    verifyKtx2Dimensions(bytes, descriptor, `${name} deferred KTX2 image`);
+  } else if ('createImageBitmap' in globalThis) {
     const bitmap = await createImageBitmap(blob);
     try {
       verifyImageDimensions(bitmap, descriptor, `${name} deferred image`);
@@ -197,13 +284,19 @@ async function createDeferredSceneTexture(request: EarthStateAssetRequest, bytes
   return { kind: 'deferred-scene-texture', request, bytes, mediaType } satisfies DeferredSceneTexture;
 }
 
+function shouldDeferSceneTexture(request: EarthStateAssetRequest) {
+  return request.role === 'seasonal-layer-frame'
+    || (request.role === 'layer' && request.name === 'surfaceAlbedo'
+      && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite);
+}
+
 async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
   const { descriptor, url } = request;
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
+  if (shouldDeferSceneTexture(request)) {
     return { value: await createDeferredSceneTexture(request, bytes, mediaType), bytes, mediaType };
   }
   const loaded = await decodeSceneAsset(request, bytes, mediaType);
@@ -237,7 +330,7 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
     },
     async loadAsset(request) {
       const entry = candidate.read(request.url);
-      if (request.role === 'seasonal-layer-frame' || (request.role === 'layer' && request.name === 'surfaceAlbedo' && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite)) {
+      if (shouldDeferSceneTexture(request)) {
         return {
           value: await createDeferredSceneTexture(request, entry.bytes, entry.mediaType),
           bytes: entry.bytes,
@@ -249,8 +342,9 @@ function createCachedEarthStateLoaders(candidate: EarthStateCacheCandidate): Sce
 }
 
 const isTauriRuntime = '__TAURI_INTERNALS__' in window;
+const DESKTOP_EARTH_STATE_CACHE_BYTES = 384 * 1024 * 1024;
 const desktopEarthStateCache: EarthStateBundleCache | undefined = isTauriRuntime && 'indexedDB' in globalThis
-  ? createEarthStateBundleCache({ storage: createIndexedDbEarthStateStorage() })
+  ? createEarthStateBundleCache({ storage: createIndexedDbEarthStateStorage(), maxBytes: DESKTOP_EARTH_STATE_CACHE_BYTES })
   : undefined;
 const bundledEarthStateLoaders = createNetworkEarthStateLoaders();
 let latestCapture: Map<string, EarthStateCacheEntry> | undefined;
@@ -259,6 +353,111 @@ let currentEarthStateLoaders = bundledEarthStateLoaders;
 const earthStateActivator = createEarthStateActivator<LoadedSceneAsset>({
   loadDocument: (url, options) => currentEarthStateLoaders.loadDocument(url, options),
   loadAsset: (request, options) => currentEarthStateLoaders.loadAsset(request, options),
+});
+
+function supportsGpuCompressedBasisTarget() {
+  if (renderer.capabilities.isWebGL2) return true;
+  const context = renderer.getContext();
+  return ['WEBGL_compressed_texture_astc', 'EXT_texture_compression_bptc', 'WEBGL_compressed_texture_etc', 'WEBGL_compressed_texture_s3tc']
+    .some(name => context.getExtension(name) !== null);
+}
+
+function measureSustainedFrameRate(sampleCount = 12) {
+  return new Promise<number>(resolve => {
+    const samples: number[] = [];
+    const sample = (time: number) => {
+      samples.push(time);
+      if (samples.length < sampleCount) requestAnimationFrame(sample);
+      else resolve((samples.length - 1) * 1000 / (samples.at(-1)! - samples[0]));
+    };
+    requestAnimationFrame(sample);
+  });
+}
+
+async function measurePresentationCapabilities(): Promise<EarthStatePresentationCapabilities> {
+  const navigatorWithSignals = navigator as Navigator & {
+    deviceMemory?: number;
+    connection?: { downlink?: number };
+  };
+  const mebibyte = 1024 * 1024;
+  const deviceMemoryGiB = navigatorWithSignals.deviceMemory;
+  const decodedGpuMemoryBudgetBytes = deviceMemoryGiB
+    ? Math.max(256 * mebibyte, Math.min(768 * mebibyte, Math.floor(deviceMemoryGiB * 1024 * mebibyte * .1)))
+    : renderer.capabilities.maxTextureSize >= 16384 ? 640 * mebibyte : 256 * mebibyte;
+  const downlinkMbps = navigatorWithSignals.connection?.downlink;
+  const transferBudgetBytes = downlinkMbps && downlinkMbps > 0
+    ? Math.max(64 * mebibyte, Math.floor(downlinkMbps * 1_000_000 / 8 * 15))
+    : isTauriRuntime ? 192 * mebibyte : 80 * mebibyte;
+  let cacheBudgetBytes = Number.MAX_SAFE_INTEGER;
+  if (isTauriRuntime) {
+    cacheBudgetBytes = DESKTOP_EARTH_STATE_CACHE_BYTES;
+    try {
+      const estimate = await navigator.storage?.estimate();
+      if (estimate?.quota !== undefined) {
+        cacheBudgetBytes = Math.max(1, Math.min(cacheBudgetBytes, estimate.quota - (estimate.usage ?? 0)));
+      }
+    } catch {
+      // The explicit desktop cap remains the safe criterion when quota estimation is unavailable.
+    }
+  }
+  const measuredSustainedFps = await measureSustainedFrameRate();
+  return {
+    maxTextureSize: renderer.capabilities.maxTextureSize,
+    basisUniversal: supportsGpuCompressedBasisTarget(),
+    decodedGpuMemoryBudgetBytes,
+    transferBudgetBytes,
+    cacheBudgetBytes,
+    measuredSustainedFps,
+  };
+}
+
+const presentationCapabilities = measurePresentationCapabilities();
+const earthStatePresentationActivator = createEarthStatePresentationActivator({
+  async loadIndex(url, options) {
+    return (await remoteEarthStateLoaders.loadDocument(url, options)).value;
+  },
+  async prepareTier({ manifestUrl, tier }, options) {
+    const capture = new Map<string, EarthStateCacheEntry>();
+    latestCapture = capture;
+    let active: ActivatedEarthState<LoadedSceneAsset> | undefined;
+    let prepared: PreparedEarthStateScene | undefined;
+    try {
+      active = validateRenderableEarthState(await activateWithLoaders(
+        remoteEarthStateLoaders,
+        () => earthStateActivator.activate(manifestUrl, tier.manifest),
+      ));
+      const surfaceDimensions = active.manifest.layers.surfaceAlbedo.dimensions;
+      if (surfaceDimensions.width !== tier.dimensions.width || surfaceDimensions.height !== tier.dimensions.height) {
+        throw new Error(`Earth presentation ${tier.id} surface dimensions do not match its tier`);
+      }
+      const transferBytes = [...capture.values()].reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+      if (transferBytes > tier.budgets.transferBytes) throw new Error(`Earth presentation ${tier.id} exceeds its transfer budget`);
+      prepared = await prepareActivatedEarthState(active);
+      ensurePreparedEarthStateGpuResident(prepared);
+      if (options.signal.aborted) throw options.signal.reason;
+      return { active, capture, manifestUrl, prepared };
+    } catch (error) {
+      if (prepared) disposeEarthStateTextures(prepared);
+      else if (active) disposeEarthStateTextures(active);
+      throw error;
+    }
+  },
+  async qualifyTier({ tier, activationStartedAt }, value, options) {
+    const qualification = await qualifyPreparedEarthStateRendering(value.prepared, tier);
+    if (qualification.shaderCompilationMs > tier.budgets.shaderCompilationMs) {
+      throw new Error(`Earth presentation ${tier.id} exceeds its shader compilation budget`);
+    }
+    if (qualification.sustainedFps < tier.budgets.minimumSustainedFps) {
+      throw new Error(`Earth presentation ${tier.id} sustains ${qualification.sustainedFps.toFixed(1)} FPS, below its ${tier.budgets.minimumSustainedFps} FPS budget`);
+    }
+    if (performance.now() - activationStartedAt > tier.budgets.timeToFirstCoherentGlobeMs) {
+      throw new Error(`Earth presentation ${tier.id} exceeds its time-to-first-globe budget`);
+    }
+    if (options.signal.aborted) throw options.signal.reason;
+  },
+  disposeTier(value) {
+    disposeEarthStateTextures(value.prepared);
+  },
 });
 
 async function activateWithLoaders<Result>(loaders: SceneEarthStateLoaders, activate: () => Promise<Result>) {
@@ -283,13 +482,62 @@ function isDeferredSceneTexture(asset: LoadedSceneAsset): asset is DeferredScene
   return typeof asset === 'object' && asset !== null && 'kind' in asset && asset.kind === 'deferred-scene-texture';
 }
 
-async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+async function prepareActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>): Promise<PreparedEarthStateScene> {
   const selectedSurface = selectEarthSurfaceForRendering(activeEarthState);
   const frames = selectedSurface.frames;
   const fallbackSurface = selectedSurface.fallbackAsset === undefined
     ? undefined
     : requireLoadedTexture(selectedSurface.fallbackAsset, 'surfaceAlbedo');
   const seasonalSurface = await seasonalSurfaceController.prepare({ frames, date: sceneNow(), fallbackTexture: fallbackSurface });
+  return { active: activeEarthState, seasonalSurface };
+}
+
+function ensurePreparedEarthStateGpuResident(prepared: PreparedEarthStateScene) {
+  const textures = collectEarthStateTextures(prepared);
+  const context = renderer.getContext();
+  while (context.getError() !== context.NO_ERROR) { /* clear errors from the previous rendered state */ }
+  for (const texture of textures) renderer.initTexture(texture);
+  context.finish();
+  const error = context.getError();
+  if (context.isContextLost() || error === context.OUT_OF_MEMORY) throw new Error('GPU allocation failed for the complete Earth presentation tier');
+  if (error !== context.NO_ERROR) throw new Error(`GPU rejected the complete Earth presentation tier (${error})`);
+}
+
+function collectEarthStateTextures(value: PreparedEarthStateScene | ActivatedEarthState<LoadedSceneAsset>) {
+  const textures = new Set<THREE.Texture>();
+  const visit = (value: unknown) => {
+    if (value instanceof THREE.Texture) {
+      textures.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === 'object' && value !== null && !isDeferredSceneTexture(value as LoadedSceneAsset)) {
+      Object.values(value).forEach(visit);
+    }
+  };
+  if ('active' in value) {
+    visit(value.active.layers);
+    visit(value.active.resources);
+    visit(value.active.cloudSequence);
+    visit(value.seasonalSurface.from);
+    visit(value.seasonalSurface.to);
+  } else {
+    visit(value.layers);
+    visit(value.resources);
+    visit(value.cloudSequence);
+  }
+  return textures;
+}
+
+function disposeEarthStateTextures(value: PreparedEarthStateScene | ActivatedEarthState<LoadedSceneAsset>) {
+  for (const texture of collectEarthStateTextures(value)) texture.dispose();
+  renderer.getContext().finish();
+}
+
+function commitActivatedEarthState({ active: activeEarthState, seasonalSurface }: PreparedEarthStateScene) {
   for (const name of EARTH_STATE_REQUIRED_LAYERS) {
     if (!['surfaceAlbedo', 'cloudOpacity', 'cloudDensity'].includes(name)) {
       applyVerifiedLayer(name, activeEarthState.layers[name]);
@@ -302,8 +550,6 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
   }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
-  const cloudDataset = activeEarthState.layerDatasets.cloudOpacity;
-  const surfaceStatus = formatRollingSurfaceStatus(activeEarthState.manifest.layers.surfaceAlbedo.rollingComposite);
   if (activeEarthState.cloudSequence) {
     const sequence = {
       transitionSeconds: activeEarthState.cloudSequence.transitionSeconds,
@@ -324,21 +570,6 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       ],
     };
     cloudObservationController.activate(sequence, sceneNow());
-    const [from, to] = activeEarthState.cloudSequence.frames;
-    weatherFeed = now => {
-      const ageMinutes = Math.max(0, Math.floor((now.valueOf() - Date.parse(to.observedTo)) / 60_000));
-      const coverage = Math.round(to.coverage.observedFraction * 100);
-      const latitude = Math.min(Math.abs(to.coverage.latitudeRange[0]), Math.abs(to.coverage.latitudeRange[1])).toFixed(1);
-      const provider = activeEarthState.cloudSequence?.provider === 'satcorps' ? 'NASA SatCORPS' : 'NOAA GMGSI';
-      const gapStatus = formatCloudGapStatus({
-        gapCompletion: activeEarthState.cloudSequence?.gapCompletion,
-        frame: to,
-      });
-      if (gapStatus) {
-        return [surfaceStatus, `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${gapStatus}`].filter(Boolean).join(' · ');
-      }
-      return [surfaceStatus, `${provider} ${cloudDataset.version} · frames ${from.validAt.slice(11, 16)}Z → ${to.validAt.slice(11, 16)}Z · latest observed through ${to.observedTo.slice(11, 19)}Z · ${ageMinutes} min old · ${coverage}% usable coverage to ±${latitude}°`].filter(Boolean).join(' · ');
-    };
   } else {
     cloudObservationController.activateStatic({
       cloudOpacity: requireLoadedTexture(activeEarthState.layers.cloudOpacity, 'cloudOpacity'),
@@ -347,9 +578,14 @@ async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<Lo
       cloudAge: requireLoadedTexture(activeEarthState.layers.cloudAge ?? previewLayers.cloudAge, 'cloudAge'),
       cloudProvenance: requireLoadedTexture(activeEarthState.layers.cloudProvenance ?? previewLayers.cloudProvenance, 'cloudProvenance'),
     });
-    weatherFeed = () => [surfaceStatus, `clouds ${activeEarthState.manifest.classification.replace('-', ' ')} · ${cloudDataset.version}`].filter(Boolean).join(' · ');
   }
   activeBundleId = activeEarthState.manifest.bundleId;
+  activeEarthStateManifest = activeEarthState.manifest;
+  renderEarthStateProvenance(sceneNow(), true);
+}
+
+async function applyActivatedEarthState(activeEarthState: ActivatedEarthState<LoadedSceneAsset>) {
+  commitActivatedEarthState(await prepareActivatedEarthState(activeEarthState));
 }
 
 let updateFrame: () => void = () => undefined;
@@ -364,24 +600,59 @@ animate();
 startScene();
 const configuredLatestEarthStateUrl = import.meta.env.VITE_EARTH_STATE_LATEST_URL as string | undefined;
 const latestEarthStateUrl = new URL(configuredLatestEarthStateUrl ?? '/earth-state/latest.json', window.location.href).href;
+const configuredPresentationIndexUrl = import.meta.env.VITE_EARTH_STATE_PRESENTATIONS_URL as string | undefined;
+const presentationIndexUrl = new URL(configuredPresentationIndexUrl ?? '/earth-state/latest-presentations.json', window.location.href).href;
 let latestRefreshInFlight = false;
 async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
   latestRefreshInFlight = true;
-  latestCapture = new Map();
+  const retainedSource = earthStateRuntime.source;
+  earthStateRuntime = { ...earthStateRuntime, refresh: 'checking' };
+  renderEarthStateProvenance(sceneNow(), true);
   try {
     const previous = earthStateActivator.current;
-    const activeEarthState = validateRenderableEarthState(await activateWithLoaders(
-      remoteEarthStateLoaders,
-      () => earthStateActivator.activateLatest(latestEarthStateUrl),
-    ));
-    if (activeEarthState.manifest.bundleId !== activeBundleId) await applyActivatedEarthState(activeEarthState);
+    let selected: {
+      active: ActivatedEarthState<LoadedSceneAsset>;
+      capture: Map<string, EarthStateCacheEntry>;
+      entrypointUrl: string;
+      entrypointKind: 'latest' | 'manifest';
+      prepared?: PreparedEarthStateScene;
+    };
+    try {
+      const presentation = await earthStatePresentationActivator.activate(
+        presentationIndexUrl,
+        await presentationCapabilities,
+      );
+      selected = {
+        active: presentation.value.active,
+        capture: presentation.value.capture,
+        entrypointUrl: presentation.value.manifestUrl,
+        entrypointKind: 'manifest',
+        prepared: presentation.value.prepared,
+      };
+    } catch {
+      const capture = new Map<string, EarthStateCacheEntry>();
+      latestCapture = capture;
+      const active = validateRenderableEarthState(await activateWithLoaders(
+        remoteEarthStateLoaders,
+        () => earthStateActivator.activateLatest(latestEarthStateUrl),
+      ));
+      selected = { active, capture, entrypointUrl: latestEarthStateUrl, entrypointKind: 'latest' };
+    }
+    const activeEarthState = selected.active;
+    if (activeEarthState.manifest.bundleId !== activeBundleId) {
+      if (selected.prepared) commitActivatedEarthState(selected.prepared);
+      else await applyActivatedEarthState(activeEarthState);
+    }
+    earthStateRuntime = { source: 'remote', refresh: 'current' };
+    renderEarthStateProvenance(sceneNow(), true);
     if (activeEarthState !== previous && desktopEarthStateCache) {
       const snapshot = {
         bundleId: activeEarthState.manifest.bundleId,
         validAt: activeEarthState.manifest.times.validAt,
-        latestUrl: latestEarthStateUrl,
-        entries: [...latestCapture.values()],
+        latestUrl: selected.entrypointUrl,
+        entrypointKind: selected.entrypointKind,
+        entries: [...selected.capture.values()],
       };
       void desktopEarthStateCache.remember(snapshot).catch(() => {
         // Storage quota or eviction must not prevent a fully verified online bundle from rendering.
@@ -389,25 +660,40 @@ async function refreshLatestEarthState() {
     }
   } catch {
     // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
+    earthStateRuntime = { source: retainedSource, refresh: 'failed' };
+    renderEarthStateProvenance(sceneNow(), true);
   } finally {
     latestCapture = undefined;
     latestRefreshInFlight = false;
   }
 }
 
+let startupEarthStateSource: EarthStateRuntimeProvenance['source'] = 'bundled-fallback';
 void activateEarthStateAtStartup({
   cache: desktopEarthStateCache,
-  activateCached: async candidate => validateRenderableEarthState(await activateWithLoaders(
-    createCachedEarthStateLoaders(candidate),
-    () => earthStateActivator.activateLatest(candidate.latestUrl),
-  )),
-  activateBundled: async () => validateRenderableEarthState(await activateWithLoaders(
-    bundledEarthStateLoaders,
-    () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
-  )),
+  activateCached: async candidate => {
+    const active = validateRenderableEarthState(await activateWithLoaders(
+      createCachedEarthStateLoaders(candidate),
+      () => activateEarthStateCacheCandidate(earthStateActivator, candidate),
+    ));
+    startupEarthStateSource = 'offline-cache';
+    return active;
+  },
+  activateBundled: async () => {
+    const active = validateRenderableEarthState(await activateWithLoaders(
+      bundledEarthStateLoaders,
+      () => earthStateActivator.activate(new URL('/earth-state/bundled-v1.json', window.location.href).href),
+    ));
+    startupEarthStateSource = 'bundled-fallback';
+    return active;
+  },
 }).then(async activeEarthState => {
+  earthStateRuntime = { source: startupEarthStateSource, refresh: 'checking' };
   await applyActivatedEarthState(activeEarthState);
   loading.classList.add('hidden');
+  loading.setAttribute('aria-hidden', 'true');
+  loading.removeAttribute('role');
+  loading.removeAttribute('aria-label');
   void refreshLatestEarthState();
   window.setInterval(refreshLatestEarthState, 10 * 60 * 1000);
 }).catch(error => {
@@ -522,7 +808,7 @@ const earthMaterial = new THREE.ShaderMaterial({
     void main() {
       vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz);
       float solar=dot(normal,sunView); float nDotL=max(solar,0.0); float nDotV=max(dot(normal,viewDirection),.001);
-      float daylight=smoothstep(-.075,.14,solar); float directLight=.48+1.22*smoothstep(-.08,.72,solar);
+      float daylight=smoothstep(-.012,.028,solar); float directLight=.055+1.32*smoothstep(-.015,.72,solar);
       float zenithDegrees=degrees(acos(clamp(solar,0.0,1.0))); float airMass=1.0/(max(solar,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
       vec3 surface=mix(texture2D(dayMapFrom,vUv).rgb,texture2D(dayMapTo,vUv).rgb,seasonalMix);
@@ -536,7 +822,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
       vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*directLight*mix(vec3(1.0),sunlight,.72);
       vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
-      float roughness=.19; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
+      float roughness=.14; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
       float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
       float k=roughness*roughness*.5; float geometryView=nDotV/(nDotV*(1.0-k)+k); float geometryLight=nDotL/(nDotL*(1.0-k)+k);
       float fresnel=.0204+(1.0-.0204)*pow(1.0-vDotH,5.0);
@@ -544,7 +830,8 @@ const earthMaterial = new THREE.ShaderMaterial({
       float horizonFresnel=.0204+(1.0-.0204)*pow(1.0-nDotV,5.0);
       vec3 deepWater=vec3(.0022,.012,.026); vec3 waterDiffuse=deepWater*(.13+.48*nDotL)*mix(vec3(1.0),sunlight,.7);
       vec3 atmosphericReflection=vec3(.018,.075,.15)*horizonFresnel*(.3+.7*daylight);
-      vec3 sunGlint=vec3(1.0,.78,.5)*specular*nDotL*1.3;
+      float glintResponse=1.0-exp(-specular*.22);
+      vec3 sunGlint=vec3(1.0,.93,.82)*glintResponse*nDotL*.62;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
       vec3 seaIceLight=vec3(.68,.76,.82)*(.3+.92*nDotL)*mix(vec3(1.0),sunlight,.68)+atmosphericReflection*.28;
       vec3 day=mix(land,oceanLight,ocean);
@@ -587,7 +874,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       float casterDensity=mix(.72,1.18,casterWeather.r)*casterWeather.g;
       float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
       day*=1.0-cloudShadow*daylight*mix(.12,.34,clamp(casterOpticalDepth/18.0,0.0,1.0))*casterQuality;
-      float nightFalloff=1.0-smoothstep(-.12,.025,solar);
+      float nightFalloff=1.0-smoothstep(-.035,.008,solar);
       vec3 night=texture2D(nightMap,vUv).rgb*nightFalloff*1.8;
       night*=cloudTransmission(opticalDepth,cloudQuality);
       gl_FragColor=vec4(mix(night,day,daylight),1.0);
@@ -633,7 +920,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float icePhase=physics.g;
       float density=mix(mix(.72,1.18,weather.r),1.0-exp(-opticalDepth*.35),physicalWeight)*cloudQuality;
       vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); vec3 viewDirection=normalize(-vViewPosition);
-      float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.025,.12,solarRaw);
+      float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.012,.035,solarRaw);
       float zenithDegrees=degrees(acos(clamp(solarRaw,0.0,1.0)));
       float airMass=1.0/(max(solarRaw,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
       vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
@@ -718,14 +1005,14 @@ const atmosphere = new THREE.Mesh(
         // It remains gated by the same tangent height, solar direction, and Earth shadow.
         float nearestTime=max(-dot(cameraPosition,rayDirection),0.0); vec3 tangentPoint=cameraPosition+rayDirection*nearestTime;
         float impact=length(tangentPoint); float tangentHeight=max(impact-GROUND_RADIUS,0.0);
-        float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*6.0));
-        float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.055,.08,tangentSun);
+        float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*4.2));
+        float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.018,.035,tangentSun);
         float forwardAureole=pow(max(mu,0.0),30.0);
-        vec3 exposedLimb=vec3(.008,.16,1.05)*limbEnvelope*illuminated*.92;
+        vec3 exposedLimb=vec3(.014,.18,.42)*limbEnvelope*illuminated*.62;
         exposedLimb+=vec3(1.0,.36,.035)*limbEnvelope*illuminated*forwardAureole*.08;
         // Additive light carries its own physical intensity; an alpha derived from intensity
         // would multiply the already-dim limb a second time and erase it.
-        vec3 color=radiance*13.0+exposedLimb; gl_FragColor=vec4(color,1.0);
+        vec3 color=radiance*vec3(13.0,13.0,10.0)+exposedLimb; gl_FragColor=vec4(color,1.0);
       }`
   })
 );
@@ -734,20 +1021,18 @@ planet.add(atmosphere);
 const moonMaterial = new THREE.ShaderMaterial({
   uniforms: { moonMap: { value: moonMap }, sunDirection: { value: new THREE.Vector3(1, 0, 0) } },
   vertexShader: `varying vec2 vUv; varying vec3 vViewNormal; void main(){ vUv=uv; vViewNormal=normalize(normalMatrix*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-  fragmentShader: `uniform sampler2D moonMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; void main(){ vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float light=smoothstep(-.07,.16,dot(normalize(vViewNormal),sunView)); vec3 albedo=texture2D(moonMap,vUv).rgb; gl_FragColor=vec4(albedo*mix(.014,1.0,light),1.0); }`
+  fragmentShader: `uniform sampler2D moonMap; uniform vec3 sunDirection; varying vec2 vUv; varying vec3 vViewNormal; void main(){ vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); float light=smoothstep(-.004,.018,dot(normalize(vViewNormal),sunView)); vec3 albedo=texture2D(moonMap,vUv).rgb; gl_FragColor=vec4(albedo*mix(.003,1.0,light),1.0); }`
 });
-// Distances and radii below are expressed in Earth radii (Earth = 1.0).
-const earthRadiusKm = 6371.0088;
-const moon = new THREE.Mesh(new THREE.SphereGeometry(1737.4 / earthRadiusKm, 64, 64), moonMaterial);
+// Distances and radii below are expressed in equatorial Earth radii (Earth = 1.0).
+const moon = new THREE.Mesh(new THREE.SphereGeometry(MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM, 64, 64), moonMaterial);
 scene.add(moon);
-const sunDistance = 149597870.7 / earthRadiusKm; // mean Sun–Earth distance: 1 AU / Earth radius
-const sunRadius = 696340 / earthRadiusKm;
+const sunRadius = SUN_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM;
 const sun = new THREE.Mesh(
   new THREE.SphereGeometry(sunRadius, 48, 48),
   new THREE.ShaderMaterial({
-    // The physical sphere preserves the true solar angular size and position, while the
-    // exposed camera image is carried by the soft optical layers below.
-    colorWrite: false, depthWrite: false,
+    // The physical HDR sphere preserves the true solar angular size, atmospheric
+    // transmission, and tone mapping. The transparent layers below add only optics.
+    depthWrite: false,
     vertexShader: `varying vec3 vWorldPosition; varying vec3 vWorldNormal; void main(){ vWorldPosition=(modelMatrix*vec4(position,1.0)).xyz; vWorldNormal=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
       varying vec3 vWorldPosition; varying vec3 vWorldNormal;
@@ -770,18 +1055,18 @@ coronaCanvas.width = 256; coronaCanvas.height = 256;
 const coronaContext = coronaCanvas.getContext('2d')!;
 const coronaGradient = coronaContext.createRadialGradient(128, 128, 0, 128, 128, 128);
 coronaGradient.addColorStop(0, 'rgba(255,255,252,1)');
-coronaGradient.addColorStop(.32, 'rgba(255,255,248,1)');
-coronaGradient.addColorStop(.45, 'rgba(255,247,226,.54)');
-coronaGradient.addColorStop(.63, 'rgba(255,218,166,.09)');
-coronaGradient.addColorStop(.84, 'rgba(168,190,220,.015)');
+coronaGradient.addColorStop(.35, 'rgba(255,255,250,.92)');
+coronaGradient.addColorStop(.52, 'rgba(255,248,229,.4)');
+coronaGradient.addColorStop(.76, 'rgba(255,220,170,.05)');
+coronaGradient.addColorStop(.88, 'rgba(168,190,220,.012)');
 coronaGradient.addColorStop(1, 'rgba(0,0,0,0)');
 coronaContext.fillStyle = coronaGradient;
 coronaContext.fillRect(0, 0, 256, 256);
 const coronaTexture = new THREE.CanvasTexture(coronaCanvas);
 const sunCorona = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
+  new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
 );
-sunCorona.scale.set(sunRadius * 8, sunRadius * 8, 1);
+sunCorona.scale.set(sunRadius * 5, sunRadius * 5, 1);
 scene.add(sunCorona);
 
 // A restrained camera starburst: the physical solar disc above stays unchanged while this
@@ -810,7 +1095,7 @@ for (let rayIndex = 0; rayIndex < 16; rayIndex += 1) {
   starburstContext.fill();
   starburstContext.restore();
 }
-const starburstCore = starburstContext.createRadialGradient(0, 0, 0, 0, 0, 104);
+const starburstCore = starburstContext.createRadialGradient(0, 0, 0, 0, 0, 58);
 starburstCore.addColorStop(0, 'rgba(255,255,248,.95)');
 starburstCore.addColorStop(.22, 'rgba(255,252,235,.82)');
 starburstCore.addColorStop(.48, 'rgba(255,208,132,.16)');
@@ -819,9 +1104,9 @@ starburstContext.fillStyle = starburstCore;
 starburstContext.beginPath(); starburstContext.arc(0, 0, 104, 0, Math.PI * 2); starburstContext.fill();
 const starburstTexture = new THREE.CanvasTexture(starburstCanvas);
 const sunStarburst = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false })
+  new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
 );
-sunStarburst.scale.set(sunRadius * 18, sunRadius * 18, 1);
+sunStarburst.scale.set(sunRadius * 10, sunRadius * 10, 1);
 scene.add(sunStarburst);
 const sunOpticsPosition = new THREE.Vector3();
 
@@ -840,88 +1125,60 @@ function flareTexture(kind: 'soft' | 'ring', color: [number, number, number]) {
 }
 
 const lensFlareGhosts = [
-  { factor: -.3, scale: .48, opacity: .16, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [166, 207, 255]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: -.66, scale: .31, opacity: .1, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('ring', [255, 198, 132]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: .22, scale: .2, opacity: .08, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [180, 232, 226]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: -.3, scale: .32, opacity: .045, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [166, 207, 255]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: -.66, scale: .22, opacity: .035, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('ring', [255, 198, 132]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
+  { factor: .22, scale: .14, opacity: .025, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [180, 232, 226]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
 ];
 lensFlareGhosts.forEach(({ sprite }) => { sprite.renderOrder = 20; scene.add(sprite); });
 const sunScreenPosition = new THREE.Vector3();
 const flareDirection = new THREE.Vector3();
-const cameraToSun = new THREE.Vector3();
-const closestSunRayPoint = new THREE.Vector3();
 let skyExposure = .1;
 
 function radians(value: number) { return value * Math.PI / 180; }
-function degrees(value: number) { return value * 180 / Math.PI; }
-function wrap(value: number) { return ((value + 180) % 360 + 360) % 360 - 180; }
-function julianDay(date: Date) { return date.getTime() / 86400000 + 2440587.5; }
 function latLonVector(latitude: number, longitude: number, radius: number) {
   const phi = radians(90 - latitude); const theta = radians(longitude + 180);
   return new THREE.Vector3(-radius*Math.sin(phi)*Math.cos(theta),radius*Math.cos(phi),radius*Math.sin(phi)*Math.sin(theta));
 }
 
-function solarCoordinates(date: Date) {
-  const d=julianDay(date)-2451545.0; const meanLongitude=(280.46+.9856474*d)%360;
-  const meanAnomaly=radians((357.528+.9856003*d)%360);
-  const eclipticLongitude=radians(meanLongitude+1.915*Math.sin(meanAnomaly)+.02*Math.sin(2*meanAnomaly));
-  const obliquity=radians(23.439-.0000004*d);
-  const rightAscension=degrees(Math.atan2(Math.cos(obliquity)*Math.sin(eclipticLongitude),Math.cos(eclipticLongitude)))/15;
-  const latitude=degrees(Math.asin(Math.sin(obliquity)*Math.sin(eclipticLongitude)));
-  const gmst=(18.697374558+24.06570982441908*d)%24;
-  return { latitude, rightAscension, gmst, longitude: wrap((rightAscension-gmst)*15) };
+const celestialRotationMatrix = new THREE.Matrix4();
+function applyCelestialRotation(object: THREE.Object3D, matrix: readonly number[]) {
+  celestialRotationMatrix.set(
+    matrix[0], matrix[1], matrix[2], 0,
+    matrix[3], matrix[4], matrix[5], 0,
+    matrix[6], matrix[7], matrix[8], 0,
+    0, 0, 0, 1,
+  );
+  object.quaternion.setFromRotationMatrix(celestialRotationMatrix);
 }
 
-function lunarCoordinates(date: Date) {
-  const d=julianDay(date)-2451545.0;
-  const meanLongitude=(218.316+13.176396*d)%360;
-  const anomaly=(134.963+13.064993*d)%360;
-  const elongation=(297.850+12.190749*d)%360;
-  const latitudeArgument=(93.272+13.22935*d)%360;
-  const longitude=radians(meanLongitude + 6.289*Math.sin(radians(anomaly)) + 1.274*Math.sin(radians(2*elongation-anomaly)) + .658*Math.sin(radians(2*elongation)) + .214*Math.sin(radians(2*anomaly)) - .186*Math.sin(radians((357.529+.98560028*d)%360)));
-  const latitude=radians(5.128*Math.sin(radians(latitudeArgument)) + .280*Math.sin(radians(anomaly+latitudeArgument)) + .277*Math.sin(radians(anomaly-latitudeArgument)) + .173*Math.sin(radians(2*elongation-latitudeArgument)));
-  const obliquity=radians(23.439-.0000004*d);
-  const rightAscension=degrees(Math.atan2(Math.sin(longitude)*Math.cos(obliquity)-Math.tan(latitude)*Math.sin(obliquity),Math.cos(longitude)))/15;
-  const declination=degrees(Math.asin(Math.sin(latitude)*Math.cos(obliquity)+Math.cos(latitude)*Math.sin(obliquity)*Math.sin(longitude)));
-  const distanceKm=385000.56 - 20905.36*Math.cos(radians(anomaly)) - 3699.11*Math.cos(radians(2*elongation-anomaly)) - 2955.97*Math.cos(radians(2*elongation)) - 569.93*Math.cos(radians(2*anomaly));
-  return { latitude: declination, rightAscension, distanceEarthRadii: distanceKm / earthRadiusKm };
-}
-
-let cameraTracksSun = true;
-let pointerStart: { x: number; y: number } | undefined;
-canvas.addEventListener('pointerdown', event => { pointerStart = { x: event.clientX, y: event.clientY }; }, { passive: true });
-canvas.addEventListener('pointermove', event => {
-  if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 4) cameraTracksSun = false;
-}, { passive: true });
-canvas.addEventListener('pointerup', () => { pointerStart = undefined; }, { passive: true });
-canvas.addEventListener('pointercancel', () => { pointerStart = undefined; }, { passive: true });
-canvas.addEventListener('wheel', () => { cameraTracksSun = false; }, { passive: true });
+const takeInitialCameraPosition = createOneTimeInertialCameraPlacement(fixedSceneView);
+const takeGoldenCameraPose = goldenScene ? createOneTimeOrbitalGoldenCameraPlacement(goldenScene) : null;
 function updateCelestialScene(now: Date) {
-  const solar=solarCoordinates(now);
-  // Greenwich sidereal rotation turns Earth beneath the inertial Hipparcos/Gaia sky.
-  planet.rotation.y=radians(solar.gmst*15);
-  const sunDirection=latLonVector(solar.latitude,solar.rightAscension*15,1).normalize();
-  if (cameraTracksSun) {
+  const frame = celestialSceneFrameAt(now);
+  const solar = frame.astronomy.sun;
+  // The Earth body rotates in EQJ while the camera and Hipparcos/Gaia sky remain inertial.
+  applyCelestialRotation(planet, frame.earth.bodyToSceneMatrix);
+  const sunDirection = new THREE.Vector3(...frame.sun.inertialDirection);
+  const goldenPose = takeGoldenCameraPose?.(frame) ?? null;
+  const initialCameraPosition = goldenScene ? goldenPose?.position ?? null : takeInitialCameraPosition(frame);
+  if (initialCameraPosition) {
     // Place the observer just outside the Sun–Earth occultation cone. The real, 0.53° solar disc
-    // sits beyond the atmospheric limb; the camera then remains still while Earth rotates below.
-    const rightTangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDirection).normalize();
-    const upTangent = new THREE.Vector3().crossVectors(sunDirection, rightTangent).normalize();
-    const tangent = rightTangent.multiplyScalar(.72).addScaledVector(upTangent, .69).normalize();
-    const observerDistance = 7;
-    const solarSeparation = Math.asin(1 / observerDistance) + radians(.36);
-    const observerDirection = fixedSceneView === 'day'
-      ? sunDirection.clone()
-      : fixedSceneView === 'terminator'
-        ? tangent
-        : sunDirection.clone().multiplyScalar(-Math.cos(solarSeparation)).addScaledVector(tangent, Math.sin(solarSeparation));
-    camera.position.copy(observerDirection.multiplyScalar(observerDistance));
-    camera.lookAt(0, 0, 0);
-    controls.target.set(0, 0, 0);
+    // sits beyond the atmospheric limb. This placement happens once: afterwards the observer
+    // remains inertial while Earth rotates and the Sun advances through the EQJ sky.
+    camera.position.fromArray(initialCameraPosition);
+    const cameraTarget = goldenPose?.target ?? [0, 0, 0];
+    camera.lookAt(...cameraTarget);
+    controls.target.fromArray(cameraTarget);
   }
   earthMaterial.uniforms.sunDirection.value.copy(sunDirection);
-  earthMaterial.uniforms.sunLocalDirection.value.copy(sunDirection).applyQuaternion(planet.quaternion.clone().invert());
+  earthMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
   cloudMaterial.uniforms.sunDirection.value.copy(sunDirection);
   (atmosphere.material as THREE.ShaderMaterial).uniforms.sunDirection.value.copy(sunDirection);
-  sun.position.copy(sunDirection).multiplyScalar(sunDistance);
+  sun.position.copy(sunDirection).multiplyScalar(frame.sun.distanceEarthRadii);
+  const moonDirection = new THREE.Vector3(...frame.moon.inertialDirection);
+  moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
+  applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
+  moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
   // Put camera optics just in front of the solar sphere so the sphere cannot depth-mask them;
   // Earth remains vastly nearer and therefore still occludes the complete optical effect.
   // A generous camera-space separation avoids far-plane depth quantization masking the
@@ -930,35 +1187,35 @@ function updateCelestialScene(now: Date) {
   sunCorona.position.copy(sunOpticsPosition);
   sunStarburst.position.copy(sunOpticsPosition);
   sunScreenPosition.copy(sun.position).project(camera);
-  cameraToSun.copy(sun.position).sub(camera.position);
-  const nearestFraction = THREE.MathUtils.clamp(-camera.position.dot(cameraToSun) / cameraToSun.lengthSq(), 0, 1);
-  const sunEarthImpact = closestSunRayPoint.copy(camera.position).addScaledVector(cameraToSun, nearestFraction).length();
-  const sunInFront = camera.getWorldDirection(flareDirection).dot(cameraToSun) > 0;
-  const sunOcculted = nearestFraction > 0 && nearestFraction < 1 && sunEarthImpact < 1;
-  const frameDistance = Math.max(Math.abs(sunScreenPosition.x), Math.abs(sunScreenPosition.y));
-  const sunInFrame = sunInFront && sunScreenPosition.z > -1 && sunScreenPosition.z < 1 && frameDistance < 1.3;
-  const flareStrength = sunInFrame && !sunOcculted ? 1 - THREE.MathUtils.smoothstep(frameDistance, .72, 1.3) : 0;
-  sunCorona.visible = !sunOcculted && sunInFront;
-  sunStarburst.visible = !sunOcculted && sunInFront;
+  const photograph = orbitalPhotographyState({
+    cameraPosition: [camera.position.x, camera.position.y, camera.position.z],
+    sunPosition: [sun.position.x, sun.position.y, sun.position.z],
+    sunRadius,
+    moonPosition: [moon.position.x, moon.position.y, moon.position.z],
+    moonRadius: MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM,
+    sunNdc: [sunScreenPosition.x, sunScreenPosition.y, sunScreenPosition.z],
+  });
+  const coronaMaterial = sunCorona.material as THREE.SpriteMaterial;
+  const starburstMaterial = sunStarburst.material as THREE.SpriteMaterial;
+  coronaMaterial.opacity = photograph.optics.bloomStrength * .84;
+  starburstMaterial.opacity = photograph.optics.diffractionStrength * .58;
+  sunCorona.visible = photograph.optics.bloomStrength > .001;
+  sunStarburst.visible = photograph.optics.diffractionStrength > .001;
   lensFlareGhosts.forEach(({ factor, scale, opacity, sprite }) => {
     const ndc = new THREE.Vector3(sunScreenPosition.x * factor, sunScreenPosition.y * factor, .2).unproject(camera);
     flareDirection.copy(ndc).sub(camera.position).normalize();
     sprite.position.copy(camera.position).addScaledVector(flareDirection, 30); sprite.scale.setScalar(scale);
-    (sprite.material as THREE.SpriteMaterial).opacity = opacity * flareStrength; sprite.visible = flareStrength > .001;
+    (sprite.material as THREE.SpriteMaterial).opacity = opacity * photograph.optics.flareStrength;
+    sprite.visible = photograph.optics.flareStrength > .001;
   });
   // Human eyes and ordinary cameras cannot expose a direct Sun and a rich Milky Way at once.
-  const targetSkyExposure = sunInFrame && !sunOcculted ? .09 : .72;
-  skyExposure = THREE.MathUtils.lerp(skyExposure, targetSkyExposure, sunInFrame ? .045 : .012);
+  skyExposure = THREE.MathUtils.lerp(skyExposure, photograph.exposure.milkyWay, photograph.sun.inFrame ? .045 : .012);
   milkyWayMaterial.uniforms.exposure.value = skyExposure;
-  if (starMaterial) starMaterial.uniforms.exposure.value = THREE.MathUtils.lerp(.18, 1, skyExposure);
-  const lunar=lunarCoordinates(now);
-  const moonDirection=latLonVector(lunar.latitude,lunar.rightAscension*15,1).normalize();
-  moon.position.copy(moonDirection).multiplyScalar(lunar.distanceEarthRadii);
-  moon.lookAt(camera.position);
-  moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
+  if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars;
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
-  sunStatus.textContent=`Sun over ${Math.abs(solar.latitude).toFixed(1)}°${solar.latitude>=0?'N':'S'}, ${Math.abs(solar.longitude).toFixed(1)}°${solar.longitude>=0?'E':'W'} · ${weatherFeed(now)} · Earth rotates beneath an inertial sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits`;
+  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${activeEarthStateStatus} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
+  renderEarthStateProvenance(now);
 }
 
 window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
@@ -1015,6 +1272,96 @@ applyVerifiedResource = (name, asset) => {
   }
   else if (name === 'starCatalog') loadHipparcosStars(requireStarCatalog(asset));
 };
+
+qualifyPreparedEarthStateRendering = async (prepared, tier) => {
+  const { active, seasonalSurface } = prepared;
+  const assertSharpSurface = (texture: THREE.Texture, label: string) => {
+    verifyTextureDimensions(texture, { dimensions: tier.dimensions }, `${tier.id} ${label}`);
+    if (texture.magFilter === THREE.NearestFilter || texture.colorSpace !== THREE.SRGBColorSpace) {
+      throw new Error(`Earth presentation ${tier.id} ${label} is not configured for sharp color rendering`);
+    }
+  };
+  assertSharpSurface(seasonalSurface.from, 'surface from-frame');
+  assertSharpSurface(seasonalSurface.to, 'surface to-frame');
+
+  const cloudFrames = active.cloudSequence?.frames;
+  const cloudFrom = cloudFrames?.[0]?.layers ?? active.layers;
+  const cloudTo = cloudFrames?.[1]?.layers ?? cloudFrom;
+  const texture = (value: LoadedSceneAsset | undefined, fallback: LoadedSceneAsset, name: string) => (
+    requireLoadedTexture(value ?? fallback, `${tier.id} qualification ${name}`)
+  );
+  const assignments: Array<{ uniform: { value: unknown }; value: unknown; previous?: unknown }> = [];
+  const assign = (material: THREE.ShaderMaterial, name: string, value: unknown) => {
+    const uniform = material.uniforms[name];
+    if (!uniform) throw new Error(`Earth presentation shader is missing ${name}`);
+    assignments.push({ uniform, value });
+  };
+  assign(earthMaterial, 'dayMapFrom', seasonalSurface.from);
+  assign(earthMaterial, 'dayMapTo', seasonalSurface.to);
+  assign(earthMaterial, 'seasonalMix', seasonalSurface.mix);
+  assign(earthMaterial, 'nightMap', texture(active.layers.nightLights, previewLayers.nightLights, 'nightLights'));
+  assign(earthMaterial, 'snowCoverMap', texture(active.layers.snowCover, previewLayers.snowCover, 'snowCover'));
+  assign(earthMaterial, 'seaIceMap', texture(active.layers.seaIce, previewLayers.seaIce, 'seaIce'));
+  for (const material of [earthMaterial, cloudMaterial]) {
+    assign(material, 'cloudMapFrom', texture(cloudFrom.cloudOpacity, previewLayers.cloudOpacity, 'cloudOpacity from-frame'));
+    assign(material, 'cloudMapTo', texture(cloudTo.cloudOpacity, previewLayers.cloudOpacity, 'cloudOpacity to-frame'));
+    assign(material, 'cloudDensityFrom', texture(cloudFrom.cloudDensity, previewLayers.cloudDensity, 'cloudDensity from-frame'));
+    assign(material, 'cloudDensityTo', texture(cloudTo.cloudDensity, previewLayers.cloudDensity, 'cloudDensity to-frame'));
+    assign(material, 'cloudPhysicsFrom', texture(cloudFrom.cloudPhysics, previewLayers.cloudPhysics, 'cloudPhysics from-frame'));
+    assign(material, 'cloudPhysicsTo', texture(cloudTo.cloudPhysics, previewLayers.cloudPhysics, 'cloudPhysics to-frame'));
+    assign(material, 'cloudAgeFrom', texture(cloudFrom.cloudAge, previewLayers.cloudAge, 'cloudAge from-frame'));
+    assign(material, 'cloudAgeTo', texture(cloudTo.cloudAge, previewLayers.cloudAge, 'cloudAge to-frame'));
+    assign(material, 'cloudMix', cloudFrames ? .5 : 0);
+  }
+  assign(moonMaterial, 'moonMap', texture(active.resources.moonAlbedo, previewResources.moonAlbedo, 'moonAlbedo'));
+  assign(milkyWayMaterial, 'map', texture(active.resources.milkyWay, previewResources.milkyWay, 'milkyWay'));
+
+  const shaderStartedAt = performance.now();
+  await renderer.compileAsync(scene, camera);
+  renderer.getContext().finish();
+  const shaderCompilationMs = performance.now() - shaderStartedAt;
+
+  // Render the complete live scene at a fixed desktop workload. The tier textures are swapped
+  // only while JavaScript is synchronously drawing to an off-screen target, so no partial tier
+  // can appear on the user's canvas.
+  const benchmarkWidth = 1440;
+  const benchmarkHeight = 900;
+  const target = new THREE.WebGLRenderTarget(benchmarkWidth, benchmarkHeight, { depthBuffer: true });
+  const previousTarget = renderer.getRenderTarget();
+  const context = renderer.getContext();
+  while (context.getError() !== context.NO_ERROR) { /* isolate qualification from earlier rendering errors */ }
+  try {
+    for (const assignment of assignments) {
+      assignment.previous = assignment.uniform.value;
+      assignment.uniform.value = assignment.value;
+    }
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+    renderer.render(scene, camera);
+    context.finish();
+    const sampleFrames = 24;
+    const renderStartedAt = performance.now();
+    for (let frame = 0; frame < sampleFrames; frame += 1) renderer.render(scene, camera);
+    context.finish();
+    const renderElapsedMs = performance.now() - renderStartedAt;
+    const error = context.getError();
+    if (context.isContextLost() || error === context.OUT_OF_MEMORY) {
+      throw new Error(`GPU allocation failed while rendering the complete ${tier.id} Earth presentation`);
+    }
+    if (error !== context.NO_ERROR) throw new Error(`GPU rejected the rendered ${tier.id} Earth presentation (${error})`);
+    return {
+      shaderCompilationMs,
+      sustainedFps: sampleFrames * 1000 / Math.max(renderElapsedMs, .001),
+      benchmarkWidth,
+      benchmarkHeight,
+    };
+  } finally {
+    for (const assignment of assignments) assignment.uniform.value = assignment.previous;
+    renderer.setRenderTarget(previousTarget);
+    target.dispose();
+  }
+};
+
 updateFrame = () => {
   const now = sceneNow();
   seasonalSurfaceController.update(now);

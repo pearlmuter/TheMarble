@@ -3,6 +3,10 @@ const PROVIDER_RULES = Object.freeze({
   gmgsi: Object.freeze({ cadenceMs: 60 * 60 * 1000, maxAgeMs: 4 * 60 * 60 * 1000 }),
 });
 
+export function cloudProviderMaxAgeSeconds(provider) {
+  return PROVIDER_RULES[provider]?.maxAgeMs / 1000;
+}
+
 function timestamp(value) {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;
@@ -34,15 +38,16 @@ function validateSequence(sequence, retrievedMs) {
   return to - from === rules.cadenceMs && retrievedMs - to <= rules.maxAgeMs;
 }
 
-export function selectCloudProviderSequence({ sequences, retrievedAt, lastPublishedValidAt }) {
+export function selectCloudProviderSequence({ sequences, retrievedAt, lastPublishedValidAt, satcorpsPromoted = false }) {
   const retrievedMs = timestamp(retrievedAt);
   if (retrievedMs === undefined) throw new Error('Invalid cloud retrieval time');
   if (!Array.isArray(sequences)) throw new Error('Cloud provider sequences must be an array');
 
   const usable = sequences.filter(sequence => validateSequence(sequence, retrievedMs))
     .sort((left, right) => Date.parse(right.frames[1].validAt) - Date.parse(left.frames[1].validAt));
-  const selected = usable.find(sequence => sequence.provider === 'satcorps')
-    ?? usable.find(sequence => sequence.provider === 'gmgsi');
+  const selected = satcorpsPromoted
+    ? usable.find(sequence => sequence.provider === 'satcorps') ?? usable.find(sequence => sequence.provider === 'gmgsi')
+    : usable.find(sequence => sequence.provider === 'gmgsi');
   if (!selected) throw new Error('Cloud selection did not find a usable cloud provider sequence');
 
   const newestValidAt = selected.frames[1].validAt;
@@ -55,7 +60,12 @@ export function selectCloudProviderSequence({ sequences, retrievedAt, lastPublis
     frames: selected.frames,
     retrievedAt: new Date(retrievedMs).toISOString().replace('.000Z', 'Z'),
     ...(selected.provider === 'gmgsi' && satcorpsSupplied ? {
-      fallback: { from: 'satcorps', reason: 'SatCORPS was unavailable or rejected by freshness, coverage, integrity, or quality rules.' },
+      fallback: {
+        from: 'satcorps',
+        reason: satcorpsPromoted
+          ? 'SatCORPS was unavailable or rejected by freshness, coverage, integrity, or quality rules.'
+          : 'SatCORPS has not passed the required multi-week production soak and promotion thresholds.',
+      },
     } : {}),
     publish: publishedMs === undefined || Date.parse(newestValidAt) > publishedMs,
   };

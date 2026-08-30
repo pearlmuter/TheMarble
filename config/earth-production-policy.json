@@ -1,0 +1,32 @@
+{
+  "health": {
+    "providers": {
+      "satcorps": {
+        "maximumDiscoveryLatencyMinutes": 90,
+        "maximumMissingObservations": 1,
+        "minimumCoverageFraction": 0.9
+      },
+      "gmgsi": {
+        "maximumDiscoveryLatencyMinutes": 120,
+        "maximumMissingObservations": 1,
+        "minimumCoverageFraction": 0.9
+      }
+    },
+    "maximumLatestManifestAgeMinutes": 180
+  },
+  "soak": {
+    "version": "themarble-cloud-soak-v1",
+    "minimumDurationDays": 21,
+    "minimumSamples": 454,
+    "maximumSampleGapHours": 2,
+    "maximumEvaluationWindowDays": 35,
+    "maximumP95DiscoveryLatencyMinutes": 90,
+    "maximumMissingFraction": 0.02,
+    "minimumMeanCoverageFraction": 0.9,
+    "maximumCorruptFraction": 0,
+    "maximumSchemaChanges": 0,
+    "maximumDimensionChanges": 0,
+    "maximumQualityFlagFraction": 0.01,
+    "maximumP95InterSourceDisagreementFraction": 0.15
+  }
+}

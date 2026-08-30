@@ -260,3 +260,56 @@ test('a checksum-corrupt cached bundle cannot replace the bundled seasonal Earth
 
   assert.equal(restored, 'bundled-seasonal-earth');
 });
+
+test('the desktop cache stays within its byte limit by evicting whole verified bundles', async () => {
+  const first = bundle('earth-cache-first', '2026-08-24T12:00:00Z');
+  const second = bundle('earth-cache-second', '2026-08-25T12:00:00Z');
+  const bundleBytes = first.entries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+  const cache = createEarthStateBundleCache({
+    storage: createMemoryStorage(),
+    maxRemoteBundles: 2,
+    maxBytes: bundleBytes + Math.floor(bundleBytes / 2),
+  });
+
+  await cache.remember(first);
+  await cache.remember(second);
+
+  assert.deepEqual(await cache.bundleIds(), ['earth-cache-second']);
+});
+
+test('an oversized presentation tier cannot displace a complete cached fallback', async () => {
+  const fallback = bundle('earth-cache-fallback', '2026-08-24T12:00:00Z');
+  const oversized = bundle('earth-cache-oversized', '2026-08-25T12:00:00Z');
+  oversized.entries.push({
+    url: 'https://example.test/earth-state/earth-cache-oversized/huge.ktx2',
+    mediaType: 'image/ktx2',
+    bytes: new Uint8Array(256),
+  });
+  const fallbackBytes = fallback.entries.reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+  const cache = createEarthStateBundleCache({
+    storage: createMemoryStorage(),
+    maxBytes: fallbackBytes + 64,
+  });
+  await cache.remember(fallback);
+
+  await assert.rejects(cache.remember(oversized), /exceeds cache byte limit/);
+
+  assert.deepEqual(await cache.bundleIds(), ['earth-cache-fallback']);
+});
+
+test('a selected presentation tier restores through its manifest entrypoint', async () => {
+  const selected = bundle('earth-selected-8k', '2026-08-25T12:00:00Z');
+  selected.entrypointKind = 'manifest';
+  selected.latestUrl = new URL('./manifest.json', selected.latestUrl).href;
+  const cache = createEarthStateBundleCache({ storage: createMemoryStorage() });
+  await cache.remember(selected);
+
+  const restored = await cache.restoreNewest(async candidate => ({
+    bundleId: candidate.bundleId,
+    entrypointKind: candidate.entrypointKind,
+    manifest: JSON.parse(new TextDecoder().decode(candidate.read(candidate.latestUrl).bytes)),
+  }));
+
+  assert.equal(restored.entrypointKind, 'manifest');
+  assert.equal(restored.manifest.bundleId, 'earth-selected-8k');
+});

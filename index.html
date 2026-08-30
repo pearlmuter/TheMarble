@@ -9,13 +9,20 @@
   <body>
     <main id="app" aria-label="Live digital Earth">
       <canvas id="globe" aria-label="Interactive representation of Earth"></canvas>
-      <button class="info-trigger" type="button" aria-label="Show TheMarble details"></button>
-      <section class="hud" aria-live="polite">
-        <p class="eyebrow">ORBITAL VIEW</p>
-        <h1>TheMarble</h1>
-        <p id="clock" class="clock"></p>
-        <p id="sun-status" class="detail"></p>
-      </section>
+      <div id="provenance-disclosure" class="provenance-disclosure" data-provenance-open="false">
+        <button id="provenance-trigger" class="info-trigger" type="button" aria-label="Earth data details" aria-controls="provenance-panel" aria-expanded="false" aria-describedby="earth-state-summary"></button>
+        <section id="provenance-panel" class="hud" role="region" aria-labelledby="provenance-title" aria-hidden="true" hidden>
+          <header class="hud-header">
+            <p class="eyebrow">ORBITAL VIEW · DATA PROVENANCE</p>
+            <h1 id="provenance-title">TheMarble</h1>
+            <p id="provenance-state" class="state-label">Loading verified Earth state</p>
+          </header>
+          <p id="clock" class="clock"></p>
+          <p id="sun-status" class="detail"></p>
+          <div id="provenance-sections" class="provenance-sections"></div>
+        </section>
+      </div>
+      <p id="earth-state-summary" class="sr-only">TheMarble is loading a verified Earth state.</p>
       <div id="loading" class="loading" role="status" aria-label="Loading Earth"></div>
     </main>
     <script type="module" src="/src/main.ts"></script>

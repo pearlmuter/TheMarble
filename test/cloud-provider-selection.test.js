@@ -26,6 +26,7 @@ test('fresh complete SatCORPS wins over an equally fresh GMGSI fallback', () => 
       sequence('satcorps', '2026-08-25T14:00:00Z', '2026-08-25T15:00:00Z'),
     ],
     retrievedAt: '2026-08-25T16:00:00Z',
+    satcorpsPromoted: true,
   });
 
   assert.equal(selected.provider, 'satcorps');
@@ -44,6 +45,7 @@ test('the newest usable sequence wins within the preferred provider', () => {
       sequence('satcorps', '2026-08-25T15:00:00Z', '2026-08-25T16:00:00Z'),
     ],
     retrievedAt: '2026-08-25T16:30:00Z',
+    satcorpsPromoted: true,
   });
   assert.equal(selected.frames[1].validAt, '2026-08-25T16:00:00Z');
 });
@@ -68,6 +70,7 @@ test('GMGSI takes over when SatCORPS is stale, incomplete, corrupt, or below cov
     const selected = selectCloudProviderSequence({
       sequences: [fallback, satcorps],
       retrievedAt: '2026-08-25T16:00:00Z',
+      satcorpsPromoted: true,
     });
     assert.equal(selected.provider, 'gmgsi');
     assert.equal(selected.fallback.from, 'satcorps');
@@ -79,6 +82,7 @@ test('selection rejects incoherent frame spacing and never regresses the publish
   assert.throws(() => selectCloudProviderSequence({
     sequences: [sequence('satcorps', '2026-08-25T14:00:00Z', '2026-08-25T15:30:00Z')],
     retrievedAt: '2026-08-25T16:30:00Z',
+    satcorpsPromoted: true,
   }), /usable cloud provider sequence/i);
 
   const selected = selectCloudProviderSequence({
@@ -96,5 +100,20 @@ test('future observations and products produced after retrieval are rejected', (
   assert.throws(() => selectCloudProviderSequence({
     sequences: [future],
     retrievedAt: '2026-08-25T16:05:00Z',
+    satcorpsPromoted: true,
   }), /usable cloud provider sequence/i);
+});
+
+test('GMGSI remains preferred until a completed soak explicitly promotes SatCORPS', () => {
+  const selected = selectCloudProviderSequence({
+    sequences: [
+      sequence('gmgsi', '2026-08-25T14:00:00Z', '2026-08-25T15:00:00Z'),
+      sequence('satcorps', '2026-08-25T14:00:00Z', '2026-08-25T15:00:00Z'),
+    ],
+    retrievedAt: '2026-08-25T16:00:00Z',
+  });
+
+  assert.equal(selected.provider, 'gmgsi');
+  assert.equal(selected.fallback.from, 'satcorps');
+  assert.match(selected.fallback.reason, /promotion|soak/i);
 });

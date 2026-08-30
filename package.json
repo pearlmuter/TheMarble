@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "node scripts/prepare-basis-transcoder.mjs && vite",
+    "build": "node scripts/prepare-basis-transcoder.mjs && tsc && vite build",
     "publish:earth-state": "node scripts/publish-earth-state.mjs",
     "publish:gmgsi": "node scripts/publish-gmgsi-earth-state.mjs",
     "publish:clouds": "node scripts/publish-cloud-earth-state.mjs",
@@ -13,17 +13,23 @@
     "compose:satcorps": "python3 scripts/satcorps_compositor.py",
     "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
     "publish:rolling-surface": "node scripts/publish-rolling-surface-earth-state.mjs",
+    "publish:presentation-tiers": "node scripts/publish-presentation-tiers.mjs",
+    "smoke:production": "node scripts/smoke-earth-production.mjs",
+    "monitor:production": "node scripts/monitor-earth-production.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
+    "astronomy-engine": "2.1.19",
     "three": "^0.167.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
     "@types/three": "^0.167.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.5.4",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "yaml": "^2.9.0"
   }
 }
