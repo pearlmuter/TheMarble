@@ -51,6 +51,7 @@ test('the feed commands and acceptance thresholds are versioned with the app', a
   assert.equal(packageDocument.scripts['build:cryosphere-catalog'], 'node scripts/build-cryosphere-catalog.mjs');
   assert.equal(packageDocument.scripts['verify:earth-state-feed'], 'node scripts/verify-earth-state-feed.mjs');
   assert.equal(packageDocument.scripts['preview:live'], 'node scripts/preview-live-earth-state.mjs');
+  assert.equal(packageDocument.scripts['feed:serve'], 'node scripts/serve-earth-state-feed.mjs');
 });
 
 test('the corrupt-pointer half of the smoke check runs where a served app already exists', async () => {

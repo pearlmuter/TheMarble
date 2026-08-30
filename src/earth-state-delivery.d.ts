@@ -15,6 +15,8 @@ export interface EarthStateDeliveryReport {
   problems: { path?: string; reason: string }[];
 }
 
+export function earthStateDeliveryHeaders(path: string, mediaType?: string): Record<string, string>;
+
 export function classifyEarthStateDeliveryPath(path: string): EarthStateDeliveryClass;
 
 export function evaluateEarthStateDelivery(options: {

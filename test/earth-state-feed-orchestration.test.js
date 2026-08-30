@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateEarthStateFeedRun, readEarthStateFeedLayers, readPublicationOutcome, representativeEarthStateAssetHref } from '../src/earth-state-feed-orchestration.js';
+import { evaluateEarthStateFeedRun, readEarthStateFeedLayers, readEarthStateFeedRunReport, readPublicationOutcome, representativeEarthStateAssetHref } from '../src/earth-state-feed-orchestration.js';
 
 const cloudFrame = validAt => ({
   validAt,
@@ -190,6 +190,16 @@ test('a producer outcome survives the compositor output sharing its stream', () 
     '',
   ].join('\n');
   assert.deepEqual(readPublicationOutcome(stdout), { status: 'published', validAt: '2026-08-30T17:00:00Z' });
+});
+
+test('a producer outcome is found even when a later object follows it', () => {
+  // The orchestrator prints its run report after each producer's outcome.
+  const stdout = [
+    '{', '  "status": "unchanged",', '  "validAt": "2026-08-30T18:00:00Z"', '}',
+    '{', '  "severity": "ok",', '  "advanced": []', '}', '',
+  ].join('\n');
+  assert.deepEqual(readPublicationOutcome(stdout), { status: 'unchanged', validAt: '2026-08-30T18:00:00Z' });
+  assert.deepEqual(readEarthStateFeedRunReport(stdout), { severity: 'ok', advanced: [] });
 });
 
 test('a producer that reports no outcome is not mistaken for a successful publication', () => {

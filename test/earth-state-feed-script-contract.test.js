@@ -79,3 +79,21 @@ test('local visual acceptance publishes a real state and opens the app against i
   assert.match(fixture, /local-preview-fixture/);
   assert.match(fixture, /Local preview fixture \(not an observation\)/);
 });
+
+test('the local feed daemon serves what the delivery rules require and republishes on a timer', async () => {
+  const source = await read('scripts/serve-earth-state-feed.mjs');
+  assert.match(source, /earthStateDeliveryHeaders/);
+  assert.match(source, /publish-earth-state-feed\.mjs/);
+  assert.match(source, /setInterval/);
+  assert.match(source, /readEarthStateFeedRunReport/);
+  // A request that escapes the served root must never be readable.
+  assert.match(source, /startsWith\(`\$\{root\}\$\{sep\}`\)/);
+  // A late provider leaves the previous verified state served rather than killing the daemon.
+  assert.match(source, /previous verified state stays served/);
+});
+
+test('the desktop app is allowed to read the local feed daemon', async () => {
+  const configuration = JSON.parse(await read('src-tauri/tauri.conf.json'));
+  assert.match(configuration.app.security.csp, /http:\/\/127\.0\.0\.1:8788/);
+  assert.match(configuration.app.security.csp, /connect-src[^;]*https:/);
+});

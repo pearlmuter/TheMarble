@@ -10,9 +10,18 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "TheMarble", "width": 1280, "height": 820, "minWidth": 640, "minHeight": 480, "resizable": true }],
+    "windows": [
+      {
+        "title": "TheMarble",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 480,
+        "resizable": true
+      }
+    ],
     "security": {
-      "csp": "default-src 'self' https: data: blob:; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; connect-src 'self' https: ws: http://localhost:1420;"
+      "csp": "default-src 'self' https: data: blob:; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; connect-src 'self' https: ws: http://localhost:1420 http://127.0.0.1:8788 http://localhost:8788;"
     }
   },
   "bundle": {

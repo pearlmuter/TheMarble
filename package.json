@@ -17,6 +17,7 @@
     "publish:presentation-tiers": "node scripts/publish-presentation-tiers.mjs",
     "publish:earth-state-feed": "node scripts/publish-earth-state-feed.mjs",
     "verify:earth-state-feed": "node scripts/verify-earth-state-feed.mjs",
+    "feed:serve": "node scripts/serve-earth-state-feed.mjs",
     "smoke:production": "node scripts/smoke-earth-production.mjs",
     "monitor:production": "node scripts/monitor-earth-production.mjs",
     "test": "node --test test/*.test.js",

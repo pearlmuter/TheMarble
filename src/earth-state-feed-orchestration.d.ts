@@ -40,7 +40,11 @@ export interface EarthStateFeedRunReport {
   problems: EarthStateFeedProblem[];
 }
 
+export function readPublicationReports(stdout: string): unknown[];
+
 export function readPublicationOutcome(stdout: string): { status: string; validAt?: string } | undefined;
+
+export function readEarthStateFeedRunReport(stdout: string): EarthStateFeedRunReport | undefined;
 
 export function adjacentCloudHoursProblem(hours: string[]): string | undefined;
 

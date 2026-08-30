@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyEarthStateDeliveryPath, evaluateEarthStateDelivery } from '../src/earth-state-delivery.js';
+import { classifyEarthStateDeliveryPath, earthStateDeliveryHeaders, evaluateEarthStateDelivery } from '../src/earth-state-delivery.js';
 
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 const POINTER_CACHE = 'public, max-age=30, must-revalidate';
@@ -125,4 +125,32 @@ test('every published path class must be probed before an origin is called produ
   });
   assert.equal(report.ok, false);
   assert.match(report.problems[0].reason, /immutable/);
+});
+
+test('an origin built from the emitted headers passes the check the same module defines', () => {
+  const served = [
+    ['latest.json', 'application/json'],
+    ['latest-presentations.json', 'application/json'],
+    ['bundles/2026-08-30T12-00-00Z-a1b2c3d4e5f60718/manifest.json', 'application/json'],
+    ['assets/3f2a9c6d.png', 'image/png'],
+  ];
+  const report = evaluateEarthStateDelivery({
+    origin: 'https://earth.themarble.test/earth-state/',
+    clientOrigins: ['https://themarble.test', 'tauri://localhost'],
+    probes: served.map(([path, mediaType]) => ({
+      url: `https://earth.themarble.test/earth-state/${path}`,
+      status: 200,
+      headers: earthStateDeliveryHeaders(path, mediaType),
+    })),
+    checkedAt: '2026-08-30T12:05:00Z',
+  });
+  assert.equal(report.ok, true, JSON.stringify(report.problems));
+});
+
+test('the emitted pointer headers keep a client from caching a superseded Earth', () => {
+  const pointer = earthStateDeliveryHeaders('latest.json', 'application/json');
+  assert.match(pointer['cache-control'], /must-revalidate/);
+  assert.equal(pointer['access-control-allow-origin'], '*');
+  const asset = earthStateDeliveryHeaders('assets/abc.ktx2', 'image/ktx2');
+  assert.match(asset['cache-control'], /immutable/);
 });

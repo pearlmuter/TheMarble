@@ -1,11 +1,27 @@
 const POINTER_FILES = new Set(['latest.json', 'latest-presentations.json']);
 const MAXIMUM_POINTER_MAX_AGE_SECONDS = 600;
 const MINIMUM_IMMUTABLE_MAX_AGE_SECONDS = 86_400;
+const POINTER_MAX_AGE_SECONDS = 30;
+const IMMUTABLE_MAX_AGE_SECONDS = 31_536_000;
 const JSON_MEDIA_TYPE = 'application/json';
 
 export function classifyEarthStateDeliveryPath(path) {
   const normalized = path.replace(/^\.?\//, '').split(/[?#]/, 1)[0];
   return POINTER_FILES.has(normalized) ? 'pointer' : 'immutable';
+}
+
+/**
+ * The headers an origin must send for a published path. The verifier below
+ * checks these same rules, so a server built on this cannot fail its own check.
+ */
+export function earthStateDeliveryHeaders(path, mediaType) {
+  return {
+    'access-control-allow-origin': '*',
+    'cache-control': classifyEarthStateDeliveryPath(path) === 'pointer'
+      ? `public, max-age=${POINTER_MAX_AGE_SECONDS}, must-revalidate`
+      : `public, max-age=${IMMUTABLE_MAX_AGE_SECONDS}, immutable`,
+    ...(mediaType ? { 'content-type': mediaType } : {}),
+  };
 }
 
 function cacheDirectives(value) {

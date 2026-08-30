@@ -24,22 +24,37 @@ export function adjacentCloudHoursProblem(hours) {
 }
 
 /**
- * Read a producer's publication outcome from its captured stdout.
- * A producer shares its stdout with the compositors it spawns, so the outcome is
- * the last standalone JSON object in the stream, never the first brace in it.
+ * Every top-level JSON object a producer printed, in order.
+ * Producers share stdout with the compositors they spawn and print
+ * `JSON.stringify(value, null, 2)`, so each object opens on a bare `{` line and
+ * closes on a bare `}` line. Parsing whole blocks keeps one object's text from
+ * swallowing the next.
  */
-export function readPublicationOutcome(stdout) {
+export function readPublicationReports(stdout) {
   const lines = stdout.split('\n');
-  for (let start = lines.length - 1; start >= 0; start -= 1) {
+  const reports = [];
+  for (let start = 0; start < lines.length; start += 1) {
     if (lines[start] !== '{') continue;
+    const end = lines.indexOf('}', start + 1);
+    if (end === -1) break;
     try {
-      const report = JSON.parse(lines.slice(start).join('\n'));
-      if (typeof report?.status === 'string') return report;
+      reports.push(JSON.parse(lines.slice(start, end + 1).join('\n')));
     } catch {
-      // Not a complete object at this offset; keep scanning backwards.
+      // A brace that does not open a complete object is not a report.
     }
+    start = end;
   }
-  return undefined;
+  return reports;
+}
+
+/** The publication outcome a single producer reported, if it reported one. */
+export function readPublicationOutcome(stdout) {
+  return readPublicationReports(stdout).findLast(report => typeof report?.status === 'string');
+}
+
+/** The combined run report the feed orchestrator prints last. */
+export function readEarthStateFeedRunReport(stdout) {
+  return readPublicationReports(stdout).findLast(report => typeof report?.severity === 'string');
 }
 
 /** One published asset the delivery probe can sample, chosen from the newest cloud frame first. */
