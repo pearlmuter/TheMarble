@@ -1,0 +1,91 @@
+name: Earth state daily cryosphere
+
+# IMS publishes a daily analysis around 00 UTC; this job retrieves the daily
+# providers a few hours later and advances the published state at most once per
+# validated UTC analysis day. It shares one concurrency group with the hourly
+# cloud producer so the two never race for `latest.json`.
+on:
+  schedule:
+    - cron: '25 5,11,17 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: earth-state-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Install the cryosphere compositor environment
+        run: |
+          python3 -m venv .venv-cryosphere
+          .venv-cryosphere/bin/pip install -r requirements-cryosphere.txt
+      - name: Retrieve the published Earth state
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+        run: |
+          mkdir -p artifacts/earth-state
+          aws s3 sync "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" artifacts/earth-state --no-progress
+      - name: Build the daily source catalog from the provider adapters
+        env:
+          THEMARBLE_IMS_URL_TEMPLATE: ${{ vars.THEMARBLE_IMS_URL_TEMPLATE }}
+          THEMARBLE_GMASI_SNOW_URL_TEMPLATE: ${{ vars.THEMARBLE_GMASI_SNOW_URL_TEMPLATE }}
+          THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE: ${{ vars.THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE }}
+          THEMARBLE_VIIRS_SNOW_URL_TEMPLATE: ${{ vars.THEMARBLE_VIIRS_SNOW_URL_TEMPLATE }}
+          THEMARBLE_VIIRS_QUALITY_URL_TEMPLATE: ${{ vars.THEMARBLE_VIIRS_QUALITY_URL_TEMPLATE }}
+          THEMARBLE_EARTHDATA_TOKEN: ${{ secrets.THEMARBLE_EARTHDATA_TOKEN }}
+        run: >-
+          npm run build:cryosphere-catalog --
+          --python .venv-cryosphere/bin/python
+          --output artifacts/cryosphere
+      - name: Publish the newest validated analysis day
+        run: >-
+          npm run publish:earth-state-feed --
+          --python .venv-cryosphere/bin/python
+          --output artifacts/earth-state
+          --cryosphere-catalog artifacts/cryosphere/cryosphere-catalog.json
+          --skip-clouds true
+          --report artifacts/earth-state-feed/cryosphere.json
+      - name: Upload immutable assets before the latest pointer
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+        run: |
+          aws s3 sync artifacts/earth-state "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" \
+            --exclude 'latest*.json' --exclude 'feed-run.json' \
+            --cache-control 'public, max-age=31536000, immutable' --no-progress
+          aws s3 cp artifacts/earth-state/latest.json "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}/latest.json" \
+            --cache-control 'public, max-age=30, must-revalidate' --content-type application/json
+      - name: Verify the served feed
+        run: >-
+          npm run verify:earth-state-feed --
+          --origin "${{ vars.THEMARBLE_CDN_ORIGIN }}"
+          --client-origins "${{ vars.THEMARBLE_CLIENT_ORIGINS }}"
+          --report artifacts/earth-state-feed/delivery.json
+      - name: Retain the publication record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: earth-state-cryosphere-${{ github.run_id }}
+          path: |
+            artifacts/earth-state-feed
+            artifacts/cryosphere/cryosphere-catalog.json
+          if-no-files-found: warn
+          retention-days: 30

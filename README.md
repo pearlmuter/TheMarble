@@ -60,6 +60,21 @@ The advanced path accepts two adjacent NASA SatCORPS Global Cloud Composite fram
 
 The selector requires two coherent hourly frames, at least 90% observed coverage, at least 70% usable retrievals, and a newest frame no more than two hours old. The compositor independently verifies those catalog claims from the pixels, follows NetCDF scale/fill metadata, and preserves cloud mask, 0.63 µm reflectance, optical depth, liquid/ice phase, effective height, per-pixel relative observation time, and retrieval quality in four GPU-ready textures. Publication remains atomic across all four textures, and older GMGSI-only bundles remain schema-compatible. `npm run compose:satcorps` remains available for inspecting one product. Because SatCORPS is still an early-access service, discovery and continuous endpoint measurement belong to the operational soak test rather than the browser.
 
+### Run the live production feed
+
+One orchestration command runs both producers against the same published state, so an hourly cloud advance preserves the daily cryosphere and a daily analysis preserves the cloud sequence:
+
+```sh
+npm run publish:earth-state-feed -- \
+  --python .venv-gmgsi/bin/python \
+  --output artifacts/earth-state \
+  --cryosphere-catalog artifacts/cryosphere/cryosphere-catalog.json
+```
+
+It refuses to call a run coherent if any layer's valid time regresses, a layer disappears, or a producer claims a publication the combined state does not bear out; a late provider leaves the previous coherent Earth published with a truthful, increasing age. `npm run build:cryosphere-catalog` is the provider side of the daily contract: it retrieves and reprojects current IMS, the preferred global GMASI (or the disclosed AMSR2 contingency), and quality-screened VIIRS into the catalog the cryosphere publisher consumes. `npm run verify:earth-state-feed -- --origin <https origin>` checks the served CORS and cache behaviour both clients need and proves the served manifest carries two recent observed cloud hours plus paired daily snow and sea ice. Scheduling, credentials ownership, delivery, stale-feed behaviour, and the rollback procedure are in [`docs/live-feed-deployment.md`](docs/live-feed-deployment.md).
+
+For local visual acceptance, `npm run preview:live` publishes real GMGSI clouds plus a clearly labelled daily fixture into a git-ignored preview directory and opens TheMarble against it.
+
 Production health is checked separately from publication. The scheduled monitor distinguishes provider lateness, transformation, compositor, publication, delivery, and client-currentness failures; captures fixed day/terminator/night views; and retains a multi-week SatCORPS-versus-GMGSI soak before allowing promotion. Setup, thresholds, artifacts, and the tested rollback runbook are documented in [`docs/production-operations.md`](docs/production-operations.md).
 
 ### Complete polar and observation gaps honestly

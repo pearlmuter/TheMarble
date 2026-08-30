@@ -1,0 +1,75 @@
+name: Earth state hourly clouds
+
+# The cloud producer polls every 10 minutes and advances the published state at
+# most once per validated nominal hour. Repeated polls inside one hour report
+# `unchanged` and leave `latest.json` untouched.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: earth-state-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Install the cloud compositor environment
+        run: |
+          python3 -m venv .venv-gmgsi
+          .venv-gmgsi/bin/pip install -r requirements-gmgsi.txt
+      - name: Retrieve the published Earth state
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+        run: |
+          mkdir -p artifacts/earth-state
+          aws s3 sync "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" artifacts/earth-state --no-progress
+      - name: Publish the newest validated cloud hour
+        id: publish
+        run: >-
+          npm run publish:earth-state-feed --
+          --python .venv-gmgsi/bin/python
+          --output artifacts/earth-state
+          --report artifacts/earth-state-feed/clouds.json
+      - name: Upload immutable assets before the latest pointer
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+        run: |
+          aws s3 sync artifacts/earth-state "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" \
+            --exclude 'latest*.json' --exclude 'feed-run.json' \
+            --cache-control 'public, max-age=31536000, immutable' --no-progress
+          aws s3 cp artifacts/earth-state/latest.json "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}/latest.json" \
+            --cache-control 'public, max-age=30, must-revalidate' --content-type application/json
+      - name: Verify the served feed
+        run: >-
+          npm run verify:earth-state-feed --
+          --origin "${{ vars.THEMARBLE_CDN_ORIGIN }}"
+          --client-origins "${{ vars.THEMARBLE_CLIENT_ORIGINS }}"
+          --report artifacts/earth-state-feed/delivery.json
+      - name: Retain the publication record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: earth-state-clouds-${{ github.run_id }}
+          path: artifacts/earth-state-feed
+          if-no-files-found: warn
+          retention-days: 30
