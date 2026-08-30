@@ -67,10 +67,31 @@ editing the repository. Templates expand `{ISO_DATE}`, `{YYYY}`, `{MM}`, `{DD}`,
 
 | Source | Default endpoint | Environment override |
 | --- | --- | --- |
-| `ims-snow-ice` | NOAA `usnic_ims_snow_ice_1km` ImageServer, EPSG:4326 export | `THEMARBLE_IMS_URL_TEMPLATE` |
+| `ims-snow-ice` | none — see below | `THEMARBLE_IMS_URL_TEMPLATE` |
 | `gmasi-snow`, `gmasi-sea-ice` | none — operations owned | `THEMARBLE_GMASI_SNOW_URL_TEMPLATE`, `THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE` |
-| `amsr2-snow`, `amsr2-sea-ice` | NASA GIBS WMS, EPSG:4326 | `THEMARBLE_AMSR2_SNOW_URL_TEMPLATE`, `THEMARBLE_AMSR2_SEA_ICE_URL_TEMPLATE` |
+| `amsr2-snow`, `amsr2-sea-ice` | none — see below | `THEMARBLE_AMSR2_SNOW_URL_TEMPLATE`, `THEMARBLE_AMSR2_SEA_ICE_URL_TEMPLATE` |
 | `viirs-snow` | none — operations owned | `THEMARBLE_VIIRS_SNOW_URL_TEMPLATE`, `THEMARBLE_VIIRS_QUALITY_URL_TEMPLATE` |
+
+**No daily source ships with a working public default.** Two candidates were
+tried against the live services on 2026-08-30 and both serve pictures rather
+than data:
+
+- the NOAA `usnic_ims_snow_ice_1km` ImageServer returned 117 distinct values
+  spanning 0-242 instead of the documented 0-4 class grid, and an explicit
+  `renderingRule={"rasterFunction":"None"}` did not change that;
+- NASA GIBS WMS returned an all-zero RGB image for both AMSR2 layers,
+  byte-identical across layers and days.
+
+The lesson generalises: **a visualisation endpoint is not a data endpoint.**
+Every daily source therefore needs an operations-supplied endpoint that serves
+retrieval values — the NSIDC G02156 ASCII archive for IMS (which this adapter
+reads, though it needs the polar-stereographic grid files for the `scattered`
+path), and Earthdata-authenticated products for the global analysis.
+
+An `ims-snow-ice` delivery must declare its class set, and the adapter refuses
+anything outside it. That guard is what caught the ImageServer above; the
+earlier `classes` semantics cast silently to `uint8` and would have published
+symbology as an analysis.
 
 GMASI has no stable public bucket, so this repository does not guess one; each
 unconfigured source carries a `reason` saying why. Until operations configures a

@@ -11,7 +11,7 @@
       "version": "usnic-ims-1km-v1.3",
       "attribution": "U.S. National Ice Center IMS",
       "required": false,
-      "urlTemplate": "https://mapservices.weather.noaa.gov/raster/rest/services/obs/usnic_ims_snow_ice_1km/ImageServer/exportImage?bbox=-180,0,180,90&bboxSR=4326&imageSR=4326&size={WIDTH},{NORTHERN_HEIGHT}&time={EPOCH_MS}&format=tiff&pixelType=U8&interpolation=RSP_NearestNeighbor&noData=0&f=image",
+      "urlTemplate": null,
       "urlTemplateEnv": "THEMARBLE_IMS_URL_TEMPLATE",
       "extension": ".tif",
       "input": {
@@ -25,8 +25,16 @@
         }
       },
       "semantics": {
-        "type": "classes"
-      }
+        "type": "classes",
+        "allowed": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "reason": "The NOAA usnic_ims_snow_ice_1km ImageServer returns rendered symbology, not the documented 0-4 class grid: a 2026-08-30 export gave 117 distinct values in 0-242, and renderingRule={\"rasterFunction\":\"None\"} did not change that. Raw classes come from the NSIDC G02156 ASCII archive, which this adapter reads but which needs the polar-stereographic grid files."
     },
     {
       "product": "gmasi-snow",
@@ -80,7 +88,7 @@
       "attribution": "NASA/JAXA AMSR2",
       "required": false,
       "contingency": true,
-      "urlTemplate": "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=AMSRU2_Snow_Water_Equivalent_Daily&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH={WIDTH}&HEIGHT={HEIGHT}&FORMAT=image/tiff&TIME={ISO_DATE}",
+      "urlTemplate": null,
       "urlTemplateEnv": "THEMARBLE_AMSR2_SNOW_URL_TEMPLATE",
       "extension": ".tif",
       "input": {
@@ -89,7 +97,8 @@
       "semantics": {
         "type": "fraction",
         "scale": 0.02
-      }
+      },
+      "reason": "NASA GIBS WMS serves a rendered RGB visualisation, not retrieval values, and a 2026-08-30 GetMap for this layer returned an all-zero image byte-identical across layers and days. Values would need an Earthdata-authenticated NSIDC AMSR2 product."
     },
     {
       "product": "amsr2-sea-ice",
@@ -97,7 +106,7 @@
       "attribution": "NASA/JAXA AMSR2",
       "required": false,
       "contingency": true,
-      "urlTemplate": "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=AMSRU2_Sea_Ice_Concentration_12km&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH={WIDTH}&HEIGHT={HEIGHT}&FORMAT=image/tiff&TIME={ISO_DATE}",
+      "urlTemplate": null,
       "urlTemplateEnv": "THEMARBLE_AMSR2_SEA_ICE_URL_TEMPLATE",
       "extension": ".tif",
       "input": {
@@ -106,7 +115,8 @@
       "semantics": {
         "type": "fraction",
         "scale": 0.01
-      }
+      },
+      "reason": "NASA GIBS WMS serves a rendered RGB visualisation, not retrieval values, and a 2026-08-30 GetMap for this layer returned an all-zero image byte-identical across layers and days. Values would need an Earthdata-authenticated NSIDC AMSR2 product."
     },
     {
       "product": "viirs-snow",

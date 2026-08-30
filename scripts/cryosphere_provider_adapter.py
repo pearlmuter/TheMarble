@@ -38,6 +38,9 @@ VIIRS_CLOUD = 250
 VIIRS_SENTINELS = (VIIRS_NO_DECISION, VIIRS_NIGHT, VIIRS_INLAND_WATER, VIIRS_OCEAN, VIIRS_CLOUD)
 # VNP10 Basic_QA: 0 best, 1 good, 2 ok, 3 poor; anything else is unusable.
 VIIRS_QUALITY_BY_FLAG = {0: 1.0, 1: 0.9, 2: 0.5}
+# USNIC/NSIDC IMS: 0 outside coverage, 1 open water, 2 snow-free land,
+# 3 sea/lake ice, 4 snow-covered land.
+IMS_CLASSES = (0, 1, 2, 3, 4)
 
 
 def target_latitudes(height):
@@ -121,6 +124,25 @@ def resample_scattered(values, latitudes, longitudes, width, height, aggregate):
     winner = tally.argmax(axis=1)
     winner[tally.max(axis=1) == 0] = 0
     return winner.reshape(height, width).astype(values.dtype)
+
+
+def require_classes(values, allowed, name):
+    """Refuse a delivery whose values are not the declared class set.
+
+    A rendered visualisation decodes as a smooth ramp rather than a handful of
+    classes. Casting that to uint8 would publish symbology as if it were an
+    analysis, so an undeclared value fails the run.
+    """
+    values = np.asarray(values)
+    present = np.unique(values)
+    undeclared = [int(value) for value in present if int(value) not in set(allowed)]
+    if undeclared:
+        raise ValueError(
+            f"{name} delivered {len(present)} distinct values including {undeclared[:8]}, "
+            f"which are not its declared classes {sorted(allowed)}; the endpoint is returning "
+            "rendered symbology rather than the analysis"
+        )
+    return values.astype(np.uint8)
 
 
 def map_classes(values, mapping, name):
@@ -247,7 +269,7 @@ def adapt_source(source, width, height, output_directory):
     quality = None
 
     if semantics["type"] == "classes":
-        values = grid.astype(np.uint8)
+        values = require_classes(grid, semantics.get("allowed", IMS_CLASSES), source["product"])
     elif semantics["type"] == "class-map":
         values = map_classes(grid, semantics["map"], f"{source['product']} classes")
     elif semantics["type"] == "fraction":

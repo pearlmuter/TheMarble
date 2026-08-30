@@ -90,6 +90,18 @@ class DeclaredClassSemantics(unittest.TestCase):
             adapter.map_classes(classes, {"0": 0.0}, "GMASI snow")
 
 
+class DeclaredClassValues(unittest.TestCase):
+    def test_the_documented_ims_class_set_passes_through_unchanged(self):
+        grid = np.array([[0, 1], [3, 4]], dtype=np.uint8)
+        self.assertTrue(np.array_equal(adapter.require_classes(grid, adapter.IMS_CLASSES, "IMS"), grid))
+
+    def test_rendered_symbology_is_refused_rather_than_published_as_an_analysis(self):
+        # A rendered visualisation decodes as a smooth ramp, not a handful of classes.
+        ramp = np.arange(0, 240, 2, dtype=np.uint8).reshape(12, 10)
+        with self.assertRaisesRegex(ValueError, "rendered symbology"):
+            adapter.require_classes(ramp, adapter.IMS_CLASSES, "IMS")
+
+
 class ViirsQualityScreening(unittest.TestCase):
     def test_sunlit_clear_high_confidence_snow_is_kept_with_full_quality(self):
         ndsi = np.array([[80.0]], dtype=np.float32)
