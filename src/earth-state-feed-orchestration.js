@@ -1,12 +1,52 @@
+import { EARTH_STATE_CRYOSPHERE_LAYERS } from './earth-state.js';
+
 const HOUR_MS = 60 * 60 * 1000;
-const CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
+const CRYOSPHERE_LAYERS = EARTH_STATE_CRYOSPHERE_LAYERS;
 const STAGE_STATUSES = new Set(['published', 'unchanged', 'failed']);
 const STAGE_LAYERS = { clouds: ['clouds'], cryosphere: CRYOSPHERE_LAYERS };
 
-function instant(value, name) {
+function requireInstant(value, name) {
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) throw new Error(`Invalid Earth-state feed ${name}: ${value}`);
   return parsed;
+}
+
+/** The renderer crossfades two adjacent observed hours; anything else is not a cloud sequence. */
+export function adjacentCloudHoursProblem(hours) {
+  if (hours.length !== 2) {
+    return `carry ${hours.length} observed ${hours.length === 1 ? 'hour' : 'hours'} instead of two adjacent observed hours`;
+  }
+  const [from, to] = hours.map(hour => Date.parse(hour));
+  if (Number.isNaN(from) || Number.isNaN(to) || to - from !== HOUR_MS) {
+    return `carry ${hours.join(' and ')}, which are not two adjacent observed hours`;
+  }
+  return undefined;
+}
+
+/**
+ * Read a producer's publication outcome from its captured stdout.
+ * A producer shares its stdout with the compositors it spawns, so the outcome is
+ * the last standalone JSON object in the stream, never the first brace in it.
+ */
+export function readPublicationOutcome(stdout) {
+  const lines = stdout.split('\n');
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    if (lines[start] !== '{') continue;
+    try {
+      const report = JSON.parse(lines.slice(start).join('\n'));
+      if (typeof report?.status === 'string') return report;
+    } catch {
+      // Not a complete object at this offset; keep scanning backwards.
+    }
+  }
+  return undefined;
+}
+
+/** One published asset the delivery probe can sample, chosen from the newest cloud frame first. */
+export function representativeEarthStateAssetHref(manifest) {
+  const frameLayers = Object.values(manifest.cloudSequence?.frames?.at(-1)?.layers ?? {});
+  const layers = Object.values(manifest.layers ?? {});
+  return [...frameLayers, ...layers].find(layer => layer?.asset?.href)?.asset?.href;
 }
 
 export function readEarthStateFeedLayers(manifest) {
@@ -29,14 +69,6 @@ export function readEarthStateFeedLayers(manifest) {
       .filter(([, provenance]) => provenance !== undefined)
       .map(([layer, provenance]) => [layer, { validAt: provenance.validAt }])),
   };
-}
-
-function cloudSequenceProblem(clouds) {
-  if (!clouds) return undefined;
-  if (clouds.hours.length !== 2) return `clouds carry ${clouds.hours.length} observed hours instead of two`;
-  const [from, to] = clouds.hours.map(hour => instant(hour, 'cloud hour'));
-  if (to - from !== HOUR_MS) return `clouds carry ${clouds.hours.join(' and ')}, which are not two adjacent observed hours`;
-  return undefined;
 }
 
 export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) {
@@ -66,8 +98,8 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
       fail({ layer, reason: `${layer} disappeared from the combined Earth state` });
       continue;
     }
-    const previousValidAt = instant(previous.validAt, 'valid time');
-    const currentValidAt = instant(current.validAt, 'valid time');
+    const previousValidAt = requireInstant(previous.validAt, 'valid time');
+    const currentValidAt = requireInstant(current.validAt, 'valid time');
     if (currentValidAt < previousValidAt) {
       fail({
         layer,
@@ -77,8 +109,8 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
     else retained.push(layer);
   }
 
-  const sequenceProblem = cloudSequenceProblem(after.clouds);
-  if (sequenceProblem) fail({ layer: 'clouds', reason: sequenceProblem });
+  const sequenceProblem = after.clouds && adjacentCloudHoursProblem(after.clouds.hours);
+  if (sequenceProblem) fail({ layer: 'clouds', reason: `clouds ${sequenceProblem}` });
 
   let broken = false;
   for (const stage of stages) {

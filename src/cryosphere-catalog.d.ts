@@ -1,7 +1,10 @@
 import type { CryosphereCandidate, CryosphereProduct, DailyCryosphereSelection } from './cryosphere-selection.js';
 
+export declare const CRYOSPHERE_ATTRIBUTION: Readonly<Record<CryosphereProduct, string>>;
+
 export interface CryosphereAdapterProduct {
   product: CryosphereProduct;
+  key?: string;
   validAt: string;
   producedAt: string;
   version: string;
@@ -20,6 +23,11 @@ export interface CryosphereCatalog {
   contingency?: 'amsr2';
   contingencyReason?: string;
 }
+
+export function newestObservedCryosphereDays(products: CryosphereAdapterProduct[]): {
+  products: CryosphereAdapterProduct[];
+  excluded: { product: CryosphereProduct; validAt: string; reason: string }[];
+};
 
 export function buildCryosphereCatalog(options: {
   products: CryosphereAdapterProduct[];

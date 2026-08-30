@@ -185,6 +185,22 @@ class AdaptedProductDescription(unittest.TestCase):
         self.assertEqual(product["arrayPath"], "ims-snow-ice.npy")
         self.assertNotIn("qualityArrayPath", product)
 
+    def test_a_candidate_day_key_keeps_several_days_of_one_product_apart(self):
+        source_path = self.directory / "ims.npy"
+        np.save(source_path, np.full((4, 4), 4, dtype=np.uint8))
+        product = adapter.adapt_source({
+            "product": "ims-snow-ice",
+            "key": "ims-snow-ice@2026-08-29",
+            "validAt": "2026-08-29T00:00:00Z",
+            "producedAt": "2026-08-29T04:00:00Z",
+            "version": "ims-v1.3",
+            "input": {"path": str(source_path), "kind": "regular"},
+            "semantics": {"type": "classes"},
+        }, width=4, height=4, output_directory=self.directory / "out")
+        self.assertEqual(product["arrayPath"], "ims-snow-ice@2026-08-29.npy")
+        self.assertEqual(product["product"], "ims-snow-ice")
+        self.assertTrue((self.directory / "out" / "ims-snow-ice@2026-08-29.npy").exists())
+
     def test_an_adapted_viirs_delivery_publishes_its_quality_array_beside_the_snow_array(self):
         ndsi = np.full((4, 4), 80.0, dtype=np.float32)
         ndsi[2:, :] = float(adapter.VIIRS_CLOUD)

@@ -1,35 +1,37 @@
 import { cloudProviderMaxAgeSeconds } from './cloud-provider-selection.js';
+import { adjacentCloudHoursProblem } from './earth-state-feed-orchestration.js';
+import { EARTH_STATE_CRYOSPHERE_LAYERS } from './earth-state.js';
 
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
-const MAXIMUM_CRYOSPHERE_AGE_DAYS = 3;
-const MINIMUM_OBSERVED_FRACTION = 0.5;
-const CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_EARTH_STATE_ACCEPTANCE_POLICY = Object.freeze({
+  minimumCloudObservedFraction: 0.5,
+  maximumCryosphereAgeDays: 3,
+});
+const CRYOSPHERE_LAYERS = EARTH_STATE_CRYOSPHERE_LAYERS;
 const REQUIRED_PROVENANCE = ['validAt', 'producedAt', 'sourceVersion', 'attribution'];
+// 'remote' is accepted because a client that had already activated a bundle keeps it as
+// last-known-good; the required `refresh: failed` below is what proves the pointer was refused.
 const ACCEPTED_DEGRADED_SOURCES = new Set(['bundled-fallback', 'offline-cache', 'remote']);
 
-function instant(value) {
+function parseInstant(value) {
   const parsed = Date.parse(value ?? '');
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
-function checkClouds(manifest, checkedAtMs, failures) {
+function checkClouds(manifest, checkedAtMs, policy, failures) {
   const sequence = manifest.cloudSequence;
   const frames = sequence?.frames ?? [];
   if (frames.length === 0) {
     failures.push('The served Earth state carries no cloud sequence, so it does not show two recent observed frames');
     return undefined;
   }
-  if (frames.length !== 2) {
-    failures.push(`The served cloud sequence carries ${frames.length} frames instead of two adjacent observed hours`);
-    return undefined;
-  }
   const hours = frames.map(frame => frame.validAt);
-  const [from, to] = hours.map(instant);
-  if (from === undefined || to === undefined || to - from !== HOUR_MS) {
-    failures.push(`The served cloud frames ${hours.join(' and ')} are not two adjacent observed hours`);
+  const sequenceProblem = adjacentCloudHoursProblem(hours);
+  if (sequenceProblem) {
+    failures.push(`The served cloud frames ${sequenceProblem}`);
     return undefined;
   }
+  const to = parseInstant(hours[1]);
 
   const maximumAgeSeconds = cloudProviderMaxAgeSeconds(sequence.provider);
   if (!Number.isFinite(maximumAgeSeconds)) {
@@ -40,11 +42,11 @@ function checkClouds(manifest, checkedAtMs, failures) {
     failures.push(`The served cloud observations are ${ageMinutes} minutes old, beyond the ${Math.round(maximumAgeSeconds / 60)} minute ${sequence.provider} freshness limit`);
   }
   for (const frame of frames) {
-    if (!instant(frame.observedFrom) || !instant(frame.observedTo)) {
+    if (!parseInstant(frame.observedFrom) || !parseInstant(frame.observedTo)) {
       failures.push(`The served cloud frame ${frame.validAt} does not carry a genuine observation window`);
     }
     const observed = frame.coverage?.observedFraction;
-    if (!Number.isFinite(observed) || observed < MINIMUM_OBSERVED_FRACTION) {
+    if (!Number.isFinite(observed) || observed < policy.minimumCloudObservedFraction) {
       failures.push(`The served cloud frame ${frame.validAt} has ${Math.round((observed ?? 0) * 100)}% observed coverage, which is not an observation-led state`);
     }
   }
@@ -61,7 +63,7 @@ function checkClouds(manifest, checkedAtMs, failures) {
   };
 }
 
-function checkCryosphere(manifest, checkedAtMs, failures) {
+function checkCryosphere(manifest, checkedAtMs, policy, failures) {
   const present = CRYOSPHERE_LAYERS.filter(layer => manifest.layers?.[layer]?.provenance !== undefined);
   const missing = CRYOSPHERE_LAYERS.filter(layer => !present.includes(layer));
   if (missing.length > 0) {
@@ -90,14 +92,14 @@ function checkCryosphere(manifest, checkedAtMs, failures) {
     failures.push(`The served snow (${days[0]}) and sea ice (${days[1]}) do not come from the same analysis day`);
     return undefined;
   }
-  const validAtMs = instant(days[0]);
+  const validAtMs = parseInstant(days[0]);
   if (validAtMs === undefined) {
     failures.push(`The served cryosphere analysis time ${days[0]} is not a valid instant`);
     return undefined;
   }
   const ageDays = Math.floor((checkedAtMs - validAtMs) / DAY_MS);
-  if (ageDays > MAXIMUM_CRYOSPHERE_AGE_DAYS) {
-    failures.push(`The served daily snow and sea-ice analysis is ${ageDays} days old, beyond the ${MAXIMUM_CRYOSPHERE_AGE_DAYS} day expectation`);
+  if (ageDays > policy.maximumCryosphereAgeDays) {
+    failures.push(`The served daily snow and sea-ice analysis is ${ageDays} days old, beyond the ${policy.maximumCryosphereAgeDays} day expectation`);
   }
   return {
     validAt: days[0],
@@ -120,19 +122,21 @@ function checkDegraded(degraded, failures) {
   return { runtimeSource: degraded.runtimeSource, refresh: degraded.refresh, bundleId: degraded.bundleId };
 }
 
-export function evaluateEarthStateFeedAcceptance({ manifest, checkedAt, degraded }) {
-  const checkedAtMs = instant(checkedAt);
+export function evaluateEarthStateFeedAcceptance({ manifest, checkedAt, degraded, policy }) {
+  const thresholds = { ...DEFAULT_EARTH_STATE_ACCEPTANCE_POLICY, ...policy };
+  const checkedAtMs = parseInstant(checkedAt);
   if (checkedAtMs === undefined) throw new Error('Earth-state feed acceptance requires a valid checkedAt');
   if (!manifest || typeof manifest.bundleId !== 'string') throw new Error('Earth-state feed acceptance requires the served manifest');
 
   const failures = [];
-  const clouds = checkClouds(manifest, checkedAtMs, failures);
-  const cryosphere = checkCryosphere(manifest, checkedAtMs, failures);
+  const clouds = checkClouds(manifest, checkedAtMs, thresholds, failures);
+  const cryosphere = checkCryosphere(manifest, checkedAtMs, thresholds, failures);
   const fallback = degraded ? checkDegraded(degraded, failures) : undefined;
 
   return {
     schemaVersion: 1,
     checkedAt,
+    policy: thresholds,
     bundleId: manifest.bundleId,
     classification: manifest.classification,
     ok: failures.length === 0,

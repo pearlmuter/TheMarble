@@ -1,6 +1,6 @@
 import { selectDailyCryosphere } from './cryosphere-selection.js';
 
-const ATTRIBUTION = {
+export const CRYOSPHERE_ATTRIBUTION = {
   'ims-snow-ice': 'U.S. National Ice Center IMS',
   'gmasi-snow': 'NOAA/NESDIS GMASI',
   'gmasi-sea-ice': 'NOAA/NESDIS GMASI',
@@ -8,6 +8,28 @@ const ATTRIBUTION = {
   'amsr2-sea-ice': 'NASA/JAXA AMSR2',
   'viirs-snow': 'NASA VIIRS VNP10_NRT',
 };
+/**
+ * Keep the newest candidate day whose adapted pixels actually carry coverage.
+ * A provider asked for a day it does not have answers with an empty grid, so the
+ * day a source contributes is decided from measured pixels, never from the request.
+ */
+export function newestObservedCryosphereDays(products) {
+  const excluded = [];
+  const byProduct = new Map();
+  for (const product of [...products].sort((left, right) => right.validAt.localeCompare(left.validAt))) {
+    if (!(product.coverage?.observedFraction > 0)) {
+      excluded.push({
+        product: product.product,
+        validAt: product.validAt,
+        reason: `${product.product} for ${utcDay(product.validAt)} was delivered but carried no observed pixels`,
+      });
+      continue;
+    }
+    if (!byProduct.has(product.product)) byProduct.set(product.product, product);
+  }
+  return { products: [...byProduct.values()], excluded };
+}
+
 const CONTINGENCY_PRODUCTS = new Set(['amsr2-snow', 'amsr2-sea-ice']);
 const PREFERRED_GLOBAL_PRODUCTS = new Set(['gmasi-snow', 'gmasi-sea-ice']);
 
@@ -28,7 +50,7 @@ function candidateFrom(entry) {
     href: `./${entry.arrayPath.replace(/^\.?\//, '')}`,
     coverage: entry.coverage,
     ...(entry.qualityArrayPath ? { qualityHref: `./${entry.qualityArrayPath.replace(/^\.?\//, '')}` } : {}),
-    attribution: entry.attribution ?? ATTRIBUTION[entry.product],
+    attribution: entry.attribution ?? CRYOSPHERE_ATTRIBUTION[entry.product],
   };
 }
 

@@ -15,7 +15,7 @@ becoming bare ground.
 import argparse
 import gzip
 import json
-import pathlib
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -178,7 +178,7 @@ def latitude_range(observed):
 
 def read_ims_ascii(path):
     """Read the USNIC/NSIDC IMS ASCII grid: header lines, then one digit per cell."""
-    path = pathlib.Path(path)
+    path = Path(path)
     opener = gzip.open if path.suffix == ".gz" else open
     rows = []
     with opener(path, "rt", encoding="ascii") as handle:
@@ -208,7 +208,7 @@ def read_raster(path):
 
 
 def _load_grid(path):
-    path = pathlib.Path(path)
+    path = Path(path)
     suffixes = [suffix.lower() for suffix in path.suffixes]
     if ".npy" in suffixes:
         return np.load(path)
@@ -258,14 +258,16 @@ def adapt_source(source, width, height, output_directory):
     else:
         raise ValueError(f"Unsupported provider semantics: {semantics['type']}")
 
-    output_directory = pathlib.Path(output_directory)
+    output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
-    array_path = output_directory / f"{source['product']}.npy"
+    key = source.get("key", source["product"])
+    array_path = output_directory / f"{key}.npy"
     np.save(array_path, values)
     observed = _observed_mask(source["product"], grid) if quality is None else quality > 0.0
 
     product = {
         "product": source["product"],
+        "key": key,
         "validAt": source["validAt"],
         "producedAt": source["producedAt"],
         "version": source["version"],
@@ -276,7 +278,7 @@ def adapt_source(source, width, height, output_directory):
         },
     }
     if quality is not None:
-        quality_path = output_directory / f"{source['product']}-quality.npy"
+        quality_path = output_directory / f"{key}-quality.npy"
         np.save(quality_path, quality)
         product["qualityArrayPath"] = quality_path.name
     if source.get("attribution"):
@@ -291,11 +293,11 @@ def main():
     parser.add_argument("--products", required=True, help="Path of the emitted product description")
     arguments = parser.parse_args()
 
-    plan = json.loads(pathlib.Path(arguments.plan).read_text(encoding="utf8"))
+    plan = json.loads(Path(arguments.plan).read_text(encoding="utf8"))
     width = int(plan.get("width", 4096))
     height = int(plan.get("height", 2048))
     products = [adapt_source(source, width, height, arguments.output) for source in plan["sources"]]
-    pathlib.Path(arguments.products).write_text(
+    Path(arguments.products).write_text(
         json.dumps({"retrievedAt": plan["retrievedAt"], "products": products}, indent=2) + "\n",
         encoding="utf8",
     )

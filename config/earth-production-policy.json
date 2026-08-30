@@ -28,5 +28,9 @@
     "maximumDimensionChanges": 0,
     "maximumQualityFlagFraction": 0.01,
     "maximumP95InterSourceDisagreementFraction": 0.15
+  },
+  "acceptance": {
+    "minimumCloudObservedFraction": 0.5,
+    "maximumCryosphereAgeDays": 3
   }
 }

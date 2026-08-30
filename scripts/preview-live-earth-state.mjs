@@ -26,10 +26,6 @@ function run(command, args, options = {}) {
   });
 }
 
-function dayOfYear(date) {
-  return Math.floor((date - Date.UTC(date.getUTCFullYear(), 0, 0)) / 86_400_000);
-}
-
 async function buildFixtureCatalog({ python, directory, now }) {
   const validAt = `${now.toISOString().slice(0, 10)}T00:00:00Z`;
   const producedAt = now.toISOString().replace('.000Z', 'Z');
@@ -40,7 +36,6 @@ async function buildFixtureCatalog({ python, directory, now }) {
     join(scriptDirectory, 'preview_cryosphere_fixture.py'),
     '--output', directory,
     '--plan', planPath,
-    '--day-of-year', String(dayOfYear(now)),
     '--valid-at', validAt,
     '--produced-at', producedAt,
   ]);

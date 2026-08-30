@@ -45,11 +45,20 @@ grid. `npm run build:cryosphere-catalog` is the provider side of that contract:
 npm run build:cryosphere-catalog -- --python .venv-cryosphere/bin/python --output artifacts/cryosphere
 ```
 
-It resolves each source's endpoint, downloads the delivered raster, runs
-`scripts/cryosphere_provider_adapter.py` to decode, reproject, and screen it, and
-then builds a catalog that is validated against the same daily selector the
-publisher runs. A catalog that cannot produce a complete global day fails here
-rather than half-publishing.
+It asks every source for each of the last three UTC days (`--days`), downloads
+what each one delivers, runs `scripts/cryosphere_provider_adapter.py` to decode,
+reproject, and screen it, and then builds a catalog validated against the same
+daily selector the publisher runs. A catalog that cannot produce a complete
+global day fails here rather than half-publishing.
+
+**The day a source contributes is decided from its adapted pixels, never from
+the day requested.** A provider asked for a day it does not yet hold answers with
+an empty grid; that candidate is excluded with a recorded reason and the newest
+day that genuinely carries coverage wins. Sources therefore land on different
+days when they run at different latencies, which is exactly what makes the
+archival-AMSR2 guard below meaningful. Each product's `producedAt` comes from the
+delivery's own `Last-Modified` header where the provider states one, falling back
+to the retrieval time — the latest moment it can honestly be claimed to exist.
 
 `config/cryosphere-sources.json` declares the sources. Each entry carries a
 `urlTemplateEnv`, so any endpoint can be repointed from the environment without
@@ -63,12 +72,18 @@ editing the repository. Templates expand `{ISO_DATE}`, `{YYYY}`, `{MM}`, `{DD}`,
 | `amsr2-snow`, `amsr2-sea-ice` | NASA GIBS WMS, EPSG:4326 | `THEMARBLE_AMSR2_SNOW_URL_TEMPLATE`, `THEMARBLE_AMSR2_SEA_ICE_URL_TEMPLATE` |
 | `viirs-snow` | none — operations owned | `THEMARBLE_VIIRS_SNOW_URL_TEMPLATE`, `THEMARBLE_VIIRS_QUALITY_URL_TEMPLATE` |
 
-GMASI has no stable public bucket, so this repository does not guess one. Until
-operations configures a current GMASI delivery, the disclosed NASA/JAXA AMSR2
-contingency supplies the global analysis, and the catalog records
-`contingency: "amsr2"` with its reason. An AMSR2 day older than the newest GMASI
-day is excluded with a recorded reason — an archival day must never be presented
-as contemporary.
+GMASI has no stable public bucket, so this repository does not guess one; each
+unconfigured source carries a `reason` saying why. Until operations configures a
+current GMASI delivery, the disclosed NASA/JAXA AMSR2 contingency supplies the
+global analysis, and the catalog records `contingency: "amsr2"` with its reason.
+VIIRS is likewise unconfigured by default: the adapter screens VNP10_NRT's NDSI
+and `Basic_QA` bands, and the public GIBS visualisation is a rendered palette
+that cannot substitute for them. VIIRS is a refinement in #7's contract, so a
+daily analysis publishes without it — but snow edges stay at analysis resolution
+until an Earthdata-authenticated endpoint is configured.
+
+An AMSR2 day older than the newest GMASI day is excluded with a recorded
+reason — an archival day must never be presented as contemporary.
 
 The IMS ImageServer must return raw class values, not a rendered symbology:
 leave `renderingRule` unset. The adapter is self-guarding here — every provider
@@ -115,9 +130,17 @@ and the Tauri webview origin (`tauri://localhost`); `*` is simplest. Credentiale
 cross-origin delivery is refused — the feed is public read-only data. JSON must
 be served as `application/json`.
 
+Both mutable pointers are uploaded, not just `latest.json`: omitting
+`latest-presentations.json` would silently strip the adaptive tiers and drop
+every client back to the baseline bundle.
+
 Publication order matters: sync the immutable assets first, then replace the
 pointer. A pointer that names bytes the origin has not yet accepted is the one
 way this design can show a client an incomplete bundle.
+
+Its acceptance thresholds live in `config/earth-production-policy.json` under
+`acceptance`, beside the health and soak thresholds, and are passed with
+`--policy`.
 
 `npm run verify:earth-state-feed -- --origin https://…/earth-state/` probes the
 pointer, the manifest it names, and one of its assets, checks all of the above,
@@ -126,7 +149,20 @@ cloud hours from a provider with a documented freshness policy, paired daily
 snow and sea-ice provenance from the same analysis day, complete source versions
 and attribution, and attribution that says the result is modified by TheMarble
 rather than unaltered provider imagery. Adding `--app-url` also loads the app
-with a corrupt pointer response and asserts that a verified globe stays visible.
+with a corrupt pointer response and asserts that a verified globe stays visible;
+the scheduled health workflow does this against the client it already serves,
+because the publication workflows have no browser.
+
+### Storage growth
+
+The asset store is content-addressed and append-only, so it grows with every
+distinct texture ever published. Two consequences for operations: give the bucket
+a lifecycle policy that expires `bundles/` directories and unreferenced `assets/`
+objects past your retention window, and note that each publication run syncs the
+store to the runner. The sync uses `--size-only`, which is exact for immutable
+content-addressed objects and skips checksumming, but the transfer still scales
+with the retained store — expiring old bundles keeps the ten-minute cloud job
+inside its timeout.
 
 ## Client configuration
 

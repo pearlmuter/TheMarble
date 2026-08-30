@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { evaluateEarthStateFeedRun, readEarthStateFeedLayers } from '../src/earth-state-feed-orchestration.js';
+import { evaluateEarthStateFeedRun, readEarthStateFeedLayers, readPublicationOutcome } from '../src/earth-state-feed-orchestration.js';
+import { resolveEarthStatePublishedManifestPath } from '../src/earth-state-publication-base.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -17,17 +18,17 @@ function parseArguments(argv) {
   return options;
 }
 
+function booleanOption(options, name) {
+  const value = options[name];
+  if (value === undefined) return false;
+  if (value === 'true' || value === 'false') return value === 'true';
+  throw new Error(`--${name} accepts only true or false`);
+}
+
 async function publishedLayers(outputDirectory) {
-  try {
-    const latest = JSON.parse(await readFile(join(outputDirectory, 'latest.json'), 'utf8'));
-    const manifestPath = resolve(outputDirectory, latest.manifest.href.replace(/^\.\//, ''));
-    const prefix = `${resolve(outputDirectory)}${sep}`;
-    if (!manifestPath.startsWith(prefix)) throw new Error('Published manifest escapes output directory');
-    return readEarthStateFeedLayers(JSON.parse(await readFile(manifestPath, 'utf8')));
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { bundleId: 'none' };
-    throw error;
-  }
+  const manifestPath = await resolveEarthStatePublishedManifestPath(outputDirectory);
+  if (!manifestPath) return { bundleId: 'none' };
+  return readEarthStateFeedLayers(JSON.parse(await readFile(manifestPath, 'utf8')));
 }
 
 function runProducer(command, args) {
@@ -49,12 +50,9 @@ async function runStage(name, args, options) {
   if (result.code !== 0) {
     return { name, status: 'failed', reason: result.error ?? `The ${name} producer exited with status ${result.code}` };
   }
-  try {
-    const report = JSON.parse(result.stdout.slice(result.stdout.indexOf('{')));
-    return { name, status: report.status === 'published' ? 'published' : 'unchanged', validAt: report.validAt };
-  } catch {
-    return { name, status: 'failed', reason: `The ${name} producer did not report a publication outcome` };
-  }
+  const report = readPublicationOutcome(result.stdout);
+  if (!report) return { name, status: 'failed', reason: `The ${name} producer did not report a publication outcome` };
+  return { name, status: report.status === 'published' ? 'published' : 'unchanged', validAt: report.validAt };
 }
 
 async function main() {
@@ -65,7 +63,7 @@ async function main() {
   const before = await publishedLayers(outputDirectory);
 
   const stages = [];
-  if (options['skip-clouds'] !== 'true') {
+  if (!booleanOption(options, 'skip-clouds')) {
     const cloudArgs = options['cloud-catalog']
       ? [join(scriptDirectory, 'publish-cloud-earth-state.mjs'), '--catalog', options['cloud-catalog']]
       : [join(scriptDirectory, 'publish-gmgsi-earth-state.mjs')];

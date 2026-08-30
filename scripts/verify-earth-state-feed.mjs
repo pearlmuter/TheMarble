@@ -1,7 +1,8 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { evaluateEarthStateDelivery } from '../src/earth-state-delivery.js';
 import { evaluateEarthStateFeedAcceptance } from '../src/earth-state-feed-acceptance.js';
+import { representativeEarthStateAssetHref } from '../src/earth-state-feed-orchestration.js';
 
 function parseArguments(argv) {
   const options = {};
@@ -21,14 +22,9 @@ async function probe(url) {
   return { probe: { url, status: response.status, headers }, body };
 }
 
-function firstAssetHref(manifest) {
-  const layer = Object.values(manifest.layers ?? {}).find(candidate => candidate?.asset?.href);
-  const frameLayer = manifest.cloudSequence?.frames?.at(-1)?.layers;
-  const frameAsset = Object.values(frameLayer ?? {}).find(candidate => candidate?.asset?.href);
-  return (frameAsset ?? layer)?.asset?.href;
-}
-
 async function degradedObservation(appUrl, latestUrl) {
+  // Imported here so the scheduled publication jobs, which never pass --app-url,
+  // do not need a browser installed to verify delivery.
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true });
   try {
@@ -71,15 +67,19 @@ async function main() {
     const manifestProbe = await probe(manifestUrl);
     probes.push(manifestProbe.probe);
     manifest = manifestProbe.body;
-    const assetHref = manifest ? firstAssetHref(manifest) : undefined;
+    const assetHref = manifest ? representativeEarthStateAssetHref(manifest) : undefined;
     if (assetHref) probes.push((await probe(new URL(assetHref, manifestUrl).href)).probe);
   }
 
   const delivery = evaluateEarthStateDelivery({ origin, clientOrigins, probes, checkedAt });
+  const policy = options.policy
+    ? JSON.parse(await readFile(options.policy, 'utf8')).acceptance
+    : undefined;
   const acceptance = manifest
     ? evaluateEarthStateFeedAcceptance({
       manifest,
       checkedAt,
+      policy,
       degraded: options['app-url'] ? await degradedObservation(options['app-url'], latestUrl) : undefined,
     })
     : { ok: false, failures: ['The origin did not serve a decodable Earth-state manifest'] };

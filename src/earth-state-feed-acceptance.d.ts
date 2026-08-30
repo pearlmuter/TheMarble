@@ -6,9 +6,17 @@ export interface EarthStateFeedDegradedObservation {
   bundleId?: string;
 }
 
+export interface EarthStateFeedAcceptancePolicy {
+  minimumCloudObservedFraction: number;
+  maximumCryosphereAgeDays: number;
+}
+
+export declare const DEFAULT_EARTH_STATE_ACCEPTANCE_POLICY: Readonly<EarthStateFeedAcceptancePolicy>;
+
 export interface EarthStateFeedAcceptanceReport {
   schemaVersion: 1;
   checkedAt: string;
+  policy: EarthStateFeedAcceptancePolicy;
   bundleId: string;
   classification?: string;
   ok: boolean;
@@ -31,4 +39,5 @@ export function evaluateEarthStateFeedAcceptance(options: {
   manifest: EarthStateManifest;
   checkedAt: string;
   degraded?: EarthStateFeedDegradedObservation;
+  policy?: Partial<EarthStateFeedAcceptancePolicy>;
 }): EarthStateFeedAcceptanceReport;

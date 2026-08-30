@@ -11,7 +11,8 @@ every layer it creates as a local fixture.
 
 import argparse
 import json
-import pathlib
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 
@@ -62,15 +63,15 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--width", type=int, default=4096)
     parser.add_argument("--height", type=int, default=2048)
-    parser.add_argument("--day-of-year", type=int, required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--valid-at", required=True)
     parser.add_argument("--produced-at", required=True)
     arguments = parser.parse_args()
 
-    directory = pathlib.Path(arguments.output)
+    directory = Path(arguments.output)
     directory.mkdir(parents=True, exist_ok=True)
-    ims, snow, sea_ice = build(arguments.width, arguments.height, arguments.day_of_year)
+    valid_day = datetime.fromisoformat(arguments.valid_at.replace("Z", "+00:00"))
+    ims, snow, sea_ice = build(arguments.width, arguments.height, valid_day.timetuple().tm_yday)
     for name, array in (("ims", ims), ("snow", snow), ("sea-ice", sea_ice)):
         np.save(directory / f"delivered-{name}.npy", array)
 
@@ -110,7 +111,7 @@ def main():
             },
         ],
     }
-    pathlib.Path(arguments.plan).write_text(json.dumps(plan, indent=2) + "\n", encoding="utf8")
+    Path(arguments.plan).write_text(json.dumps(plan, indent=2) + "\n", encoding="utf8")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
-export async function resolveEarthStateBaseManifest({ explicitPath, outputDirectory, fallbackPath }) {
-  if (explicitPath) return resolve(explicitPath);
+export async function resolveEarthStatePublishedManifestPath(outputDirectory) {
   const outputRoot = resolve(outputDirectory);
   try {
     const latest = JSON.parse(await readFile(resolve(outputRoot, 'latest.json'), 'utf8'));
@@ -15,7 +14,12 @@ export async function resolveEarthStateBaseManifest({ explicitPath, outputDirect
     }
     return manifestPath;
   } catch (error) {
-    if (error?.code === 'ENOENT') return resolve(fallbackPath);
+    if (error?.code === 'ENOENT') return undefined;
     throw error;
   }
+}
+
+export async function resolveEarthStateBaseManifest({ explicitPath, outputDirectory, fallbackPath }) {
+  if (explicitPath) return resolve(explicitPath);
+  return await resolveEarthStatePublishedManifestPath(outputDirectory) ?? resolve(fallbackPath);
 }

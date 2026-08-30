@@ -40,6 +40,12 @@ export interface EarthStateFeedRunReport {
   problems: EarthStateFeedProblem[];
 }
 
+export function readPublicationOutcome(stdout: string): { status: string; validAt?: string } | undefined;
+
+export function adjacentCloudHoursProblem(hours: string[]): string | undefined;
+
+export function representativeEarthStateAssetHref(manifest: EarthStateManifest): string | undefined;
+
 export function readEarthStateFeedLayers(manifest: EarthStateManifest): EarthStateFeedLayers;
 
 export function evaluateEarthStateFeedRun(options: {

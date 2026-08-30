@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateEarthStateFeedRun, readEarthStateFeedLayers } from '../src/earth-state-feed-orchestration.js';
+import { evaluateEarthStateFeedRun, readEarthStateFeedLayers, readPublicationOutcome, representativeEarthStateAssetHref } from '../src/earth-state-feed-orchestration.js';
 
 const cloudFrame = validAt => ({
   validAt,
@@ -175,4 +175,34 @@ test('an unknown stage status is refused rather than quietly accepted', () => {
     after: layers({}),
     stages: [stage('clouds', 'probably-fine')],
   }), /stage status/i);
+});
+
+test('a producer outcome survives the compositor output sharing its stream', () => {
+  const stdout = [
+    'Compositing GMGSI hour 2026-08-30T17:00:00Z',
+    '{',
+    '  "coverage": { "observedFraction": 0.95 }',
+    '}',
+    '{',
+    '  "status": "published",',
+    '  "validAt": "2026-08-30T17:00:00Z"',
+    '}',
+    '',
+  ].join('\n');
+  assert.deepEqual(readPublicationOutcome(stdout), { status: 'published', validAt: '2026-08-30T17:00:00Z' });
+});
+
+test('a producer that reports no outcome is not mistaken for a successful publication', () => {
+  assert.equal(readPublicationOutcome('Compositing…\nDone.\n'), undefined);
+  assert.equal(readPublicationOutcome('{\n  "coverage": { "observedFraction": 0.95 }\n}\n'), undefined);
+});
+
+test('the delivery probe samples an asset the newest cloud frame actually published', () => {
+  const asset = href => ({ asset: { href } });
+  assert.equal(representativeEarthStateAssetHref({
+    layers: { surfaceAlbedo: asset('../../assets/surface.ktx2') },
+    cloudSequence: { frames: [{ layers: { cloudOpacity: asset('../../assets/old.ktx2') } }, { layers: { cloudOpacity: asset('../../assets/new.ktx2') } }] },
+  }), '../../assets/new.ktx2');
+  assert.equal(representativeEarthStateAssetHref({ layers: { surfaceAlbedo: asset('../../assets/surface.ktx2') } }), '../../assets/surface.ktx2');
+  assert.equal(representativeEarthStateAssetHref({ layers: {} }), undefined);
 });
