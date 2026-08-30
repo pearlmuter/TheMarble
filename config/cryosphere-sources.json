@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "grid": {
+    "width": 4096,
+    "height": 2048
+  },
+  "documentation": "docs/live-feed-deployment.md",
+  "sources": [
+    {
+      "product": "ims-snow-ice",
+      "version": "usnic-ims-1km-v1.3",
+      "attribution": "U.S. National Ice Center IMS",
+      "required": false,
+      "urlTemplate": "https://mapservices.weather.noaa.gov/raster/rest/services/obs/usnic_ims_snow_ice_1km/ImageServer/exportImage?bbox=-180,0,180,90&bboxSR=4326&imageSR=4326&size={WIDTH},{NORTHERN_HEIGHT}&time={EPOCH_MS}&format=tiff&pixelType=U8&interpolation=RSP_NearestNeighbor&noData=0&f=image",
+      "urlTemplateEnv": "THEMARBLE_IMS_URL_TEMPLATE",
+      "extension": ".tif",
+      "input": {
+        "kind": "regular",
+        "bounds": {
+          "latitude_from": 90.0,
+          "latitude_to": 0.0,
+          "longitude_from": -180.0,
+          "longitude_to": 180.0,
+          "north_up": true
+        }
+      },
+      "semantics": {
+        "type": "classes"
+      }
+    },
+    {
+      "product": "gmasi-snow",
+      "version": "noaa-gmasi-v3",
+      "attribution": "NOAA/NESDIS GMASI",
+      "required": false,
+      "urlTemplate": null,
+      "urlTemplateEnv": "THEMARBLE_GMASI_SNOW_URL_TEMPLATE",
+      "extension": ".tif",
+      "input": {
+        "kind": "regular"
+      },
+      "semantics": {
+        "type": "class-map",
+        "map": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0,
+          "3": 1.0
+        },
+        "note": "GMASI class values must be confirmed against the delivered product before this map is trusted; an undeclared value fails the run."
+      },
+      "reason": "NOAA distributes GMASI operationally rather than from a stable public bucket; operations must supply the current delivery endpoint."
+    },
+    {
+      "product": "gmasi-sea-ice",
+      "version": "noaa-gmasi-v3",
+      "attribution": "NOAA/NESDIS GMASI",
+      "required": false,
+      "urlTemplate": null,
+      "urlTemplateEnv": "THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE",
+      "extension": ".tif",
+      "input": {
+        "kind": "regular"
+      },
+      "semantics": {
+        "type": "class-map",
+        "map": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 1.0,
+          "3": 0.0
+        },
+        "note": "GMASI class values must be confirmed against the delivered product before this map is trusted; an undeclared value fails the run."
+      },
+      "reason": "NOAA distributes GMASI operationally rather than from a stable public bucket; operations must supply the current delivery endpoint."
+    },
+    {
+      "product": "amsr2-snow",
+      "version": "gibs-amsru2-swe-daily",
+      "attribution": "NASA/JAXA AMSR2",
+      "required": false,
+      "contingency": true,
+      "urlTemplate": "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=AMSRU2_Snow_Water_Equivalent_Daily&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH={WIDTH}&HEIGHT={HEIGHT}&FORMAT=image/tiff&TIME={ISO_DATE}",
+      "urlTemplateEnv": "THEMARBLE_AMSR2_SNOW_URL_TEMPLATE",
+      "extension": ".tif",
+      "input": {
+        "kind": "regular"
+      },
+      "semantics": {
+        "type": "fraction",
+        "scale": 0.02
+      }
+    },
+    {
+      "product": "amsr2-sea-ice",
+      "version": "gibs-amsru2-sea-ice-12km",
+      "attribution": "NASA/JAXA AMSR2",
+      "required": false,
+      "contingency": true,
+      "urlTemplate": "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=AMSRU2_Sea_Ice_Concentration_12km&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH={WIDTH}&HEIGHT={HEIGHT}&FORMAT=image/tiff&TIME={ISO_DATE}",
+      "urlTemplateEnv": "THEMARBLE_AMSR2_SEA_ICE_URL_TEMPLATE",
+      "extension": ".tif",
+      "input": {
+        "kind": "regular"
+      },
+      "semantics": {
+        "type": "fraction",
+        "scale": 0.01
+      }
+    },
+    {
+      "product": "viirs-snow",
+      "version": "vnp10-nrt-v2",
+      "attribution": "NASA VIIRS VNP10_NRT",
+      "required": false,
+      "urlTemplate": null,
+      "urlTemplateEnv": "THEMARBLE_VIIRS_SNOW_URL_TEMPLATE",
+      "extension": ".tif",
+      "authorization": {
+        "scheme": "Bearer",
+        "env": "THEMARBLE_EARTHDATA_TOKEN"
+      },
+      "input": {
+        "kind": "regular"
+      },
+      "semantics": {
+        "type": "viirs",
+        "quality": {
+          "kind": "regular",
+          "urlTemplate": null,
+          "urlTemplateEnv": "THEMARBLE_VIIRS_QUALITY_URL_TEMPLATE",
+          "extension": ".tif"
+        }
+      },
+      "reason": "VNP10_NRT carries the NDSI and Basic_QA bands this adapter screens; the public GIBS visualisation is a rendered palette and cannot substitute. Requires an Earthdata token."
+    }
+  ]
+}

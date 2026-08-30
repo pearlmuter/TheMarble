@@ -13,3 +13,4 @@ __pycache__/
 .env.*
 !.env.example
 public/basis/
+public/earth-state-preview/

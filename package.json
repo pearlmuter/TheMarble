@@ -12,12 +12,16 @@
     "publish:cloud-gaps": "node scripts/publish-cloud-gap-earth-state.mjs",
     "compose:satcorps": "python3 scripts/satcorps_compositor.py",
     "publish:cryosphere": "node scripts/publish-cryosphere-earth-state.mjs",
+    "build:cryosphere-catalog": "node scripts/build-cryosphere-catalog.mjs",
     "publish:rolling-surface": "node scripts/publish-rolling-surface-earth-state.mjs",
     "publish:presentation-tiers": "node scripts/publish-presentation-tiers.mjs",
+    "publish:earth-state-feed": "node scripts/publish-earth-state-feed.mjs",
+    "verify:earth-state-feed": "node scripts/verify-earth-state-feed.mjs",
     "smoke:production": "node scripts/smoke-earth-production.mjs",
     "monitor:production": "node scripts/monitor-earth-production.mjs",
     "test": "node --test test/*.test.js",
     "preview": "vite preview",
+    "preview:live": "node scripts/preview-live-earth-state.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { addCryosphereAnalysis } from '../src/cryosphere-manifest.js';
+import { CRYOSPHERE_ATTRIBUTION } from '../src/cryosphere-catalog.js';
 import { selectDailyCryosphere } from '../src/cryosphere-selection.js';
 import { earthStateMediaTypeForPath } from '../src/earth-state-media-types.js';
 import { resolveEarthStateBaseManifest } from '../src/earth-state-publication-base.js';
@@ -13,14 +14,6 @@ import { createEarthStatePublisher } from '../src/earth-state-publication.js';
 import { rebaseEarthStateSourceAssets } from '../src/earth-state-source-assets.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_ATTRIBUTION = {
-  'ims-snow-ice': 'U.S. National Ice Center IMS',
-  'gmasi-snow': 'NOAA/NESDIS GMASI',
-  'gmasi-sea-ice': 'NOAA/NESDIS GMASI',
-  'amsr2-snow': 'NASA/JAXA AMSR2',
-  'amsr2-sea-ice': 'NASA/JAXA AMSR2',
-  'viirs-snow': 'NASA VIIRS VNP10_NRT',
-};
 
 function parseArguments(argv) {
   const options = {};
@@ -97,7 +90,7 @@ async function assetReference(path) {
 function sourceIdentity(sources) {
   return {
     sourceVersion: [...new Set(sources.map(source => source.version))].join(' + '),
-    attribution: `${[...new Set(sources.map(source => source.attribution ?? DEFAULT_ATTRIBUTION[source.product]))].join('; ')}, modified by TheMarble`,
+    attribution: `${[...new Set(sources.map(source => source.attribution ?? CRYOSPHERE_ATTRIBUTION[source.product]))].join('; ')}, modified by TheMarble`,
   };
 }
 

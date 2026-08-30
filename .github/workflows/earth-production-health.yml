@@ -47,6 +47,16 @@ jobs:
         id: smoke
         continue-on-error: true
         run: npm run smoke:production -- --app-url http://127.0.0.1:4173/ --output artifacts/production-health/visual-smoke
+      - name: Verify the served feed and its degraded behaviour
+        id: feed
+        continue-on-error: true
+        run: >-
+          npm run verify:earth-state-feed --
+          --origin "${{ vars.THEMARBLE_CDN_ORIGIN }}"
+          --client-origins "${{ vars.THEMARBLE_CLIENT_ORIGINS }}"
+          --policy config/earth-production-policy.json
+          --app-url http://127.0.0.1:4173/
+          --report artifacts/production-health/feed-verification.json
       - name: Evaluate production health and provider soak
         id: monitor
         if: always()
@@ -78,4 +88,5 @@ jobs:
         if: always()
         run: |
           test "${{ steps.smoke.outcome }}" = success
+          test "${{ steps.feed.outcome }}" = success
           test "${{ steps.monitor.outcome }}" = success

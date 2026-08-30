@@ -1,0 +1,227 @@
+import gzip
+import importlib.util
+import pathlib
+import shutil
+import tempfile
+import unittest
+
+import numpy as np
+from PIL import Image
+
+
+SCRIPT = pathlib.Path(__file__).parents[1] / "scripts" / "cryosphere_provider_adapter.py"
+SPEC = importlib.util.spec_from_file_location("cryosphere_provider_adapter", SCRIPT)
+adapter = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(adapter)
+
+
+class RegularGridReprojection(unittest.TestCase):
+    def test_a_north_up_global_source_keeps_its_hemispheres(self):
+        source = np.array([[1, 1], [2, 2]], dtype=np.float32)
+        result = adapter.resample_regular(source, adapter.GLOBAL_BOUNDS, width=4, height=4)
+        self.assertTrue(np.all(result[:2, :] == 1))
+        self.assertTrue(np.all(result[2:, :] == 2))
+
+    def test_a_south_up_source_is_flipped_rather_than_rendered_upside_down(self):
+        source = np.array([[1, 1], [2, 2]], dtype=np.float32)
+        bounds = dict(adapter.GLOBAL_BOUNDS, north_up=False)
+        result = adapter.resample_regular(source, bounds, width=4, height=4)
+        self.assertTrue(np.all(result[:2, :] == 2))
+        self.assertTrue(np.all(result[2:, :] == 1))
+
+    def test_a_zero_to_three_sixty_source_is_rotated_onto_the_bundle_seam(self):
+        source = np.array([[10.0, 20.0]], dtype=np.float32)
+        bounds = dict(adapter.GLOBAL_BOUNDS, longitude_from=0.0, longitude_to=360.0)
+        result = adapter.resample_regular(source, bounds, width=2, height=1)
+        self.assertEqual(result[0, 0], 20.0)
+        self.assertEqual(result[0, 1], 10.0)
+
+    def test_a_partial_source_extent_leaves_the_rest_of_the_globe_untouched(self):
+        source = np.full((2, 4), 0.8, dtype=np.float32)
+        bounds = dict(adapter.GLOBAL_BOUNDS, latitude_from=90.0, latitude_to=0.0)
+        result = adapter.resample_regular(source, bounds, width=4, height=4, fill=np.float32(-1))
+        self.assertTrue(np.all(result[:2, :] == np.float32(0.8)))
+        self.assertTrue(np.all(result[2:, :] == np.float32(-1)))
+
+
+class ScatteredReprojection(unittest.TestCase):
+    def test_polar_stereographic_cells_bin_into_the_target_cell_that_contains_them(self):
+        latitudes = np.array([80.0, 80.0, 10.0], dtype=np.float64)
+        longitudes = np.array([-170.0, -170.0, 170.0], dtype=np.float64)
+        values = np.array([4, 4, 2], dtype=np.uint8)
+        result = adapter.resample_scattered(values, latitudes, longitudes, width=4, height=4, aggregate="mode")
+        self.assertEqual(result[0, 0], 4)
+        self.assertEqual(result[1, 3], 2)
+        self.assertEqual(result[3, 3], 0)
+
+    def test_the_majority_class_wins_a_shared_target_cell_instead_of_the_last_writer(self):
+        latitudes = np.array([80.0, 80.5, 81.0], dtype=np.float64)
+        longitudes = np.array([-170.0, -171.0, -172.0], dtype=np.float64)
+        values = np.array([4, 4, 3], dtype=np.uint8)
+        result = adapter.resample_scattered(values, latitudes, longitudes, width=4, height=4, aggregate="mode")
+        self.assertEqual(result[0, 0], 4)
+
+    def test_fractions_average_across_a_shared_target_cell(self):
+        latitudes = np.array([80.0, 80.5], dtype=np.float64)
+        longitudes = np.array([-170.0, -171.0], dtype=np.float64)
+        values = np.array([1.0, 0.0], dtype=np.float32)
+        result = adapter.resample_scattered(values, latitudes, longitudes, width=4, height=4, aggregate="mean")
+        self.assertAlmostEqual(float(result[0, 0]), 0.5, places=6)
+
+    def test_samples_outside_the_globe_are_refused_rather_than_wrapped(self):
+        with self.assertRaisesRegex(ValueError, "outside"):
+            adapter.resample_scattered(
+                np.array([1], dtype=np.uint8),
+                np.array([95.0], dtype=np.float64),
+                np.array([0.0], dtype=np.float64),
+                width=4, height=4, aggregate="mode",
+            )
+
+
+class DeclaredClassSemantics(unittest.TestCase):
+    def test_a_documented_class_map_converts_provider_classes_into_fractions(self):
+        classes = np.array([[0, 1], [2, 3]], dtype=np.uint8)
+        result = adapter.map_classes(classes, {"0": 0.0, "1": 0.0, "2": 1.0, "3": 1.0}, "GMASI snow")
+        self.assertTrue(np.array_equal(result, np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)))
+
+    def test_an_undocumented_class_value_is_refused_instead_of_silently_treated_as_bare_ground(self):
+        classes = np.array([[0, 7]], dtype=np.uint8)
+        with self.assertRaisesRegex(ValueError, "GMASI snow"):
+            adapter.map_classes(classes, {"0": 0.0}, "GMASI snow")
+
+
+class ViirsQualityScreening(unittest.TestCase):
+    def test_sunlit_clear_high_confidence_snow_is_kept_with_full_quality(self):
+        ndsi = np.array([[80.0]], dtype=np.float32)
+        snow, quality = adapter.screen_viirs(ndsi, np.array([[0]], dtype=np.uint8))
+        self.assertGreaterEqual(float(quality[0, 0]), 0.9)
+        self.assertGreater(float(snow[0, 0]), 0.0)
+
+    def test_cloud_night_and_no_decision_sentinels_can_never_claim_snow(self):
+        for sentinel in (adapter.VIIRS_CLOUD, adapter.VIIRS_NIGHT, adapter.VIIRS_NO_DECISION):
+            ndsi = np.array([[float(sentinel)]], dtype=np.float32)
+            snow, quality = adapter.screen_viirs(ndsi, np.array([[0]], dtype=np.uint8))
+            self.assertEqual(float(quality[0, 0]), 0.0)
+            self.assertEqual(float(snow[0, 0]), 0.0)
+
+    def test_a_poor_quality_flag_disqualifies_an_otherwise_plausible_retrieval(self):
+        ndsi = np.array([[80.0]], dtype=np.float32)
+        snow, quality = adapter.screen_viirs(ndsi, np.array([[3]], dtype=np.uint8))
+        self.assertLess(float(quality[0, 0]), 0.9)
+
+
+class CoverageClaims(unittest.TestCase):
+    def test_observed_fraction_is_area_weighted_rather_than_a_pixel_count(self):
+        observed = np.zeros((4, 4), dtype=bool)
+        observed[:2, :] = True
+        self.assertAlmostEqual(adapter.observed_fraction(observed), 0.5, places=6)
+
+        polar = np.zeros((4, 4), dtype=bool)
+        polar[0, :] = True
+        self.assertLess(adapter.observed_fraction(polar), 0.25)
+
+    def test_the_reported_latitude_range_is_the_extent_actually_observed(self):
+        observed = np.zeros((4, 4), dtype=bool)
+        observed[:2, :] = True
+        self.assertEqual(adapter.latitude_range(observed), (0.0, 90.0))
+
+    def test_an_empty_grid_claims_no_coverage_at_all(self):
+        self.assertEqual(adapter.observed_fraction(np.zeros((4, 4), dtype=bool)), 0.0)
+        with self.assertRaisesRegex(ValueError, "no observed"):
+            adapter.latitude_range(np.zeros((4, 4), dtype=bool))
+
+
+class DeliveredFormats(unittest.TestCase):
+    def setUp(self):
+        self.directory = pathlib.Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_a_gzipped_ims_ascii_grid_decodes_to_its_documented_classes(self):
+        path = self.directory / "ims2026242_24km_v1.3.asc.gz"
+        with gzip.open(path, "wt", encoding="ascii") as handle:
+            handle.write("IMS product header\n")
+            handle.write("4321\n0124\n")
+        self.assertTrue(np.array_equal(
+            adapter._load_grid(path),
+            np.array([[4, 3, 2, 1], [0, 1, 2, 4]], dtype=np.uint8),
+        ))
+
+    def test_a_single_band_geotiff_delivery_decodes_without_a_colour_channel_guess(self):
+        path = self.directory / "gmasi.tif"
+        Image.fromarray(np.array([[0, 1], [2, 3]], dtype=np.uint8)).save(path)
+        self.assertTrue(np.array_equal(adapter._load_grid(path), np.array([[0, 1], [2, 3]], dtype=np.uint8)))
+
+    def test_an_undeliverable_format_is_refused_rather_than_read_as_bytes(self):
+        path = self.directory / "gmasi.hdf"
+        path.write_bytes(b"not a grid")
+        with self.assertRaisesRegex(ValueError, "Unsupported provider input format"):
+            adapter._load_grid(path)
+
+
+class AdaptedProductDescription(unittest.TestCase):
+    def setUp(self):
+        self.directory = pathlib.Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_an_adapted_northern_ims_delivery_reports_only_the_coverage_it_has(self):
+        source_path = self.directory / "ims.npy"
+        classes = np.zeros((8, 8), dtype=np.uint8)
+        classes[:4, :] = 4
+        np.save(source_path, classes)
+        product = adapter.adapt_source({
+            "product": "ims-snow-ice",
+            "validAt": "2026-08-30T00:00:00Z",
+            "producedAt": "2026-08-30T04:00:00Z",
+            "version": "ims-v1.3",
+            "input": {"path": str(source_path), "kind": "regular"},
+            "semantics": {"type": "classes"},
+        }, width=8, height=8, output_directory=self.directory / "out")
+        self.assertEqual(product["coverage"]["latitudeRange"], [0.0, 90.0])
+        self.assertAlmostEqual(product["coverage"]["observedFraction"], 0.5, places=3)
+        self.assertEqual(product["arrayPath"], "ims-snow-ice.npy")
+        self.assertNotIn("qualityArrayPath", product)
+
+    def test_a_candidate_day_key_keeps_several_days_of_one_product_apart(self):
+        source_path = self.directory / "ims.npy"
+        np.save(source_path, np.full((4, 4), 4, dtype=np.uint8))
+        product = adapter.adapt_source({
+            "product": "ims-snow-ice",
+            "key": "ims-snow-ice@2026-08-29",
+            "validAt": "2026-08-29T00:00:00Z",
+            "producedAt": "2026-08-29T04:00:00Z",
+            "version": "ims-v1.3",
+            "input": {"path": str(source_path), "kind": "regular"},
+            "semantics": {"type": "classes"},
+        }, width=4, height=4, output_directory=self.directory / "out")
+        self.assertEqual(product["arrayPath"], "ims-snow-ice@2026-08-29.npy")
+        self.assertEqual(product["product"], "ims-snow-ice")
+        self.assertTrue((self.directory / "out" / "ims-snow-ice@2026-08-29.npy").exists())
+
+    def test_an_adapted_viirs_delivery_publishes_its_quality_array_beside_the_snow_array(self):
+        ndsi = np.full((4, 4), 80.0, dtype=np.float32)
+        ndsi[2:, :] = float(adapter.VIIRS_CLOUD)
+        np.save(self.directory / "ndsi.npy", ndsi)
+        np.save(self.directory / "qa.npy", np.zeros((4, 4), dtype=np.uint8))
+        product = adapter.adapt_source({
+            "product": "viirs-snow",
+            "validAt": "2026-08-30T00:00:00Z",
+            "producedAt": "2026-08-30T04:00:00Z",
+            "version": "vnp10-nrt-v2",
+            "input": {"path": str(self.directory / "ndsi.npy"), "kind": "regular"},
+            "semantics": {
+                "type": "viirs",
+                "quality": {"path": str(self.directory / "qa.npy"), "kind": "regular"},
+            },
+        }, width=4, height=4, output_directory=self.directory / "out")
+        self.assertEqual(product["qualityArrayPath"], "viirs-snow-quality.npy")
+        self.assertEqual(product["coverage"]["latitudeRange"], [0.0, 90.0])
+        snow = np.load(self.directory / "out" / "viirs-snow.npy")
+        self.assertTrue(np.all(snow[2:, :] == 0.0))
+
+
+if __name__ == "__main__":
+    unittest.main()
