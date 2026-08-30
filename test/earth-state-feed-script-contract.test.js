@@ -68,6 +68,11 @@ test('local visual acceptance publishes a real state and opens the app against i
   assert.match(source, /publish-earth-state-feed\.mjs/);
   assert.match(source, /VITE_EARTH_STATE_LATEST_URL/);
   assert.match(source, /preview_cryosphere_fixture\.py/);
+  // The invented cryosphere is opt-in: by default snow and ice stay with the seasonal surface.
+  assert.match(source, /booleanOption\(options, 'cryosphere-fixture'\)/);
+  assert.match(source, /wantsFixture \? await buildFixtureCatalog/);
+  // A fixture published by an earlier run must not be inherited once it is switched off.
+  assert.match(source, /publishedCarriesFixture/);
   // The stand-in cryosphere must never be presented as an observation.
   const fixture = await read('scripts/preview_cryosphere_fixture.py');
   assert.match(fixture, /never an observation/);

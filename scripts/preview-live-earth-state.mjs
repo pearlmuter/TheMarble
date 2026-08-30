@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCryosphereCatalog } from '../src/cryosphere-catalog.js';
+import { resolveEarthStatePublishedManifestPath } from '../src/earth-state-publication-base.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const PREVIEW_ROOT = 'public/earth-state-preview';
+const FIXTURE_VERSION = 'local-preview-fixture';
 
 function parseArguments(argv) {
   const options = {};
@@ -16,6 +18,22 @@ function parseArguments(argv) {
     options[flag.slice(2)] = value;
   }
   return options;
+}
+
+function booleanOption(options, name) {
+  const value = options[name];
+  if (value === undefined) return false;
+  if (value === 'true' || value === 'false') return value === 'true';
+  throw new Error(`--${name} accepts only true or false`);
+}
+
+/** Each producer inherits the current bundle, so a previous fixture would survive the switch. */
+async function publishedCarriesFixture(earthStateDirectory) {
+  const manifestPath = await resolveEarthStatePublishedManifestPath(earthStateDirectory);
+  if (!manifestPath) return false;
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  return Object.values(manifest.layers ?? {})
+    .some(layer => layer?.provenance?.sourceVersion?.includes(FIXTURE_VERSION));
 }
 
 function run(command, args, options = {}) {
@@ -61,11 +79,20 @@ async function main() {
   await mkdir(earthStateDirectory, { recursive: true });
 
   process.stdout.write('Publishing a local Earth state for visual acceptance.\n');
+  // Clouds are genuinely live from the public NOAA bucket. No daily cryosphere source
+  // has a working public endpoint, so snow and ice stay with the seasonal surface —
+  // real imagery for the month rather than an invented analysis — unless asked otherwise.
+  const wantsFixture = booleanOption(options, 'cryosphere-fixture');
   const cryosphereCatalog = options['cryosphere-catalog']
-    ?? (options['skip-cryosphere'] === 'true' ? undefined : await buildFixtureCatalog({ python, directory: workingDirectory, now }));
-  if (!options['cryosphere-catalog'] && cryosphereCatalog) {
-    process.stdout.write('Daily cryosphere endpoints are operations-owned, so this preview uses a labelled local fixture for snow and sea ice.\n');
+    ?? (wantsFixture ? await buildFixtureCatalog({ python, directory: workingDirectory, now }) : undefined);
+  if (!cryosphereCatalog && await publishedCarriesFixture(earthStateDirectory)) {
+    await rm(earthStateDirectory, { recursive: true, force: true });
+    await mkdir(earthStateDirectory, { recursive: true });
+    process.stdout.write('Cleared a previous fixture cryosphere so it is not inherited by this run.\n');
   }
+  process.stdout.write(cryosphereCatalog
+    ? 'Snow and sea ice come from a labelled local fixture; they are not an observation.\n'
+    : 'Snow and sea ice come from the seasonal surface; no contemporary cryosphere source is configured.\n');
 
   await run(process.execPath, [
     join(scriptDirectory, 'publish-earth-state-feed.mjs'),
