@@ -135,6 +135,28 @@ Repository *variables* — not secrets — carry the non-sensitive endpoints:
 templates above. A failed delivery is never logged with its URL, because a
 provider template can carry a query-string credential.
 
+## The deployed origin
+
+The feed is served from Cloudflare R2 behind the account's own domain:
+
+| | |
+| --- | --- |
+| Feed | `https://earth.emildanielsen.no/latest.json` |
+| Bucket | `themarble-earth-state` (R2, Eastern Europe) |
+| S3 endpoint | `https://fb8ad2a32c77789253d15a3fd6d6c5d3.r2.cloudflarestorage.com` |
+| Publisher | `earth-state-clouds.yml`, every 10 minutes |
+
+R2 speaks the S3 API at an account endpoint rather than a regional host, so
+every `aws` call in the workflows carries `AWS_ENDPOINT_URL` from
+`THEMARBLE_ORIGIN_ENDPOINT`. The bucket's own CORS policy allows `GET` and
+`HEAD` from any origin; that policy, not the uploader, is what returns
+`access-control-allow-origin`, and it does so only in reply to a request that
+carries an `Origin` header.
+
+Each run carries the working store in the Actions cache rather than syncing it
+down from the origin, because the store is append-only and that download only
+grows. A run that finds no cached store seeds one from the origin.
+
 ## Delivery
 
 Assets are content-addressed and immutable; only `latest.json` and
@@ -161,7 +183,11 @@ way this design can show a client an incomplete bundle.
 
 Its acceptance thresholds live in `config/earth-production-policy.json` under
 `acceptance`, beside the health and soak thresholds, and are passed with
-`--policy`.
+`--policy`. `requireCryosphere` is currently **false**: no daily source has an
+endpoint that serves values, so the served state carries no contemporary snow or
+sea ice. The check still runs and reports the absence under `waived` — it never
+invents a layer — and should be set back to `true` the moment a source is
+configured. A check that always fails is a check nobody reads.
 
 `npm run verify:earth-state-feed -- --origin https://…/earth-state/` probes the
 pointer, the manifest it names, and one of its assets, checks all of the above,
@@ -235,6 +261,15 @@ advance past the rolled-back state rather than fight it. The tested recovery
 drills for provider outage, stale state, compositor restart, corrupt output,
 publication interruption, and CDN failure are documented in
 [`production-operations.md`](production-operations.md).
+
+## Storage growth in practice
+
+Measured at 9.6 MB per published hour, 231 MB/day. The publisher prunes on every
+run: bundles outside a seven-day window go, except the bundle `latest.json`
+currently names and the three most recent, and an asset is dropped only once no
+retained bundle references it. Pruned keys are removed from the origin *after*
+the new pointer is live, never before. That holds the store near 1.6 GB against
+R2's 10 GB free allowance.
 
 ## Local visual acceptance
 

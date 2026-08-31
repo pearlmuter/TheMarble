@@ -73,7 +73,9 @@ npm run publish:earth-state-feed -- \
 
 It refuses to call a run coherent if any layer's valid time regresses, a layer disappears, or a producer claims a publication the combined state does not bear out; a late provider leaves the previous coherent Earth published with a truthful, increasing age. `npm run build:cryosphere-catalog` is the provider side of the daily contract: it retrieves and reprojects current IMS, the preferred global GMASI (or the disclosed AMSR2 contingency), and quality-screened VIIRS into the catalog the cryosphere publisher consumes. `npm run verify:earth-state-feed -- --origin <https origin>` checks the served CORS and cache behaviour both clients need and proves the served manifest carries two recent observed cloud hours plus paired daily snow and sea ice. Scheduling, credentials ownership, delivery, stale-feed behaviour, and the rollback procedure are in [`docs/live-feed-deployment.md`](docs/live-feed-deployment.md).
 
-For local visual acceptance, `npm run preview:live` publishes real GMGSI clouds plus a clearly labelled daily fixture into a git-ignored preview directory and opens TheMarble against it.
+The feed runs in production at `https://earth.emildanielsen.no/latest.json`, published to Cloudflare R2 every ten minutes by [`.github/workflows/earth-state-clouds.yml`](.github/workflows/earth-state-clouds.yml). Both clients read that one pointer, so neither needs anything running locally.
+
+For local work without the production origin, `npm run feed:serve` publishes on a timer and serves the result with the headers the delivery rules require, and `npm run preview:live` publishes one state and opens TheMarble against it.
 
 Production health is checked separately from publication. The scheduled monitor distinguishes provider lateness, transformation, compositor, publication, delivery, and client-currentness failures; captures fixed day/terminator/night views; and retains a multi-week SatCORPS-versus-GMGSI soak before allowing promotion. Setup, thresholds, artifacts, and the tested rollback runbook are documented in [`docs/production-operations.md`](docs/production-operations.md).
 
