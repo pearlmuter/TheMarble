@@ -141,7 +141,7 @@ The feed is served from Cloudflare R2 behind the account's own domain:
 
 | | |
 | --- | --- |
-| Feed | `https://earth.emildanielsen.no/latest.json` |
+| Feed | `https://themarble.emildanielsen.no/latest.json` |
 | Bucket | `themarble-earth-state` (R2, Eastern Europe) |
 | S3 endpoint | `https://fb8ad2a32c77789253d15a3fd6d6c5d3.r2.cloudflarestorage.com` |
 | Publisher | `earth-state-clouds.yml`, every 10 minutes |
