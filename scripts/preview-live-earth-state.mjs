@@ -6,7 +6,8 @@ import { buildCryosphereCatalog } from '../src/cryosphere-catalog.js';
 import { resolveEarthStatePublishedManifestPath } from '../src/earth-state-publication-base.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const PREVIEW_ROOT = 'public/earth-state-preview';
+// Never inside public/: Vite copies that directory into every website build.
+const PREVIEW_ROOT = 'artifacts/earth-state-preview';
 const FIXTURE_VERSION = 'local-preview-fixture';
 
 function parseArguments(argv) {
@@ -106,11 +107,24 @@ async function main() {
     process.stdout.write('TheMarble will open on whatever verified state the preview directory already holds.\n');
   });
 
-  const latestUrl = `/${earthStateDirectory.split('public/').at(-1)}/latest.json`;
+  // The feed daemon serves the published state with the headers the delivery
+  // rules require, so the preview exercises the same path production uses.
+  const feedPort = options['feed-port'] ?? '8788';
+  const daemon = spawn(process.execPath, [
+    join(scriptDirectory, 'serve-earth-state-feed.mjs'),
+    '--output', earthStateDirectory,
+    '--python', python,
+    '--port', feedPort,
+  ], { stdio: 'inherit' });
+  const latestUrl = `http://127.0.0.1:${feedPort}/latest.json`;
   process.stdout.write(`Opening TheMarble against ${latestUrl}\n`);
-  await run('npx', ['vite', ...(options.host ? ['--host', options.host] : []), ...(options.port ? ['--port', options.port] : [])], {
-    env: { ...process.env, VITE_EARTH_STATE_LATEST_URL: latestUrl },
-  });
+  try {
+    await run('npx', ['vite', ...(options.host ? ['--host', options.host] : []), ...(options.port ? ['--port', options.port] : [])], {
+      env: { ...process.env, VITE_EARTH_STATE_LATEST_URL: latestUrl },
+    });
+  } finally {
+    daemon.kill();
+  }
 }
 
 await main();

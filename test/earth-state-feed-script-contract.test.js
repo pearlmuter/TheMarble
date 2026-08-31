@@ -70,6 +70,10 @@ test('local visual acceptance publishes a real state and opens the app against i
   assert.match(source, /publish-earth-state-feed\.mjs/);
   assert.match(source, /VITE_EARTH_STATE_LATEST_URL/);
   assert.match(source, /preview_cryosphere_fixture\.py/);
+  // Vite copies public/ into every website build, so the preview state must not live there.
+  assert.doesNotMatch(source, /PREVIEW_ROOT = 'public/);
+  assert.match(source, /PREVIEW_ROOT = 'artifacts/);
+  assert.match(source, /serve-earth-state-feed\.mjs/);
   // The invented cryosphere is opt-in: by default snow and ice stay with the seasonal surface.
   assert.match(source, /booleanOption\(options, 'cryosphere-fixture'\)/);
   assert.match(source, /wantsFixture \? await buildFixtureCatalog/);

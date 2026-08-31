@@ -74,3 +74,17 @@ test('the corrupt-pointer half of the smoke check runs where a served app alread
   assert.equal(steps[verify].id, 'feed');
   assert.match(steps[names.indexOf('Enforce production health')].run, /steps\.feed\.outcome/);
 });
+
+test('the site deploys from the same build the desktop app embeds, and never ships a preview state', async () => {
+  const workflow = await readYaml('.github/workflows/themarble-site.yml');
+  const steps = workflow.jobs.deploy.steps;
+  const names = steps.map(step => step.name);
+  const guard = names.indexOf('Refuse to ship a local preview state');
+  const upload = names.indexOf('Upload the site');
+  assert.ok(guard >= 0 && upload > guard, 'the preview guard must run before any upload');
+  assert.match(steps[guard].run, /dist\/earth-state-preview/);
+  // index.html must revalidate or a fingerprinted build never reaches anyone.
+  assert.match(steps[upload].run, /index\.html.*\n?.*must-revalidate|must-revalidate/);
+  assert.match(steps[upload].run, /--exclude 'index\.html'/);
+  assert.equal(workflow.jobs.deploy.env.AWS_ENDPOINT_URL, '${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}');
+});

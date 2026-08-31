@@ -1,6 +1,16 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const assetPathOf = href => href.replace(/^(\.\.\/)+/, '').replace(/^\.\//, '');
+const CONTENT_ADDRESSED = /^assets\/[0-9a-f]{64}\.[a-z0-9]+$/;
+
+/**
+ * Only the publisher's own content-addressed objects may be pruned. Anything
+ * else sharing the store — a site build, an operator's upload — is not ours to
+ * delete just because no manifest names it.
+ */
+export function isContentAddressedAsset(path) {
+  return CONTENT_ADDRESSED.test(path);
+}
 
 /**
  * Decide which published bundles and content-addressed assets a store may drop.
@@ -44,7 +54,7 @@ export function planEarthStateRetention({
 
   const referenced = new Set(retainBundles.flatMap(bundle => bundle.assetHrefs.map(assetPathOf)));
   const retainAssets = assetPaths.filter(path => referenced.has(path));
-  const removeAssets = assetPaths.filter(path => !referenced.has(path));
+  const removeAssets = assetPaths.filter(path => !referenced.has(path) && isContentAddressedAsset(path));
   const reclaimedBytes = removeAssets.reduce((total, path) => total + (assetSizes?.[path] ?? 0), 0);
 
   return { retainBundles, removeBundles, retainAssets, removeAssets, reclaimedBytes };

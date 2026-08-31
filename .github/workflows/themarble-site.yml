@@ -1,0 +1,75 @@
+name: TheMarble site
+
+# The website is the same `dist/` the desktop app embeds, served from the same
+# R2 bucket as the feed. Cloudflare Pages cannot host it: the 16K Milky Way is
+# 47 MB and Pages refuses any file over 25 MiB. R2 has no such limit, and the
+# site and feed sharing one origin means the app reads the feed same-origin.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - '.github/workflows/themarble-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: themarble-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+      AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
+      BUCKET: ${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the site against the production feed
+        env:
+          VITE_EARTH_STATE_LATEST_URL: ${{ vars.THEMARBLE_CDN_LATEST_URL }}
+          VITE_EARTH_STATE_PRESENTATIONS_URL: ${{ vars.THEMARBLE_CDN_PRESENTATIONS_URL }}
+        run: npm run build
+      # The preview state is published under artifacts/, never public/, so it
+      # cannot reach dist. Fail loudly rather than shipping a local state.
+      - name: Refuse to ship a local preview state
+        run: |
+          if [ -d dist/earth-state-preview ]; then
+            echo "dist contains a local preview state; it must not be inside public/." >&2
+            exit 1
+          fi
+          du -sh dist
+      - name: Upload the site
+        run: |
+          # Vite's fingerprinted output may be cached hard; index.html must not be.
+          aws s3 sync dist "$BUCKET" \
+            --exclude 'index.html' --exclude 'earth-state/*' \
+            --cache-control 'public, max-age=31536000, immutable' --no-progress
+          # The packaged fallback state is replaceable, so it revalidates.
+          aws s3 sync dist/earth-state "$BUCKET/earth-state" \
+            --cache-control 'public, max-age=300, must-revalidate' --no-progress
+          aws s3 cp dist/index.html "$BUCKET/index.html" \
+            --cache-control 'public, max-age=60, must-revalidate' --content-type 'text/html; charset=utf-8'
+      - name: Verify the served site
+        run: |
+          for path in index.html; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${{ vars.THEMARBLE_CDN_ORIGIN }}$path")
+            echo "$path -> $code"
+            test "$code" = "200"
+          done

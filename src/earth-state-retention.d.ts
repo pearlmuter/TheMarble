@@ -13,6 +13,8 @@ export interface EarthStateRetentionPlan {
   reclaimedBytes: number;
 }
 
+export function isContentAddressedAsset(path: string): boolean;
+
 export function planEarthStateRetention(options: {
   bundles: EarthStateStoredBundle[];
   assetPaths: string[];
