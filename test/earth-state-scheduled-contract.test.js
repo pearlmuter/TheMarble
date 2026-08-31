@@ -91,4 +91,7 @@ test('the site deploys from the same build the desktop app embeds, and never shi
   // writes to one key, so site deploys queue instead of overlapping.
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   assert.equal(workflow.jobs.deploy.env.AWS_RETRY_MODE, 'adaptive');
+  // R2 limits writes per object, and multipart parts count against that limit.
+  assert.match(steps[upload].run, /multipart_threshold 512MB/);
+  assert.match(steps[upload].run, /max_concurrent_requests 4/);
 });

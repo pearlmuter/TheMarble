@@ -62,9 +62,16 @@ jobs:
           du -sh dist
       - name: Upload the site
         run: |
+          # R2 allows roughly one write per second to a single object, and the CLI
+          # splits a large file into concurrent parts of that same object. Sending
+          # each file whole, with modest parallelism across files, stays inside it.
+          aws configure set default.s3.multipart_threshold 512MB
+          aws configure set default.s3.max_concurrent_requests 4
           # Vite's fingerprinted output may be cached hard; index.html must not be.
+          # --size-only: these names change when their content does, so comparing
+          # timestamps would re-upload every byte on every checkout.
           aws s3 sync dist "$BUCKET" \
-            --exclude 'index.html' --exclude 'earth-state/*' \
+            --exclude 'index.html' --exclude 'earth-state/*' --size-only \
             --cache-control 'public, max-age=31536000, immutable' --no-progress
           # The packaged fallback state is replaceable, so it revalidates.
           aws s3 sync dist/earth-state "$BUCKET/earth-state" \
