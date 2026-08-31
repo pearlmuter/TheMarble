@@ -1,3 +1,25 @@
+const EARTH_RADIUS_KM = 6371;
+// The International Space Station orbits near 408 km; on a unit Earth that is
+// the closest a crewed viewpoint gets.
+export const ISS_ORBIT_RADII = 1 + 408 / EARTH_RADIUS_KM;
+
+/**
+ * Near plane and zoom step for a camera that ranges from orbit to the ISS.
+ *
+ * A fixed near plane cannot serve both: 0.1 clips everything below about 640 km,
+ * while a near small enough for the ISS collapses depth precision against a far
+ * plane that has to reach the Sun. Scaling both to the altitude the camera
+ * already holds keeps the surface visible and the zoom step proportionate.
+ */
+export function cameraClippingForAltitude(distanceFromCentre) {
+  const altitude = Math.max(distanceFromCentre - 1, 1e-4);
+  return {
+    altitude,
+    near: Math.min(.1, Math.max(altitude * .02, 2e-4)),
+    zoomSpeed: Math.max(.25, Math.min(1, altitude * .6)),
+  };
+}
+
 const DEFAULT_OBSERVER_DISTANCE = 7;
 const DEFAULT_SOLAR_LIMB_CLEARANCE_DEGREES = 0.36;
 

@@ -7,7 +7,7 @@ import {
   MOON_EQUATORIAL_RADIUS_KM,
   SUN_EQUATORIAL_RADIUS_KM,
 } from './astronomical-state.js';
-import { createOneTimeInertialCameraPlacement } from './inertial-camera.js';
+import { ISS_ORBIT_RADII, cameraClippingForAltitude, createOneTimeInertialCameraPlacement } from './inertial-camera.js';
 import type { FixedSceneView } from './inertial-camera.js';
 import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
 import { orbitalPhotographyState } from './orbital-photography-state.js';
@@ -127,8 +127,26 @@ const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = .045;
 controls.enablePan = false;
-controls.minDistance = 5.5;
+// The International Space Station orbits near 408 km, which on a unit Earth is
+// 1 + 408/6371. Descending to it is the closest a crewed viewpoint gets, and the
+// atmosphere shell at 1.02 stays below the camera, so its ray-march still runs
+// from outside. What the surface can actually resolve there is another matter:
+// the packaged Blue Marble is 5.4K, about 7.4 km per texel, so this altitude
+// magnifies each texel far past its detail. See #10 and #14.
+controls.minDistance = ISS_ORBIT_RADII;
 controls.maxDistance = 18;
+// Zooming by a fixed factor crawls at altitude and lurches near the surface, so
+// scale the step to how far above the surface the camera already is.
+controls.zoomToCursor = false;
+function updateCameraClipping() {
+  const { near, zoomSpeed } = cameraClippingForAltitude(camera.position.length());
+  if (Math.abs(camera.near - near) > near * .05) {
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
+  controls.zoomSpeed = zoomSpeed;
+}
+updateCameraClipping();
 
 const planet = new THREE.Group();
 scene.add(planet);
@@ -592,6 +610,7 @@ let updateFrame: () => void = () => undefined;
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  updateCameraClipping();
   updateFrame();
   renderer.render(scene, camera);
 }
