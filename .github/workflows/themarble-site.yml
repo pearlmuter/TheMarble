@@ -62,28 +62,35 @@ jobs:
           du -sh dist
       - name: Upload the site
         run: |
-          # R2 allows roughly one write per second to a single object, and the CLI
-          # splits a large file into concurrent parts of that same object. Sending
-          # each file whole, with modest parallelism across files, stays inside it.
+          set -euo pipefail
+          # R2 allows roughly one write per second to a single object, so no key
+          # below may be written by more than one of these commands.
           aws configure set default.s3.multipart_threshold 512MB
           aws configure set default.s3.max_concurrent_requests 2
-          # Vite's fingerprinted output may be cached hard; index.html must not be.
-          # --size-only: these names change when their content does, so comparing
-          # timestamps would re-upload every byte on every checkout.
-          aws s3 sync dist "$BUCKET" \
-            --exclude 'index.html' --exclude 'earth-state/*' --size-only \
-            --cache-control 'public, max-age=31536000, immutable' --no-progress
-          # The packaged fallback state is replaceable, so it revalidates. These are
-          # static NASA textures under fixed names: comparing timestamps would
-          # re-upload every one on every checkout, which is what exhausted R2's
-          # per-object write allowance. The one file whose content can change at a
-          # constant size is copied outright below.
-          aws s3 sync dist/earth-state "$BUCKET/earth-state" --size-only \
-            --cache-control 'public, max-age=300, must-revalidate' --no-progress
+
+          # Fingerprinted output, cached hard. --size-only because a fresh checkout
+          # renews every mtime, which would re-upload all 89 MB on every deploy.
+          echo "::group::immutable assets"
+          aws s3 sync dist "$BUCKET" --size-only --no-progress \
+            --exclude 'index.html' --exclude 'earth-state' --exclude 'earth-state/*' \
+            --cache-control 'public, max-age=31536000, immutable'
+          echo "::endgroup::"
+
+          # The packaged fallback state is replaceable, so it revalidates. The
+          # manifest is held back and copied once below, because --size-only cannot
+          # see a content change that leaves its size unchanged.
+          echo "::group::packaged fallback state"
+          aws s3 sync dist/earth-state "$BUCKET/earth-state" --size-only --no-progress \
+            --exclude 'bundled-v1.json' \
+            --cache-control 'public, max-age=300, must-revalidate'
+          echo "::endgroup::"
+
+          echo "::group::pointers"
           aws s3 cp dist/earth-state/bundled-v1.json "$BUCKET/earth-state/bundled-v1.json" \
             --cache-control 'public, max-age=300, must-revalidate' --content-type application/json
           aws s3 cp dist/index.html "$BUCKET/index.html" \
             --cache-control 'public, max-age=60, must-revalidate' --content-type 'text/html; charset=utf-8'
+          echo "::endgroup::"
       - name: Verify the served site
         run: |
           for path in index.html; do

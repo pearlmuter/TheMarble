@@ -98,5 +98,9 @@ test('the site deploys from the same build the desktop app embeds, and never shi
   // whole packaged state on every deploy. The manifest is copied outright since
   // its content can change without its size changing.
   assert.match(steps[upload].run, /sync dist\/earth-state "\$BUCKET\/earth-state" --size-only/);
+  // R2 allows about one write per second per object, so no key may be written
+  // twice in a deploy: what one command uploads, the others must exclude.
+  assert.match(steps[upload].run, /--exclude 'earth-state' --exclude 'earth-state\/\*'/);
+  assert.match(steps[upload].run, /--exclude 'bundled-v1\.json'/);
   assert.match(steps[upload].run, /cp dist\/earth-state\/bundled-v1\.json/);
 });
