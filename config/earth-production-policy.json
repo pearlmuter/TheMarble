@@ -31,6 +31,8 @@
   },
   "acceptance": {
     "minimumCloudObservedFraction": 0.5,
-    "maximumCryosphereAgeDays": 3
+    "maximumCryosphereAgeDays": 3,
+    "requireCryosphere": false,
+    "cryosphereWaiver": "No daily cryosphere source has an endpoint that serves values, so the served state carries no contemporary snow or sea ice. Set requireCryosphere true once GMASI or an Earthdata-backed product is configured."
   }
 }

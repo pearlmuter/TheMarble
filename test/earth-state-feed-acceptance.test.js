@@ -127,6 +127,25 @@ test('attribution that presents the result as unaltered provider imagery is refu
   assert.match(report.failures[0], /modified by TheMarble/);
 });
 
+test('a waived cryosphere requirement records the absence instead of failing', () => {
+  const waivedReport = evaluateEarthStateFeedAcceptance({
+    manifest: manifest({ snowValidAt: null, seaIceValidAt: null }),
+    checkedAt: '2026-08-30T13:10:00Z',
+    policy: { requireCryosphere: false },
+  });
+  assert.equal(waivedReport.ok, true);
+  assert.deepEqual(waivedReport.failures, []);
+  assert.match(waivedReport.waived[0], /missing paired daily/);
+  // Waiving never invents a layer.
+  assert.equal(waivedReport.cryosphere, undefined);
+
+  const required = evaluateEarthStateFeedAcceptance({
+    manifest: manifest({ snowValidAt: null, seaIceValidAt: null }),
+    checkedAt: '2026-08-30T13:10:00Z',
+  });
+  assert.equal(required.ok, false);
+});
+
 test('an unavailable or corrupt latest response must leave a verified globe visible', () => {
   const degraded = observation => evaluateEarthStateFeedAcceptance({
     manifest: manifest(),

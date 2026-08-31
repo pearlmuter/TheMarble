@@ -15,8 +15,13 @@ function parseArguments(argv) {
   return options;
 }
 
-async function probe(url) {
-  const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
+async function probe(url, origin) {
+  const response = await fetch(url, {
+    redirect: 'follow',
+    // Object stores return the cross-origin headers only when asked as a browser asks.
+    headers: origin ? { origin } : {},
+    signal: AbortSignal.timeout(60_000),
+  });
   const headers = Object.fromEntries([...response.headers.entries()]);
   const body = response.ok && (headers['content-type'] ?? '').includes('json') ? await response.json() : undefined;
   return { probe: { url, status: response.status, headers }, body };
@@ -59,16 +64,16 @@ async function main() {
   const checkedAt = new Date(options.now ?? Date.now()).toISOString().replace('.000Z', 'Z');
 
   const latestUrl = new URL('latest.json', origin).href;
-  const latest = await probe(latestUrl);
+  const latest = await probe(latestUrl, clientOrigins[0]);
   const probes = [latest.probe];
   let manifest;
   if (latest.body?.manifest?.href) {
     const manifestUrl = new URL(latest.body.manifest.href.replace(/^\.\//, ''), origin).href;
-    const manifestProbe = await probe(manifestUrl);
+    const manifestProbe = await probe(manifestUrl, clientOrigins[0]);
     probes.push(manifestProbe.probe);
     manifest = manifestProbe.body;
     const assetHref = manifest ? representativeEarthStateAssetHref(manifest) : undefined;
-    if (assetHref) probes.push((await probe(new URL(assetHref, manifestUrl).href)).probe);
+    if (assetHref) probes.push((await probe(new URL(assetHref, manifestUrl).href, clientOrigins[0])).probe);
   }
 
   const delivery = evaluateEarthStateDelivery({ origin, clientOrigins, probes, checkedAt });

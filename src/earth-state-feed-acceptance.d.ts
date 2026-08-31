@@ -9,6 +9,7 @@ export interface EarthStateFeedDegradedObservation {
 export interface EarthStateFeedAcceptancePolicy {
   minimumCloudObservedFraction: number;
   maximumCryosphereAgeDays: number;
+  requireCryosphere: boolean;
 }
 
 export declare const DEFAULT_EARTH_STATE_ACCEPTANCE_POLICY: Readonly<EarthStateFeedAcceptancePolicy>;
@@ -32,6 +33,7 @@ export interface EarthStateFeedAcceptanceReport {
   };
   cryosphere?: { validAt: string; ageDays: number; sourceVersion: string; observedFraction?: number };
   degraded?: EarthStateFeedDegradedObservation;
+  waived?: string[];
   failures: string[];
 }
 

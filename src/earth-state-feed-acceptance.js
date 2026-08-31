@@ -6,6 +6,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_EARTH_STATE_ACCEPTANCE_POLICY = Object.freeze({
   minimumCloudObservedFraction: 0.5,
   maximumCryosphereAgeDays: 3,
+  requireCryosphere: true,
 });
 const CRYOSPHERE_LAYERS = EARTH_STATE_CRYOSPHERE_LAYERS;
 const REQUIRED_PROVENANCE = ['validAt', 'producedAt', 'sourceVersion', 'attribution'];
@@ -63,11 +64,14 @@ function checkClouds(manifest, checkedAtMs, policy, failures) {
   };
 }
 
-function checkCryosphere(manifest, checkedAtMs, policy, failures) {
+function checkCryosphere(manifest, checkedAtMs, policy, failures, waived) {
   const present = CRYOSPHERE_LAYERS.filter(layer => manifest.layers?.[layer]?.provenance !== undefined);
   const missing = CRYOSPHERE_LAYERS.filter(layer => !present.includes(layer));
   if (missing.length > 0) {
-    failures.push(`The served Earth state is missing paired daily ${missing.join(' and ')} provenance`);
+    // Waiving this records that the layer is absent; it never fabricates one.
+    const message = `The served Earth state is missing paired daily ${missing.join(' and ')} provenance`;
+    if (policy.requireCryosphere) failures.push(message);
+    else waived.push(message);
     return undefined;
   }
 
@@ -129,8 +133,9 @@ export function evaluateEarthStateFeedAcceptance({ manifest, checkedAt, degraded
   if (!manifest || typeof manifest.bundleId !== 'string') throw new Error('Earth-state feed acceptance requires the served manifest');
 
   const failures = [];
+  const waived = [];
   const clouds = checkClouds(manifest, checkedAtMs, thresholds, failures);
-  const cryosphere = checkCryosphere(manifest, checkedAtMs, thresholds, failures);
+  const cryosphere = checkCryosphere(manifest, checkedAtMs, thresholds, failures, waived);
   const fallback = degraded ? checkDegraded(degraded, failures) : undefined;
 
   return {
@@ -143,6 +148,7 @@ export function evaluateEarthStateFeedAcceptance({ manifest, checkedAt, degraded
     clouds,
     cryosphere,
     ...(fallback ? { degraded: fallback } : {}),
+    ...(waived.length > 0 ? { waived } : {}),
     failures,
   };
 }

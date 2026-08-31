@@ -60,6 +60,8 @@ test('the delivery verification probes the origin and the client behaviour a deg
   assert.match(source, /evaluateEarthStateDelivery/);
   assert.match(source, /evaluateEarthStateFeedAcceptance/);
   assert.match(source, /page\.route/);
+  // An object store returns cross-origin headers only when asked as a browser asks.
+  assert.match(source, /headers: origin \? \{ origin \} : \{\}/);
   assert.match(source, /if \(!report\.ok\) process\.exitCode = 1/);
 });
 
