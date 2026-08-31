@@ -93,5 +93,10 @@ test('the site deploys from the same build the desktop app embeds, and never shi
   assert.equal(workflow.jobs.deploy.env.AWS_RETRY_MODE, 'adaptive');
   // R2 limits writes per object, and multipart parts count against that limit.
   assert.match(steps[upload].run, /multipart_threshold 512MB/);
-  assert.match(steps[upload].run, /max_concurrent_requests 4/);
+  assert.match(steps[upload].run, /max_concurrent_requests 2/);
+  // A fresh checkout renews every mtime, so timestamp comparison re-uploads the
+  // whole packaged state on every deploy. The manifest is copied outright since
+  // its content can change without its size changing.
+  assert.match(steps[upload].run, /sync dist\/earth-state "\$BUCKET\/earth-state" --size-only/);
+  assert.match(steps[upload].run, /cp dist\/earth-state\/bundled-v1\.json/);
 });
