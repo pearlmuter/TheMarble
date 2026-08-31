@@ -7,6 +7,7 @@ import {
   MOON_EQUATORIAL_RADIUS_KM,
   SUN_EQUATORIAL_RADIUS_KM,
 } from './astronomical-state.js';
+import { fetchEarthStateAsset } from './earth-state-transport.js';
 import { ISS_ORBIT_RADII, cameraClippingForAltitude, createOneTimeInertialCameraPlacement } from './inertial-camera.js';
 import type { FixedSceneView } from './inertial-camera.js';
 import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
@@ -310,8 +311,11 @@ function shouldDeferSceneTexture(request: EarthStateAssetRequest) {
 
 async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
   const { descriptor, url } = request;
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`Earth-state asset unavailable (${response.status}): ${url}`);
+  const response = await fetchEarthStateAsset(url, {
+    fetch: (target: string, options: { signal?: AbortSignal }) => fetch(target, options),
+    signal,
+    sleep: (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); }),
+  });
   const mediaType = response.headers.get('content-type')?.split(';', 1)[0] ?? descriptor.asset.mediaType;
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (shouldDeferSceneTexture(request)) {
