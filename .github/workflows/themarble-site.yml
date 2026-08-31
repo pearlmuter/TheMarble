@@ -22,7 +22,9 @@ permissions:
 
 concurrency:
   group: themarble-site
-  cancel-in-progress: true
+  # Uploads must queue, not overlap. Cancelling a run does not recall the writes
+  # already in flight, and R2 rejects concurrent writes to the same key.
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -34,6 +36,9 @@ jobs:
       AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
       AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
       BUCKET: ${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}
+      # R2 rate-limits repeated writes to one key; back off rather than fail the deploy.
+      AWS_RETRY_MODE: adaptive
+      AWS_MAX_ATTEMPTS: '10'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

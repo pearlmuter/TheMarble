@@ -87,4 +87,8 @@ test('the site deploys from the same build the desktop app embeds, and never shi
   assert.match(steps[upload].run, /index\.html.*\n?.*must-revalidate|must-revalidate/);
   assert.match(steps[upload].run, /--exclude 'index\.html'/);
   assert.equal(workflow.jobs.deploy.env.AWS_ENDPOINT_URL, '${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}');
+  // Cancelling a run does not recall in-flight writes, and R2 rejects concurrent
+  // writes to one key, so site deploys queue instead of overlapping.
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.equal(workflow.jobs.deploy.env.AWS_RETRY_MODE, 'adaptive');
 });
