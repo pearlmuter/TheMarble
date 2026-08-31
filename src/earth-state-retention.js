@@ -28,6 +28,11 @@ export function planEarthStateRetention({
     throw new Error(`The currently published bundle ${currentBundleId} is not in the store listing; refusing to prune`);
   }
 
+  for (const bundle of bundles) {
+    if (Number.isNaN(Date.parse(bundle.publishedAt))) {
+      throw new Error(`Bundle ${bundle.bundleId} has an unreadable publication time (${bundle.publishedAt}); refusing to prune`);
+    }
+  }
   const ordered = [...bundles].sort((left, right) => left.publishedAt.localeCompare(right.publishedAt));
   const cutoff = nowMs - keepDays * DAY_MS;
   const newest = new Set(ordered.slice(-Math.max(1, minimumBundles)).map(bundle => bundle.bundleId));

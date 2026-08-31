@@ -4,9 +4,10 @@ name: Earth state daily cryosphere
 # providers a few hours later and advances the published state at most once per
 # validated UTC analysis day. It shares one concurrency group with the hourly
 # cloud producer so the two never race for `latest.json`.
+# No daily cryosphere source has a working public endpoint yet, so a schedule
+# would fail every run. Re-enable the cron once GMASI or an Earthdata-backed
+# product is configured; the pipeline below is otherwise ready.
 on:
-  schedule:
-    - cron: '25 5,11,17 * * *'
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+          AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
         run: |
           mkdir -p artifacts/earth-state
           aws s3 sync "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" artifacts/earth-state --size-only --no-progress
@@ -67,6 +69,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+          AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
         run: |
           aws s3 sync artifacts/earth-state "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" \
             --exclude 'latest*.json' --exclude 'feed-run.json' \

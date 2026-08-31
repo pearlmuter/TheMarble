@@ -19,6 +19,13 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+      # R2 speaks the S3 API at an account endpoint rather than a regional host.
+      AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
+      BUCKET: ${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,14 +40,22 @@ jobs:
         run: |
           python3 -m venv .venv-gmgsi
           .venv-gmgsi/bin/pip install -r requirements-gmgsi.txt
-      - name: Retrieve the published Earth state
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+      # The publisher inherits the current bundle, so it needs the store on disk.
+      # Carrying it between runs avoids re-downloading a store that only grows.
+      - name: Restore the working store
+        uses: actions/cache/restore@v4
+        with:
+          path: artifacts/earth-state
+          key: earth-state-store-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            earth-state-store-
+      - name: Fill an empty working store from the origin
         run: |
           mkdir -p artifacts/earth-state
-          aws s3 sync "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" artifacts/earth-state --size-only --no-progress
+          if [ ! -f artifacts/earth-state/latest.json ]; then
+            echo "No cached store; seeding from the origin."
+            aws s3 sync "$BUCKET" artifacts/earth-state --size-only --no-progress
+          fi
       - name: Publish the newest validated cloud hour
         id: publish
         run: >-
@@ -48,20 +63,29 @@ jobs:
           --python .venv-gmgsi/bin/python
           --output artifacts/earth-state
           --report artifacts/earth-state-feed/clouds.json
+      - name: Prune superseded bundles and unreferenced assets
+        run: >-
+          node scripts/prune-earth-state-store.mjs
+          --store artifacts/earth-state
+          --apply true
+          --removed-keys artifacts/earth-state-feed/pruned-keys.txt
       - name: Upload immutable assets before the latest pointer
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
         run: |
-          aws s3 sync artifacts/earth-state "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" \
+          aws s3 sync artifacts/earth-state "$BUCKET" \
             --exclude 'latest*.json' --exclude 'feed-run.json' \
             --cache-control 'public, max-age=31536000, immutable' --no-progress
           for pointer in latest.json latest-presentations.json; do
             test -f "artifacts/earth-state/$pointer" || continue
-            aws s3 cp "artifacts/earth-state/$pointer" "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}/$pointer" \
+            aws s3 cp "artifacts/earth-state/$pointer" "$BUCKET/$pointer" \
               --cache-control 'public, max-age=30, must-revalidate' --content-type application/json
           done
+      # Only once the pointer names retained bytes may superseded ones be dropped.
+      - name: Drop pruned keys from the origin
+        run: |
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            aws s3 rm "$BUCKET/$key" --recursive --only-show-errors || true
+          done < artifacts/earth-state-feed/pruned-keys.txt
       - name: Verify the served feed
         run: >-
           npm run verify:earth-state-feed --
@@ -69,6 +93,12 @@ jobs:
           --client-origins "${{ vars.THEMARBLE_CLIENT_ORIGINS }}"
           --policy config/earth-production-policy.json
           --report artifacts/earth-state-feed/delivery.json
+      - name: Persist the working store
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/earth-state
+          key: earth-state-store-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Retain the publication record
         if: always()
         uses: actions/upload-artifact@v4

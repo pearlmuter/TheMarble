@@ -11,7 +11,10 @@ test('scheduled publication polls for clouds every ten minutes and for the cryos
   const clouds = await readYaml('.github/workflows/earth-state-clouds.yml');
   const cryosphere = await readYaml('.github/workflows/earth-state-cryosphere.yml');
   assert.deepEqual(clouds.on.schedule, [{ cron: '*/10 * * * *' }]);
-  assert.ok(cryosphere.on.schedule.every(entry => /^\d+ [\d,]+ \* \* \*$/.test(entry.cron)));
+  // The daily producer stays manual until a cryosphere source endpoint exists;
+  // a schedule would fail every run against sources that serve no values.
+  assert.equal(cryosphere.on.schedule, undefined);
+  assert.ok('workflow_dispatch' in cryosphere.on);
   // One publication group: the hourly and daily producers must never race for latest.json.
   assert.equal(clouds.concurrency.group, 'earth-state-publication');
   assert.equal(cryosphere.concurrency.group, clouds.concurrency.group);
@@ -24,10 +27,14 @@ test('every scheduled publication inherits the served state, uploads assets befo
     const workflow = await readYaml(path);
     const steps = workflow.jobs.publish.steps;
     const names = steps.map(step => step.name);
-    const retrieve = names.indexOf('Retrieve the published Earth state');
+    // The store may arrive from the run cache or from the origin, but it must be
+    // in place before publication so the producer inherits the current bundle.
+    const inherit = names.findIndex(name => /Restore the working store|Fill an empty working store|Retrieve the published Earth state/.test(name ?? ''));
+    const publish = names.findIndex(name => /^Publish the newest/.test(name ?? ''));
     const upload = names.indexOf('Upload immutable assets before the latest pointer');
     const verify = names.indexOf('Verify the served feed');
-    assert.ok(retrieve >= 0 && upload > retrieve && verify > upload, `${path} must retrieve, publish, upload, then verify`);
+    assert.ok(inherit >= 0 && publish > inherit && upload > publish && verify > upload,
+      `${path} must inherit the store, publish, upload, then verify`);
     const uploadStep = steps[upload];
     assert.match(uploadStep.run, /--exclude 'latest\*\.json'/);
     assert.match(uploadStep.run, /max-age=31536000, immutable/);
@@ -36,6 +43,9 @@ test('every scheduled publication inherits the served state, uploads assets befo
     assert.ok(uploadStep.run.indexOf('aws s3 sync') < uploadStep.run.indexOf('latest.json'));
     assert.match(steps[verify].run, /verify:earth-state-feed/);
     assert.match(steps[verify].run, /--policy config\/earth-production-policy\.json/);
+    // R2 speaks S3 at an account endpoint; without it every upload targets AWS.
+    const uploadEnv = { ...workflow.jobs.publish.env, ...(uploadStep.env ?? {}) };
+    assert.match(uploadEnv.AWS_ENDPOINT_URL ?? '', /THEMARBLE_ORIGIN_ENDPOINT/);
     // Both mutable pointers reach the origin, or the adaptive tier index silently disappears.
     assert.match(uploadStep.run, /for pointer in latest\.json latest-presentations\.json/);
     assert.equal(workflow.permissions.contents, 'read');

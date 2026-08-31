@@ -82,6 +82,14 @@ test('pruning refuses to run when the published bundle is not in the listing', (
   );
 });
 
+test('an unreadable publication time is refused rather than treated as ancient', () => {
+  // A time that will not parse compares false against any window, so a silent
+  // pass would mark every recent bundle removable.
+  const bundles = ['28', '29', '30'].map(day => bundle(day));
+  bundles[0].publishedAt = '2026-08-28T12-00-00.000Z';
+  assert.throws(() => plan(bundles), /unreadable publication time/i);
+});
+
 test('a retention plan reports the bytes it would reclaim when sizes are known', () => {
   const bundles = ['10', '28', '29', '30'].map(day => bundle(day));
   const result = planEarthStateRetention({
