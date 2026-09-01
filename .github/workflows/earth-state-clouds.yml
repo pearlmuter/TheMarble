@@ -1,11 +1,17 @@
 name: Earth state hourly clouds
 
-# The cloud producer polls every 10 minutes and advances the published state at
-# most once per validated nominal hour. Repeated polls inside one hour report
-# `unchanged` and leave `latest.json` untouched.
+# The cloud producer advances the published state at most once per validated
+# nominal hour; repeated runs inside one hour report `unchanged` and leave
+# `latest.json` untouched.
+#
+# The ten-minute cadence comes from infrastructure/publisher-scheduler, a
+# Cloudflare Worker cron trigger, because GitHub's own scheduler is best-effort:
+# a */10 cron here fired at gaps of three to eight hours, leaving the globe stale
+# for most of the day. The schedule below is only a backstop for if that Worker
+# is ever removed, at roughly the cadence GMGSI itself publishes.
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '5 * * * *'
   workflow_dispatch:
 
 permissions:

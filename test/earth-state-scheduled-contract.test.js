@@ -10,7 +10,10 @@ const readJson = async path => JSON.parse(await read(path));
 test('scheduled publication polls for clouds every ten minutes and for the cryosphere daily', async () => {
   const clouds = await readYaml('.github/workflows/earth-state-clouds.yml');
   const cryosphere = await readYaml('.github/workflows/earth-state-cryosphere.yml');
-  assert.deepEqual(clouds.on.schedule, [{ cron: '*/10 * * * *' }]);
+  // GitHub's scheduler is best-effort and dropped a */10 cron to five-hour gaps,
+  // so the real cadence comes from the Cloudflare Worker and this is a backstop.
+  assert.deepEqual(clouds.on.schedule, [{ cron: '5 * * * *' }]);
+  assert.ok('workflow_dispatch' in clouds.on, 'the Worker drives the feed through workflow_dispatch');
   // The daily producer stays manual until a cryosphere source endpoint exists;
   // a schedule would fail every run against sources that serve no values.
   assert.equal(cryosphere.on.schedule, undefined);
