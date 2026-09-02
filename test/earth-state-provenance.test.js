@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ASSUMED_THICK_CLOUD_OPTICAL_DEPTH } from '../src/cloud-render-model.js';
 import { buildEarthStateProvenancePresentation } from '../src/earth-state-provenance.js';
 
 const asset = { href: './fixture.bin', mediaType: 'application/octet-stream', byteLength: 1, immutable: true, checksum: { algorithm: 'sha256', value: '0'.repeat(64) } };
@@ -146,4 +147,48 @@ test('bundled fallback plainly identifies static clouds and missing contemporary
   assert.match(text, /Sea ice.*not present/);
   assert.match(text, /Seasonal surface fallback/);
   assert.match(presentation.accessibleSummary, /bundled fallback/i);
+});
+
+test('a retrieved optical depth is named as retrieved', () => {
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest: contemporaryManifest(),
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /Cloud thickness · retrieved optical depth/);
+  assert.doesNotMatch(text, /Cloud thickness · assumed/);
+  assert.doesNotMatch(presentation.accessibleSummary, /thickness is assumed/i);
+});
+
+test('a GMGSI bundle says plainly that cloud thickness is assumed, not measured', () => {
+  const manifest = contemporaryManifest();
+  manifest.cloudSequence.provider = 'gmgsi';
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest,
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /Cloud thickness · assumed/);
+  assert.match(text, /no retrieved optical depth/);
+  assert.match(text, new RegExp(`optical depth ${ASSUMED_THICK_CLOUD_OPTICAL_DEPTH}`));
+  assert.match(presentation.accessibleSummary, /cloud thickness is assumed/i);
+});
+
+test('static bundled cloud is assumed thickness too, and says so', () => {
+  const manifest = contemporaryManifest();
+  manifest.classification = 'static-fallback';
+  delete manifest.cloudSequence;
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest,
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'bundled-fallback', refresh: 'failed' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /Cloud thickness · assumed/);
+  assert.match(presentation.accessibleSummary, /cloud thickness is assumed/i);
 });

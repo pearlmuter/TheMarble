@@ -53,3 +53,15 @@ test('daily land snow and sea ice have separate physical surface semantics', () 
   assert.match(mainSource, /roughness=mix\(roughness,[^,]+,oceanIce\)/);
   assert.doesNotMatch(mainSource, /cloud[^;\n]*snowCover|snowCover[^;\n]*cloud/i);
 });
+
+test('every unretrieved optical depth comes from the one shared assumed-thickness curve', () => {
+  // The direct, caster and cloud-layer expressions are the same physical
+  // quantity; #21 was one coefficient written three times, and a divergence
+  // between them would be the same defect again.
+  assert.doesNotMatch(mainSource, /-log\(max\(1\.0-\w+\.?\w*\*\.82,\.01\)\)/);
+  assert.match(mainSource, /opticalDepth=mix\(assumedCloudOpticalDepth\(localCloud\.a\),opticalDepth,physicalWeight\)/);
+  assert.match(mainSource, /casterOpticalDepth=mix\(assumedCloudOpticalDepth\(cloudShadow1\),casterOpticalDepth,casterPhysicalWeight\)/);
+  assert.match(mainSource, /opticalDepth=mix\(assumedCloudOpticalDepth\(cloud\.a\),opticalDepth,physicalWeight\)/);
+  assert.equal(mainSource.match(/assumedCloudOpticalDepth\(/g).length, 3);
+  assert.match(cloudModelSource, /float assumedCloudOpticalDepth\(/);
+});

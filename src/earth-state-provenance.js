@@ -1,3 +1,4 @@
+import { ASSUMED_THICK_CLOUD_OPTICAL_DEPTH } from './cloud-render-model.js';
 import { cloudProviderMaxAgeSeconds } from './cloud-provider-selection.js';
 
 const percent = value => Math.round((value ?? 0) * 100);
@@ -33,6 +34,21 @@ function providerName(provider) {
   if (provider === 'satcorps') return 'NASA SatCORPS';
   if (provider === 'gmgsi') return 'NOAA GMGSI';
   return 'Cloud source not recorded';
+}
+
+/**
+ * Only SatCORPS retrieves optical depth; the manifest already says so, because a
+ * bundle carries the cloudPhysics layer exactly when its provider is satcorps.
+ * Everything else -- GMGSI, and the bundled static texture -- is rendered at an
+ * assumed thickness, and the corner has to say that as plainly as it says which
+ * cloud is model-assisted and which cryosphere is a seasonal fallback.
+ */
+function thicknessItem(provider) {
+  if (provider === 'satcorps') {
+    return 'Cloud thickness · retrieved optical depth from the cloud product; the renderer uses the retrieval, not an assumption';
+  }
+  const source = provider === 'gmgsi' ? 'GMGSI' : 'This cloud source';
+  return `Cloud thickness · assumed · ${source} carries no retrieved optical depth, so observed opacity is mapped to an assumed deck reaching optical depth ${ASSUMED_THICK_CLOUD_OPTICAL_DEPTH} at full opacity; thin cloud stays thin`;
 }
 
 function cryospherePresentation(label, layer) {
@@ -107,6 +123,7 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
       ? `Model assistance · ${modelAssisted}% model-assisted · GFS ${model.version} run ${utcTime(model.runAt)} UTC · f${String(model.forecastHour).padStart(3, '0')}`
       : 'No model assistance in the active cloud frame');
     cloudItems.push(`Crossfade interpolation · ${utcTime(from.validAt)} → ${utcTime(to.validAt)} UTC · ${manifest.cloudSequence.transitionSeconds / 60} min visual transition; observation times are not invented`);
+    cloudItems.push(thicknessItem(provider));
     if (to.assistance?.polarObservation) {
       cloudItems.push(`Polar completion · ${to.assistance.polarObservation.product.toUpperCase()} ${to.assistance.polarObservation.version} · ${utcWindow(to.assistance.polarObservation.observedFrom, to.assistance.polarObservation.observedTo)}`);
     }
@@ -114,6 +131,7 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
     cloudItems.push(`Static cloud fallback · ${cloudDataset?.version ?? 'version not recorded'} · ${cloudDataset?.attribution ?? 'attribution not recorded'}`);
     cloudItems.push('No cloud interpolation; one static texture is displayed');
     cloudItems.push('No model assistance in this bundle');
+    cloudItems.push(thicknessItem(undefined));
   }
 
   const dataItems = manifest.datasets.map(dataset => `${dataset.id} @ ${dataset.version}`);
@@ -129,9 +147,12 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
     { id: 'attribution', title: 'Attribution', items: attributionItems },
   ];
   const freshnessSummary = stale === undefined ? 'freshness is unknown' : stale ? 'stale' : 'current';
-  const cloudSummary = manifest.cloudSequence
+  const assumedThickness = manifest.cloudSequence?.provider === 'satcorps'
+    ? ''
+    : ' Cloud thickness is assumed rather than retrieved.';
+  const cloudSummary = `${manifest.cloudSequence
     ? `Cloud observations are ${age.spoken} old and ${freshnessSummary}, with ${observed}% observed and ${modelAssisted}% model-assisted coverage.`
-    : 'Static bundled clouds are displayed with no interpolation or model assistance.';
+    : 'Static bundled clouds are displayed with no interpolation or model assistance.'}${assumedThickness}`;
   return {
     stateLabel: runtimeState.label,
     sections,

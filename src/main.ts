@@ -865,7 +865,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       float cloudQuality=physics.a; float physicalWeight=step(.001,cloudQuality);
       float opticalDepth=decodeCloudOpticalDepth(physics.r);
       vec4 localCloud=mix(texture2D(cloudMapFrom,vUv),texture2D(cloudMapTo,vUv),cloudMix);
-      opticalDepth=mix(-log(max(1.0-localCloud.a*.82,.01)),opticalDepth,physicalWeight);
+      opticalDepth=mix(assumedCloudOpticalDepth(localCloud.a),opticalDepth,physicalWeight);
       cloudQuality=mix(weather.g,cloudQuality,physicalWeight);
       vec3 surfaceDirection=normalize(vObjectNormal); vec3 localSun=normalize(sunLocalDirection);
       vec2 probeUv0=sphericalCloudShadowUv(surfaceDirection,localSun,1.5);
@@ -892,7 +892,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec4 casterWeather=mix(texture2D(cloudDensityFrom,shadowUv1),texture2D(cloudDensityTo,shadowUv1),cloudMix);
       float casterQuality=casterPhysics.a; casterPhysicalWeight=step(.001,casterQuality);
       float casterOpticalDepth=decodeCloudOpticalDepth(casterPhysics.r);
-      casterOpticalDepth=mix(-log(max(1.0-cloudShadow1*.82,.01)),casterOpticalDepth,casterPhysicalWeight);
+      casterOpticalDepth=mix(assumedCloudOpticalDepth(cloudShadow1),casterOpticalDepth,casterPhysicalWeight);
       casterQuality=mix(casterWeather.g,casterQuality,casterPhysicalWeight);
       float casterDensity=mix(.72,1.18,casterWeather.r)*casterWeather.g;
       float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
@@ -938,7 +938,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float observationAge=mix(texture2D(cloudAgeFrom,vUv).r,texture2D(cloudAgeTo,vUv).r,cloudMix);
       vec4 physics=vPhysics; float cloudQuality=physics.a; float physicalWeight=step(.001,cloudQuality);
       float opticalDepth=decodeCloudOpticalDepth(physics.r);
-      opticalDepth=mix(-log(max(1.0-cloud.a*.82,.01)),opticalDepth,physicalWeight);
+      opticalDepth=mix(assumedCloudOpticalDepth(cloud.a),opticalDepth,physicalWeight);
       cloudQuality=mix(weather.g,cloudQuality,physicalWeight);
       float icePhase=physics.g;
       float density=mix(mix(.72,1.18,weather.r),1.0-exp(-opticalDepth*.35),physicalWeight)*cloudQuality;

@@ -1,3 +1,22 @@
+// GMGSI carries no retrieved optical depth, so the renderer has to assume a
+// thickness for every cloud it draws. Opacity cannot say how deep a deck is, but
+// it does order decks correctly, so the assumption is expressed as a curve over
+// observed opacity rather than as one flat constant: a flat constant would
+// extinguish thin cirrus and a thunderstorm identically. Where a retrieval does
+// exist (SatCORPS) it wins and this is never consulted.
+//
+// A fully opaque pixel is assumed to be a typical thick cloud deck. Stratus and
+// above run 10-20 and deep convection well past 50; 18 sits in that band and is
+// the value the shadow weighting is already scaled for.
+export const ASSUMED_THICK_CLOUD_OPTICAL_DEPTH = 18;
+// The curvature keeps thin cloud where the superseded -log(1 - alpha * .82)
+// already had it -- the two agree within .01 optical depth up to alpha .2 --
+// while letting overcast climb to the assumed deck. Measured against the served
+// 2026-09-02T07:00Z GMGSI frame, observed opacity fills the whole [0, 1] range
+// (area-weighted mean .17, 11.9% of the globe above .7, 7.5% above .9), so the
+// spread across that range is what the eye actually sees and must be preserved.
+export const ASSUMED_THICKNESS_CURVATURE = 5;
+
 export const CLOUD_RENDER_GLSL = `
   vec2 directionUv(vec3 direction){
     direction=normalize(direction);
@@ -9,6 +28,7 @@ export const CLOUD_RENDER_GLSL = `
     return directionUv(normalize(surfaceNormal+lightDirection*travel));
   }
   float decodeCloudOpticalDepth(float encoded){ return exp(encoded*log(151.0))-1.0; }
+  float assumedCloudOpticalDepth(float alpha){ return ${ASSUMED_THICK_CLOUD_OPTICAL_DEPTH.toFixed(1)}*(exp(clamp(alpha,0.0,1.0)*${ASSUMED_THICKNESS_CURVATURE.toFixed(1)})-1.0)/(exp(${ASSUMED_THICKNESS_CURVATURE.toFixed(1)})-1.0); }
   float cloudTransmission(float opticalDepth,float quality){ return exp(-opticalDepth*quality); }
   float cloudProbeScore(vec4 physics,float probeHeightKm){
     return physics.a*exp(-abs(physics.b*20.0-probeHeightKm)*0.45);
@@ -47,6 +67,17 @@ export function discoverCloudCaster(surfaceDirection, sunDirection, samplePhysic
     if (score > selected.score) selected = { heightKm, quality, score };
   }
   return selected;
+}
+
+/**
+ * The CPU mirror of the shader's `assumedCloudOpticalDepth`. Both are generated
+ * from the same two constants above so they cannot drift apart.
+ */
+export function assumedCloudOpticalDepth(alpha) {
+  const opacity = Math.max(0, Math.min(1, alpha));
+  return ASSUMED_THICK_CLOUD_OPTICAL_DEPTH
+    * (Math.exp(opacity * ASSUMED_THICKNESS_CURVATURE) - 1)
+    / (Math.exp(ASSUMED_THICKNESS_CURVATURE) - 1);
 }
 
 export function cityLightTransmission(opticalDepth, quality) {
