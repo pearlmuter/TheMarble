@@ -25,7 +25,9 @@ export async function runEarthProductionVisualSmoke({ appUrl, checkedAt, capture
       artifacts.push(artifact);
       captures.push({ name, ...capture });
       if (capture.runtimeSource !== 'remote' || capture.refresh !== 'current') {
-        failures.push(`${name} is not current production data`);
+        // A run that only says `failed` for all three views cannot be diagnosed
+        // afterwards, so carry whatever the app recorded about the failure.
+        failures.push(`${name} is not current production data${capture.refreshReason ? `: ${capture.refreshReason}` : ''}`);
       }
       if (capture.consoleErrors?.length > 0) failures.push(`${name} emitted console errors: ${capture.consoleErrors.join('; ')}`);
       if (capture.pageErrors?.length > 0) failures.push(`${name} emitted page errors: ${capture.pageErrors.join('; ')}`);
@@ -46,11 +48,12 @@ export async function runEarthProductionVisualSmoke({ appUrl, checkedAt, capture
     bundleId: bundleIds.size === 1 ? [...bundleIds][0] : undefined,
     artifacts,
     failures,
-    views: captures.map(({ name, bundleId, runtimeSource, refresh, consoleErrors, pageErrors }) => ({
+    views: captures.map(({ name, bundleId, runtimeSource, refresh, refreshReason, consoleErrors, pageErrors }) => ({
       name,
       bundleId,
       runtimeSource,
       refresh,
+      refreshReason,
       consoleErrors: consoleErrors ?? [],
       pageErrors: pageErrors ?? [],
     })),

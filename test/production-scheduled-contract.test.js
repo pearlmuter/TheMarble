@@ -8,6 +8,11 @@ test('the app exposes its current verified bundle to a non-visual production smo
   assert.match(source, /earthStateSummary\.dataset\.bundleId/);
   assert.match(source, /earthStateSummary\.dataset\.runtimeSource/);
   assert.match(source, /earthStateSummary\.dataset\.refresh/);
+  // A failed refresh that cannot say why is why the scheduled health run could
+  // report three bundled-fallback views with nothing to diagnose.
+  assert.match(source, /earthStateSummary\.dataset\.refreshReason/);
+  assert.match(source, /summarizeEarthStateRefreshFailure\(error\)/);
+  assert.doesNotMatch(source, /\}\s*catch\s*\{\s*\n\s*\/\/ Missing or invalid production state/);
 });
 
 test('the production smoke adapter uses a real browser and retains its report', async () => {
@@ -17,6 +22,7 @@ test('the production smoke adapter uses a real browser and retains its report', 
   assert.match(source, /page\.screenshot/);
   assert.ok(source.indexOf('catch (error)') < source.indexOf('page.screenshot'));
   assert.match(source, /smoke-report\.json/);
+  assert.match(source, /data-refresh-reason/);
 });
 
 test('scheduled production health retains diagnostics and the cross-run soak history even on failure', async () => {

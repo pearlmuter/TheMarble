@@ -75,21 +75,52 @@ function surfacePresentation(surface) {
   };
 }
 
+const MAXIMUM_REFRESH_REASON_LENGTH = 160;
+
+/**
+ * Turn whatever activation threw into one short line the panel and the smoke
+ * client can carry. Discarding it made a 404, a checksum mismatch, a timeout and
+ * a CORS block indistinguishable -- every one of them reached the corner as
+ * `failed` and nothing else, which is why the scheduled health run could report
+ * three views on a bundled fallback with no error to name.
+ *
+ * URLs are removed rather than shortened: a provider template can carry a
+ * query-string credential, and this line is published in CI reports.
+ */
+export function summarizeEarthStateRefreshFailure(error) {
+  const raw = typeof error === 'string' ? error : error?.message;
+  const reason = String(raw ?? '')
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '')
+    .replace(/\s+/g, ' ')
+    // A removed URL leaves the separator that introduced it dangling.
+    .replace(/[\s:;,-]+$/, '')
+    .trim();
+  if (reason === '') return error instanceof Error && error.name ? error.name : 'unknown error';
+  return reason.length > MAXIMUM_REFRESH_REASON_LENGTH
+    ? `${reason.slice(0, MAXIMUM_REFRESH_REASON_LENGTH - 1).trimEnd()}…`
+    : reason;
+}
+
+function failureReason(runtime) {
+  return runtime.refresh === 'failed' && runtime.reason ? ` · ${runtime.reason}` : '';
+}
+
 function runtimePresentation(runtime) {
+  const because = failureReason(runtime);
   if (runtime.source === 'bundled-fallback') {
     return {
       label: 'Bundled fallback · contemporary updates unavailable',
-      detail: runtime.refresh === 'failed' ? 'Latest refresh failed; the packaged, verified fallback remains active' : 'Packaged, verified fallback is active while a contemporary bundle is sought',
+      detail: runtime.refresh === 'failed' ? `Latest refresh failed; the packaged, verified fallback remains active${because}` : 'Packaged, verified fallback is active while a contemporary bundle is sought',
     };
   }
   if (runtime.source === 'offline-cache') {
     return {
       label: 'Offline cache · verified last-known-good Earth state',
-      detail: runtime.refresh === 'failed' ? 'Latest refresh failed; the offline cache remains active' : 'Verified offline cache is active while a newer bundle is sought',
+      detail: runtime.refresh === 'failed' ? `Latest refresh failed; the offline cache remains active${because}` : 'Verified offline cache is active while a newer bundle is sought',
     };
   }
   if (runtime.refresh === 'failed') {
-    return { label: 'Verified last-known-good remote Earth state', detail: 'Latest refresh failed; the previously verified remote bundle remains active' };
+    return { label: 'Verified last-known-good remote Earth state', detail: `Latest refresh failed; the previously verified remote bundle remains active${because}` };
   }
   return { label: 'Verified remote Earth state', detail: runtime.refresh === 'checking' ? 'Checking for a newer verified bundle' : 'Latest refresh completed successfully' };
 }

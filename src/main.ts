@@ -24,7 +24,7 @@ import type { HipparcosPayload } from './earth-state-scene.js';
 import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
 import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
 import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
-import { buildEarthStateProvenancePresentation } from './earth-state-provenance.js';
+import { buildEarthStateProvenancePresentation, summarizeEarthStateRefreshFailure } from './earth-state-provenance.js';
 import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
 import { createProvenanceDisclosure } from './provenance-disclosure.js';
 import { createEarthStatePresentationActivator } from './earth-state-presentation.js';
@@ -211,6 +211,10 @@ function renderEarthStateProvenance(now: Date, force = false) {
   earthStateSummary.dataset.bundleId = activeEarthStateManifest.bundleId;
   earthStateSummary.dataset.runtimeSource = earthStateRuntime.source;
   earthStateSummary.dataset.refresh = earthStateRuntime.refresh;
+  // A smoke client that only reads `failed` cannot tell a 404 from a checksum
+  // mismatch, a timeout or a CORS block, so publish the reason beside it.
+  if (earthStateRuntime.reason) earthStateSummary.dataset.refreshReason = earthStateRuntime.reason;
+  else delete earthStateSummary.dataset.refreshReason;
   const sectionElements = presentation.sections.map(section => {
     const element = document.createElement('section');
     element.className = `provenance-section${['clouds', 'datasets', 'attribution'].includes(section.id) ? ' provenance-section-wide' : ''}`;
@@ -630,7 +634,7 @@ async function refreshLatestEarthState() {
   if (latestRefreshInFlight) return;
   latestRefreshInFlight = true;
   const retainedSource = earthStateRuntime.source;
-  earthStateRuntime = { ...earthStateRuntime, refresh: 'checking' };
+  earthStateRuntime = { source: earthStateRuntime.source, refresh: 'checking' };
   renderEarthStateProvenance(sceneNow(), true);
   try {
     const previous = earthStateActivator.current;
@@ -681,9 +685,11 @@ async function refreshLatestEarthState() {
         // Storage quota or eviction must not prevent a fully verified online bundle from rendering.
       });
     }
-  } catch {
-    // Missing or invalid production state is an expected fallback condition. Keep the verified globe.
-    earthStateRuntime = { source: retainedSource, refresh: 'failed' };
+  } catch (error) {
+    // Missing or invalid production state is an expected fallback condition. Keep
+    // the verified globe -- but keep why, too: discarding it is what made every
+    // failure reach the corner and the scheduled health run as a bare `failed`.
+    earthStateRuntime = { source: retainedSource, refresh: 'failed', reason: summarizeEarthStateRefreshFailure(error) };
     renderEarthStateProvenance(sceneNow(), true);
   } finally {
     latestCapture = undefined;

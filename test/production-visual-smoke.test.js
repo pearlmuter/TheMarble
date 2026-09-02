@@ -51,3 +51,42 @@ test('visual smoke retains every diagnostic image and fails on fallback, stale, 
   assert.ok(report.failures.some(failure => /not current/i.test(failure)));
   assert.ok(report.failures.some(failure => /console|page/i.test(failure)));
 });
+
+test('a view that is not current production data names the reason in its own failure', async () => {
+  const report = await runEarthProductionVisualSmoke({
+    appUrl: 'https://marble.test/',
+    checkedAt: '2026-08-29T08:00:00Z',
+    async captureView({ name }) {
+      return {
+        screenshot: new Uint8Array([1]),
+        bundleId: 'bundled',
+        runtimeSource: 'bundled-fallback',
+        refresh: 'failed',
+        refreshReason: name === 'night' ? 'Earth-state asset unavailable (404) after 4 attempts' : 'Failed to fetch',
+        consoleErrors: [],
+        pageErrors: [],
+      };
+    },
+    async retainArtifact() {},
+  });
+
+  assert.equal(report.ok, false);
+  // The whole point: three identical `failed` lines told nobody anything.
+  assert.ok(report.failures.some(failure => /night is not current production data: Earth-state asset unavailable \(404\) after 4 attempts/.test(failure)));
+  assert.ok(report.failures.some(failure => /day is not current production data: Failed to fetch/.test(failure)));
+  assert.deepEqual(report.views.map(view => view.refreshReason), ['Failed to fetch', 'Failed to fetch', 'Earth-state asset unavailable (404) after 4 attempts']);
+});
+
+test('a healthy view carries no refresh reason to explain away', async () => {
+  const report = await runEarthProductionVisualSmoke({
+    appUrl: 'https://marble.test/',
+    checkedAt: '2026-08-29T08:00:00Z',
+    async captureView() {
+      return { screenshot: new Uint8Array([1]), bundleId: 'earth-current', runtimeSource: 'remote', refresh: 'current', consoleErrors: [], pageErrors: [] };
+    },
+    async retainArtifact() {},
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.views.map(view => view.refreshReason), [undefined, undefined, undefined]);
+});

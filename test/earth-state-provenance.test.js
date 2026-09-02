@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ASSUMED_THICK_CLOUD_OPTICAL_DEPTH } from '../src/cloud-render-model.js';
-import { buildEarthStateProvenancePresentation } from '../src/earth-state-provenance.js';
+import { buildEarthStateProvenancePresentation, summarizeEarthStateRefreshFailure } from '../src/earth-state-provenance.js';
 
 const asset = { href: './fixture.bin', mediaType: 'application/octet-stream', byteLength: 1, immutable: true, checksum: { algorithm: 'sha256', value: '0'.repeat(64) } };
 const layer = datasetId => ({ datasetId, units: 'fixture', dimensions: { width: 2, height: 1 }, colorSpace: 'linear', channels: {}, textureSemantics: { mapping: 'equirectangular', sampling: 'linear' }, asset });
@@ -191,4 +191,66 @@ test('static bundled cloud is assumed thickness too, and says so', () => {
 
   assert.match(text, /Cloud thickness · assumed/);
   assert.match(presentation.accessibleSummary, /cloud thickness is assumed/i);
+});
+
+test('a refresh failure keeps the reason it failed, so a 404 and a checksum mismatch differ', () => {
+  assert.equal(
+    summarizeEarthStateRefreshFailure(new Error('Earth-state asset unavailable (404) after 4 attempts: https://example.test/a.png')),
+    'Earth-state asset unavailable (404) after 4 attempts',
+  );
+  assert.equal(
+    summarizeEarthStateRefreshFailure(new Error('Invalid Earth-state manifest field: cloudSequence.frames.1.layers.cloudOpacity.asset')),
+    'Invalid Earth-state manifest field: cloudSequence.frames.1.layers.cloudOpacity.asset',
+  );
+  assert.equal(summarizeEarthStateRefreshFailure(new TypeError('Failed to fetch')), 'Failed to fetch');
+});
+
+test('a refresh reason never carries a URL that could hold a query-string credential', () => {
+  const reason = summarizeEarthStateRefreshFailure(
+    new Error('fetch failed for https://store.test/bundle.json?token=s3cr3t&sig=abc while activating'),
+  );
+  assert.doesNotMatch(reason, /s3cr3t|abc|token|store\.test|https?:/);
+  assert.equal(reason, 'fetch failed for while activating');
+});
+
+test('a refresh reason stays short and single-line whatever was thrown', () => {
+  const long = summarizeEarthStateRefreshFailure(new Error(`${'verbose '.repeat(60)}end`));
+  assert.ok(long.length <= 160);
+  assert.match(long, /…$/);
+  assert.equal(summarizeEarthStateRefreshFailure(new Error('line one\n  line two')), 'line one line two');
+  assert.equal(summarizeEarthStateRefreshFailure('plain string failure'), 'plain string failure');
+  assert.equal(summarizeEarthStateRefreshFailure(new Error('')), 'Error');
+  assert.equal(summarizeEarthStateRefreshFailure(undefined), 'unknown error');
+  assert.equal(summarizeEarthStateRefreshFailure({}), 'unknown error');
+});
+
+test('the active-state line names why the last refresh failed rather than only that it did', () => {
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest: contemporaryManifest(),
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'bundled-fallback', refresh: 'failed', reason: 'Earth-state asset unavailable (404) after 4 attempts' },
+  });
+  const [state] = presentation.sections;
+
+  assert.equal(state.id, 'state');
+  assert.match(state.items[0], /Latest refresh failed/);
+  assert.match(state.items[0], /Earth-state asset unavailable \(404\) after 4 attempts/);
+});
+
+test('every runtime source reports its failure reason, and none invents one when it succeeded', () => {
+  for (const source of ['bundled-fallback', 'offline-cache', 'remote']) {
+    const failed = buildEarthStateProvenancePresentation({
+      manifest: contemporaryManifest(),
+      now: new Date('2026-08-28T12:00:00Z'),
+      runtime: { source, refresh: 'failed', reason: 'checksum mismatch' },
+    });
+    assert.match(failed.sections[0].items[0], /checksum mismatch/, source);
+
+    const current = buildEarthStateProvenancePresentation({
+      manifest: contemporaryManifest(),
+      now: new Date('2026-08-28T12:00:00Z'),
+      runtime: { source, refresh: 'current' },
+    });
+    assert.doesNotMatch(current.sections[0].items[0], /checksum mismatch|because/, source);
+  }
 });

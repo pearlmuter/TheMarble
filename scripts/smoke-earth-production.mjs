@@ -52,6 +52,7 @@ async function main() {
             bundleId: element.getAttribute('data-bundle-id') ?? '',
             runtimeSource: element.getAttribute('data-runtime-source') ?? '',
             refresh: element.getAttribute('data-refresh') ?? '',
+            refreshReason: element.getAttribute('data-refresh-reason') ?? undefined,
           })).catch(error => {
             pageErrors.push(`Production currentness marker unavailable: ${error.message ?? String(error)}`);
             return { bundleId: '', runtimeSource: '', refresh: '' };

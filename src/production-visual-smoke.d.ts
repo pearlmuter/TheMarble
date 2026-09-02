@@ -3,6 +3,7 @@ export interface EarthVisualSmokeCapture {
   bundleId?: string;
   runtimeSource?: string;
   refresh?: string;
+  refreshReason?: string;
   consoleErrors?: string[];
   pageErrors?: string[];
 }
@@ -15,7 +16,7 @@ export interface EarthVisualSmokeReport {
   artifacts: string[];
   failures: string[];
   views: Array<{
-    name: string; bundleId?: string; runtimeSource?: string; refresh?: string;
+    name: string; bundleId?: string; runtimeSource?: string; refresh?: string; refreshReason?: string;
     consoleErrors: string[]; pageErrors: string[];
   }>;
 }
