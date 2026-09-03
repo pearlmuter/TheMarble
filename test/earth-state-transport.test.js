@@ -70,3 +70,60 @@ test('an aborted activation stops immediately instead of retrying', async () => 
     /aborted/,
   );
 });
+
+function resettingTransport(outcomes) {
+  const requested = [];
+  const slept = [];
+  return {
+    requested,
+    slept,
+    fetch: async url => {
+      requested.push(url);
+      const outcome = outcomes[requested.length - 1] ?? 200;
+      if (typeof outcome === 'string') throw new TypeError(outcome);
+      return response(outcome);
+    },
+    sleep: async ms => { slept.push(ms); },
+  };
+}
+
+test('a dropped connection is retried, because it is not a fact about the bundle', async () => {
+  // A 112 MB activation crossing a reset connection used to refuse the whole
+  // Earth state: only HTTP statuses were retried, and a thrown network error
+  // went straight out through every layer above.
+  const transport = resettingTransport(['Failed to fetch', 'Failed to fetch', 200]);
+  const result = await fetchEarthStateAsset('https://origin.test/a.png', transport);
+  assert.equal(result.status, 200);
+  assert.equal(transport.requested.length, 3);
+  assert.ok(transport.slept[1] > transport.slept[0]);
+});
+
+test('a connection that keeps dropping gives up and says so without leaking the URL', async () => {
+  const transport = resettingTransport(['Failed to fetch', 'Failed to fetch', 'Failed to fetch', 'Failed to fetch']);
+  await assert.rejects(
+    () => fetchEarthStateAsset('https://origin.test/a.png?token=secret', transport),
+    error => {
+      assert.match(error.message, /unreachable after 4 attempts/);
+      assert.match(error.message, /Failed to fetch/);
+      assert.doesNotMatch(error.message, /secret|origin\.test|https:/);
+      return true;
+    },
+  );
+  assert.equal(transport.requested.length, 4);
+});
+
+test('a reset connection and a throttled answer can be mixed and still recover', async () => {
+  const transport = resettingTransport(['Failed to fetch', 503, 200]);
+  assert.equal((await fetchEarthStateAsset('https://origin.test/a.png', transport)).status, 200);
+  assert.equal(transport.requested.length, 3);
+});
+
+test('an abort during a dropped connection stops instead of retrying it', async () => {
+  const signal = { aborted: false };
+  const transport = {
+    fetch: async () => { signal.aborted = true; throw new TypeError('Failed to fetch'); },
+    sleep: async () => {},
+    signal,
+  };
+  await assert.rejects(() => fetchEarthStateAsset('https://origin.test/a.png', transport), /Failed to fetch/);
+});

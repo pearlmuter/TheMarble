@@ -71,6 +71,9 @@ test('the cloud layer is lit on the night side instead of being drawn black', ()
   // overcast hemisphere renders as an empty black disc.
   assert.match(mainSource, /uniform sampler2D nightMap; uniform vec3 moonDirection; uniform float moonIllumination;/);
   assert.match(mainSource, /nightCloudIllumination\(dot\(normalize\(vViewNormal\),moonView\),moonIllumination,upwellingCityLight\(nightMap,vUv\)\)/);
+  // Nine texture reads a fragment, skipped where the night term is multiplied
+  // by zero anyway, so the day and terminator views stay as cheap as before.
+  assert.match(mainSource, /if\(solar<\.999\)\{/);
   // Crossfaded against the same terminator term as the sunlit cloud, so the two
   // cannot leave a seam between them.
   assert.match(mainSource, /vec3 cloudLight=litCloud\*solar\+vec3\(1\.0,\.56,\.2\)\*silver\*\.48\*solar\+nightCloud\*\(1\.0-solar\)/);

@@ -964,8 +964,16 @@ const cloudMaterial = new THREE.ShaderMaterial({
       // Sunlit cloud, then the night side. Without the second term the cloud is
       // drawn pure black over a black hemisphere: it still hides city lights, but
       // it never appears, so an overcast city reads as a hole rather than a deck.
-      vec3 moonView=normalize((viewMatrix*vec4(moonDirection,0.0)).xyz);
-      vec3 nightCloud=nightCloudIllumination(dot(normalize(vViewNormal),moonView),moonIllumination,upwellingCityLight(nightMap,vUv));
+      // Sampling the upwelling city light costs nine texture reads, and a fully
+      // sunlit fragment cannot see any of it: at solar 1 the night term is
+      // multiplied by zero. Skipping it there keeps the day and terminator views
+      // as cheap as they were, which matters on the software renderer the
+      // scheduled monitor uses.
+      vec3 nightCloud=vec3(0.0);
+      if(solar<.999){
+        vec3 moonView=normalize((viewMatrix*vec4(moonDirection,0.0)).xyz);
+        nightCloud=nightCloudIllumination(dot(normalize(vViewNormal),moonView),moonIllumination,upwellingCityLight(nightMap,vUv));
+      }
       vec3 cloudLight=litCloud*solar+vec3(1.0,.56,.2)*silver*.48*solar+nightCloud*(1.0-solar);
       float ageTrust=1.0-observationAge*.18;
       gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.9*ageTrust);

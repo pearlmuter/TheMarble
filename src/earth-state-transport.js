@@ -28,13 +28,33 @@ export function earthStateRetryDelayMs(attempt, retryAfterHeader) {
  */
 export async function fetchEarthStateAsset(url, { fetch: fetchImpl, signal, sleep, attempts = DEFAULT_ATTEMPTS } = {}) {
   let lastStatus;
+  let lastTransportFailure;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (signal?.aborted) throw new Error(`Earth-state asset fetch aborted: ${url}`);
-    const response = await fetchImpl(url, { signal });
+    let response;
+    try {
+      response = await fetchImpl(url, { signal });
+    } catch (error) {
+      // A reset or dropped connection is not a fact about the bundle either. It
+      // is the clearest case of an answer that differs next time, and leaving it
+      // unretried meant one dropped connection part-way through a hundred
+      // megabytes refused the entire Earth state.
+      if (signal?.aborted) throw error;
+      lastTransportFailure = error?.message ?? String(error);
+      if (attempt === attempts) break;
+      await sleep(earthStateRetryDelayMs(attempt));
+      continue;
+    }
     if (response.ok) return response;
+    lastTransportFailure = undefined;
     lastStatus = response.status;
     if (!isRetryableEarthStateStatus(response.status) || attempt === attempts) break;
     await sleep(earthStateRetryDelayMs(attempt, response.headers?.get?.('retry-after')));
+  }
+  // The URL is deliberately absent from the transport message: a provider
+  // template can carry a query-string credential and this reason is published.
+  if (lastTransportFailure !== undefined) {
+    throw new Error(`Earth-state asset unreachable after ${attempts} attempts (${lastTransportFailure})`);
   }
   throw new Error(`Earth-state asset unavailable (${lastStatus}) after ${attempts} attempts: ${url}`);
 }
