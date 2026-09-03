@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { loadEarthStateJsonDocument } from '../src/earth-state-document.js';
-import { createEarthStateActivator } from '../src/earth-state.js';
+import { EARTH_STATE_ACTIVATION_TIMEOUT_MS, createEarthStateActivator } from '../src/earth-state.js';
 
 const fixtureBytes = new TextEncoder().encode('fixture asset');
 const checksum = 'dc9905c9a7e70f6485604c96e9a3ff0f5fc0b8ae936ef644a6ae31afbc10acd4';
@@ -808,4 +808,13 @@ test('malformed published JSON from the browser document loader leaves the curre
     /malformed JSON/,
   );
   assert.equal(activator.current, active);
+});
+
+test('the activation deadline guards a hung fetch, not a slow machine decoding a large bundle', () => {
+  // Measured 2026-09-03 against the served bundle: 100 MB across 20 assets
+  // downloads in 2.1s, but a software-rendered client (SwiftShader -- what a CI
+  // runner and a weak device both get) needs ~125s to fetch, verify and upload
+  // it. At the old 120s the scheduled health monitor refused a perfectly
+  // healthy Earth state on every run, and so would any slow device.
+  assert.ok(EARTH_STATE_ACTIVATION_TIMEOUT_MS >= 300_000);
 });

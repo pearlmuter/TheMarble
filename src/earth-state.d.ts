@@ -194,6 +194,8 @@ export interface EarthStateManifest {
   cloudSequence?: EarthStateCloudSequence;
 }
 
+export const EARTH_STATE_ACTIVATION_TIMEOUT_MS: number;
+
 export function validateEarthStateManifest(manifest: unknown): asserts manifest is EarthStateManifest;
 
 export interface EarthStateLatest {

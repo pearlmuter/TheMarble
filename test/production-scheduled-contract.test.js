@@ -23,6 +23,13 @@ test('the production smoke adapter uses a real browser and retains its report', 
   assert.ok(source.indexOf('catch (error)') < source.indexOf('page.screenshot'));
   assert.match(source, /smoke-report\.json/);
   assert.match(source, /data-refresh-reason/);
+  // The smoke must outwait the app's own activation deadline, or it reports a
+  // harness timeout instead of whatever the app was about to say.
+  assert.match(source, /EARTH_STATE_ACTIVATION_TIMEOUT_MS/);
+  const { EARTH_STATE_ACTIVATION_TIMEOUT_MS } = await import('../src/earth-state.js');
+  const [, readyTimeout] = source.match(/const READY_TIMEOUT_MS = EARTH_STATE_ACTIVATION_TIMEOUT_MS \+ ([0-9_]+)/);
+  assert.ok(Number(readyTimeout.replaceAll('_', '')) > 0);
+  assert.ok(EARTH_STATE_ACTIVATION_TIMEOUT_MS >= 300_000);
 });
 
 test('scheduled production health retains diagnostics and the cross-run soak history even on failure', async () => {

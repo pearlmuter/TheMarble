@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { EARTH_STATE_ACTIVATION_TIMEOUT_MS } from '../src/earth-state.js';
 import { runEarthProductionVisualSmoke } from '../src/production-visual-smoke.js';
+
+// The app abandons an activation at EARTH_STATE_ACTIVATION_TIMEOUT_MS and then
+// says why. Giving up first would replace that answer with a harness timeout.
+const READY_TIMEOUT_MS = EARTH_STATE_ACTIVATION_TIMEOUT_MS + 30_000;
 
 function parseArguments(argv) {
   const options = {};
@@ -43,7 +48,7 @@ async function main() {
             await page.waitForFunction(() => {
               const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
               return refresh === 'current' || refresh === 'failed';
-            }, undefined, { timeout: 120_000 });
+            }, undefined, { timeout: READY_TIMEOUT_MS });
             await page.waitForTimeout(1_000);
           } catch (error) {
             pageErrors.push(`Production view did not become ready: ${error.message ?? String(error)}`);

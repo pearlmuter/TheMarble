@@ -426,7 +426,23 @@ function requireEntries(manifest, groupName, names, supportedNames = names) {
   }
 }
 
-export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs = 120_000 }) {
+/**
+ * How long activation may take before it is abandoned and the previous verified
+ * Earth state is kept.
+ *
+ * This guards a hung fetch, not a slow machine. Measured 2026-09-03 against the
+ * served bundle: 100 MB across 20 assets downloads in 2.1s, but fetching,
+ * checksumming, decoding and uploading it takes about 125s on a
+ * software-rendered client -- which is what a CI runner and a weak device both
+ * get. At the previous 120s that healthy work was refused as a timeout, and the
+ * scheduled health monitor failed on every run for days because of it. The cost
+ * of waiting longer is nil: the verified fallback globe is already on screen
+ * throughout, so a slow client eventually gets real Earth data instead of being
+ * pinned to the fallback forever.
+ */
+export const EARTH_STATE_ACTIVATION_TIMEOUT_MS = 300_000;
+
+export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs = EARTH_STATE_ACTIVATION_TIMEOUT_MS }) {
   let current;
 
   const withinDeadline = async operation => {
