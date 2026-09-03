@@ -17,6 +17,29 @@ export const ASSUMED_THICK_CLOUD_OPTICAL_DEPTH = 18;
 // spread across that range is what the eye actually sees and must be preserved.
 export const ASSUMED_THICKNESS_CURVATURE = 5;
 
+// A cloud at night is not black, and drawing it black is why an overcast city
+// read as a hole in the map instead of a glowing deck. Three real sources light
+// the night side of a cloud:
+//
+//   - Moonlight, which follows the Moon's real phase and is absent at new moon.
+//   - Airglow, faint and always present, which is why cloud is still faintly
+//     visible from orbit on a moonless night.
+//   - City light scattered up into the cloud base. This is the diffuse term #21
+//     asked for. Cloud scatters far more than it absorbs, so the light a deck
+//     takes out of a city is not destroyed -- it leaves the deck spread out.
+//     The city is genuinely hidden; the cloud above it glows in its place.
+//
+// The spread is the whole point, so the upwelling light is sampled over a disc
+// rather than straight down. UV is equirectangular, so a v offset covers twice
+// the angle of the same u offset; the pair below is about half a degree, near
+// 60 km at the equator.
+export const NIGHT_CLOUD_MOONLIGHT_TINT = Object.freeze([.62, .68, .85]);
+export const NIGHT_CLOUD_MOONLIGHT_SCALE = .78;
+export const NIGHT_CLOUD_AIRGLOW_TINT = Object.freeze([.16, .22, .30]);
+export const NIGHT_CLOUD_AIRGLOW_SCALE = .62;
+export const NIGHT_CLOUD_UPWELLING_SCALE = .50;
+export const NIGHT_CLOUD_UPWELLING_SPREAD_UV = Object.freeze([.0015, .003]);
+
 export const CLOUD_RENDER_GLSL = `
   vec2 directionUv(vec3 direction){
     direction=normalize(direction);
@@ -30,6 +53,25 @@ export const CLOUD_RENDER_GLSL = `
   float decodeCloudOpticalDepth(float encoded){ return exp(encoded*log(151.0))-1.0; }
   float assumedCloudOpticalDepth(float alpha){ return ${ASSUMED_THICK_CLOUD_OPTICAL_DEPTH.toFixed(1)}*(exp(clamp(alpha,0.0,1.0)*${ASSUMED_THICKNESS_CURVATURE.toFixed(1)})-1.0)/(exp(${ASSUMED_THICKNESS_CURVATURE.toFixed(1)})-1.0); }
   float cloudTransmission(float opticalDepth,float quality){ return exp(-opticalDepth*quality); }
+  vec3 upwellingCityLight(sampler2D nightMap,vec2 uv){
+    vec2 e=vec2(${NIGHT_CLOUD_UPWELLING_SPREAD_UV[0]},${NIGHT_CLOUD_UPWELLING_SPREAD_UV[1]});
+    vec3 total=texture2D(nightMap,uv).rgb*.28;
+    total+=texture2D(nightMap,uv+vec2(e.x,0.0)).rgb*.09;
+    total+=texture2D(nightMap,uv-vec2(e.x,0.0)).rgb*.09;
+    total+=texture2D(nightMap,uv+vec2(0.0,e.y)).rgb*.09;
+    total+=texture2D(nightMap,uv-vec2(0.0,e.y)).rgb*.09;
+    total+=texture2D(nightMap,uv+e*.7).rgb*.09;
+    total+=texture2D(nightMap,uv-e*.7).rgb*.09;
+    total+=texture2D(nightMap,uv+vec2(e.x,-e.y)*.7).rgb*.09;
+    total+=texture2D(nightMap,uv-vec2(e.x,-e.y)*.7).rgb*.09;
+    return total;
+  }
+  vec3 nightCloudIllumination(float moonLambert,float moonIllumination,vec3 upwelling){
+    vec3 moonlight=vec3(${NIGHT_CLOUD_MOONLIGHT_TINT[0]},${NIGHT_CLOUD_MOONLIGHT_TINT[1]},${NIGHT_CLOUD_MOONLIGHT_TINT[2]})
+      *max(moonLambert,0.0)*clamp(moonIllumination,0.0,1.0)*${NIGHT_CLOUD_MOONLIGHT_SCALE};
+    vec3 airglow=vec3(${NIGHT_CLOUD_AIRGLOW_TINT[0]},${NIGHT_CLOUD_AIRGLOW_TINT[1]},${NIGHT_CLOUD_AIRGLOW_TINT[2]})*${NIGHT_CLOUD_AIRGLOW_SCALE};
+    return moonlight+airglow+max(upwelling,vec3(0.0))*${NIGHT_CLOUD_UPWELLING_SCALE};
+  }
   float cloudProbeScore(vec4 physics,float probeHeightKm){
     return physics.a*exp(-abs(physics.b*20.0-probeHeightKm)*0.45);
   }
@@ -78,6 +120,18 @@ export function assumedCloudOpticalDepth(alpha) {
   return ASSUMED_THICK_CLOUD_OPTICAL_DEPTH
     * (Math.exp(opacity * ASSUMED_THICKNESS_CURVATURE) - 1)
     / (Math.exp(ASSUMED_THICKNESS_CURVATURE) - 1);
+}
+
+/**
+ * The CPU mirror of the shader's `nightCloudIllumination`, generated from the
+ * same constants. `upwelling` is the already-spread city light arriving at the
+ * cloud base.
+ */
+export function nightCloudIllumination({ moonLambert = 0, moonIllumination = 0, upwelling = [0, 0, 0] }) {
+  const moon = Math.max(0, moonLambert) * Math.max(0, Math.min(1, moonIllumination)) * NIGHT_CLOUD_MOONLIGHT_SCALE;
+  return NIGHT_CLOUD_MOONLIGHT_TINT.map((tint, channel) => tint * moon
+    + NIGHT_CLOUD_AIRGLOW_TINT[channel] * NIGHT_CLOUD_AIRGLOW_SCALE
+    + Math.max(0, upwelling[channel] ?? 0) * NIGHT_CLOUD_UPWELLING_SCALE);
 }
 
 export function cityLightTransmission(opticalDepth, quality) {

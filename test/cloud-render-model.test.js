@@ -4,10 +4,17 @@ import {
   ASSUMED_THICK_CLOUD_OPTICAL_DEPTH,
   ASSUMED_THICKNESS_CURVATURE,
   CLOUD_RENDER_GLSL,
+  NIGHT_CLOUD_AIRGLOW_SCALE,
+  NIGHT_CLOUD_AIRGLOW_TINT,
+  NIGHT_CLOUD_MOONLIGHT_SCALE,
+  NIGHT_CLOUD_MOONLIGHT_TINT,
+  NIGHT_CLOUD_UPWELLING_SCALE,
+  NIGHT_CLOUD_UPWELLING_SPREAD_UV,
   assumedCloudOpticalDepth,
   cityLightTransmission,
   cloudShadowStrength,
   discoverCloudCaster,
+  nightCloudIllumination,
   shadowCasterUv,
   sphereUv,
 } from '../src/cloud-render-model.js';
@@ -113,4 +120,58 @@ test('the shader and its CPU mirror share one definition of assumed thickness', 
     [...new Set(constants)].sort((a, b) => a - b),
     [0.0, 1.0, ASSUMED_THICKNESS_CURVATURE, ASSUMED_THICK_CLOUD_OPTICAL_DEPTH].sort((a, b) => a - b),
   );
+});
+
+test('cloud at night is never black, even at new moon over empty ocean', () => {
+  // Drawing it black is the defect: the cloud still hid city lights but never
+  // appeared, so an overcast region read as a hole in the map.
+  const [r, g, b] = nightCloudIllumination({ moonLambert: 0, moonIllumination: 0, upwelling: [0, 0, 0] });
+  assert.ok(r > 0 && g > 0 && b > 0);
+  // Airglow is cool, not neutral: blue exceeds red.
+  assert.ok(b > r);
+});
+
+test('moonlight on cloud follows the real phase of the Moon', () => {
+  const luminance = input => nightCloudIllumination(input).reduce((sum, channel) => sum + channel, 0) / 3;
+  const newMoon = luminance({ moonLambert: 1, moonIllumination: 0 });
+  const half = luminance({ moonLambert: 1, moonIllumination: .5 });
+  const full = luminance({ moonLambert: 1, moonIllumination: 1 });
+
+  assert.ok(full > half && half > newMoon);
+  // A new moon leaves airglow alone, and half a Moon gives half the moonlight.
+  assert.ok(Math.abs((half - newMoon) - (full - half)) < 1e-9);
+  // The Moon below the horizon contributes nothing, however full it is.
+  assert.equal(luminance({ moonLambert: -1, moonIllumination: 1 }), newMoon);
+});
+
+test('cloud over a city glows, which is where the light a city loses actually goes', () => {
+  const luminance = input => nightCloudIllumination(input).reduce((sum, channel) => sum + channel, 0) / 3;
+  const overOcean = luminance({ moonIllumination: .5, moonLambert: .5 });
+  const overCity = luminance({ moonIllumination: .5, moonLambert: .5, upwelling: [.8, .7, .5] });
+  const darkOcean = luminance({});
+  const darkCity = luminance({ upwelling: [.8, .7, .5] });
+
+  assert.ok(overCity > overOcean * 2);
+  // With no Moon at all the city beneath is what makes the deck visible.
+  assert.ok(darkCity > darkOcean * 3);
+  // The city itself stays hidden: extinction is unchanged and still total.
+  assert.ok(cityLightTransmission(assumedCloudOpticalDepth(1), .88) < .001);
+});
+
+test('the shader and its CPU mirror share one definition of night cloud light', () => {
+  for (const name of ['nightCloudIllumination', 'upwellingCityLight']) {
+    assert.match(CLOUD_RENDER_GLSL, new RegExp(`vec3 ${name}\\(`));
+  }
+  for (const constant of [
+    NIGHT_CLOUD_MOONLIGHT_SCALE, NIGHT_CLOUD_AIRGLOW_SCALE, NIGHT_CLOUD_UPWELLING_SCALE,
+    ...NIGHT_CLOUD_MOONLIGHT_TINT, ...NIGHT_CLOUD_AIRGLOW_TINT, ...NIGHT_CLOUD_UPWELLING_SPREAD_UV,
+  ]) {
+    assert.ok(CLOUD_RENDER_GLSL.includes(String(constant)), `GLSL does not use ${constant}`);
+  }
+  // The spread taps must preserve energy, or cloud brightness would depend on
+  // how wide the sampling happens to be.
+  const [, upwellingBody] = CLOUD_RENDER_GLSL.match(/vec3 upwellingCityLight\([^)]*\)\{([\s\S]*?)\n  \}/);
+  const weights = [...upwellingBody.matchAll(/\.rgb\*(\.\d+)/g)].map(match => Number(match[1]));
+  assert.equal(weights.length, 9);
+  assert.ok(Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 1) < 1e-9);
 });

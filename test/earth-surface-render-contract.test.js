@@ -65,3 +65,23 @@ test('every unretrieved optical depth comes from the one shared assumed-thicknes
   assert.equal(mainSource.match(/assumedCloudOpticalDepth\(/g).length, 3);
   assert.match(cloudModelSource, /float assumedCloudOpticalDepth\(/);
 });
+
+test('the cloud layer is lit on the night side instead of being drawn black', () => {
+  // Without this the cloud still occludes city lights but never appears, so an
+  // overcast hemisphere renders as an empty black disc.
+  assert.match(mainSource, /uniform sampler2D nightMap; uniform vec3 moonDirection; uniform float moonIllumination;/);
+  assert.match(mainSource, /nightCloudIllumination\(dot\(normalize\(vViewNormal\),moonView\),moonIllumination,upwellingCityLight\(nightMap,vUv\)\)/);
+  // Crossfaded against the same terminator term as the sunlit cloud, so the two
+  // cannot leave a seam between them.
+  assert.match(mainSource, /vec3 cloudLight=litCloud\*solar\+vec3\(1\.0,\.56,\.2\)\*silver\*\.48\*solar\+nightCloud\*\(1\.0-solar\)/);
+  assert.match(cloudModelSource, /vec3 nightCloudIllumination\(/);
+});
+
+test('the cloud layer reads the same night lights as the surface it floats over', () => {
+  // A cloud glowing over cities the surface no longer has would be a lie.
+  assert.match(mainSource, /cloudMaterial\.uniforms\.nightMap\.value = map;/);
+  assert.match(mainSource, /assign\(cloudMaterial, 'nightMap', nightLightsTexture\)/);
+  assert.match(mainSource, /assign\(earthMaterial, 'nightMap', nightLightsTexture\)/);
+  // And the real Moon drives it, so its phase is not invented.
+  assert.match(mainSource, /cloudMaterial\.uniforms\.moonIllumination\.value = frame\.astronomy\.moon\.illuminatedFraction/);
+});

@@ -921,6 +921,9 @@ const cloudMaterial = new THREE.ShaderMaterial({
     cloudPhysicsFrom: { value: cloudPhysicsMap }, cloudPhysicsTo: { value: cloudPhysicsMap },
     cloudAgeFrom: { value: cloudAgeMap }, cloudAgeTo: { value: cloudAgeMap },
     sunDirection: { value: new THREE.Vector3(1, 0, 0) },
+    nightMap: { value: nightMap },
+    moonDirection: { value: new THREE.Vector3(0, 0, 1) },
+    moonIllumination: { value: 0 },
   },
   vertexShader: `
     uniform sampler2D cloudPhysicsFrom; uniform sampler2D cloudPhysicsTo; uniform float cloudMix;
@@ -935,6 +938,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
   fragmentShader: `
     uniform sampler2D cloudMapFrom; uniform sampler2D cloudMapTo; uniform sampler2D cloudDensityFrom; uniform sampler2D cloudDensityTo;
     uniform sampler2D cloudAgeFrom; uniform sampler2D cloudAgeTo; uniform float cloudMix; uniform vec3 sunDirection;
+    uniform sampler2D nightMap; uniform vec3 moonDirection; uniform float moonIllumination;
     varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; varying vec4 vPhysics;
     const float PI=3.14159265359;
     ${CLOUD_RENDER_GLSL}
@@ -957,7 +961,12 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float phaseExponent=mix(12.0,22.0,icePhase); float silver=pow(forward,phaseExponent)*smoothstep(-.02,.28,solarRaw)*mix(.55,1.05,icePhase);
       vec3 phaseTint=mix(vec3(1.03,.995,.94),vec3(.94,.99,1.08),icePhase);
       vec3 litCloud=phaseTint*mix(vec3(1.0),sunlight,.88);
-      vec3 cloudLight=litCloud*solar+vec3(1.0,.56,.2)*silver*.48*solar;
+      // Sunlit cloud, then the night side. Without the second term the cloud is
+      // drawn pure black over a black hemisphere: it still hides city lights, but
+      // it never appears, so an overcast city reads as a hole rather than a deck.
+      vec3 moonView=normalize((viewMatrix*vec4(moonDirection,0.0)).xyz);
+      vec3 nightCloud=nightCloudIllumination(dot(normalize(vViewNormal),moonView),moonIllumination,upwellingCityLight(nightMap,vUv));
+      vec3 cloudLight=litCloud*solar+vec3(1.0,.56,.2)*silver*.48*solar+nightCloud*(1.0-solar);
       float ageTrust=1.0-observationAge*.18;
       gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.9*ageTrust);
     }`
@@ -1205,6 +1214,9 @@ function updateCelestialScene(now: Date) {
   (atmosphere.material as THREE.ShaderMaterial).uniforms.sunDirection.value.copy(sunDirection);
   sun.position.copy(sunDirection).multiplyScalar(frame.sun.distanceEarthRadii);
   const moonDirection = new THREE.Vector3(...frame.moon.inertialDirection);
+  // Night cloud is lit by the real Moon, so a new moon genuinely leaves only airglow.
+  cloudMaterial.uniforms.moonDirection.value.copy(moonDirection);
+  cloudMaterial.uniforms.moonIllumination.value = frame.astronomy.moon.illuminatedFraction;
   moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
   applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
   moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
@@ -1276,6 +1288,8 @@ applyVerifiedLayer = (name, asset) => {
   if (name === 'nightLights') {
     const previous = earthMaterial.uniforms.nightMap.value;
     earthMaterial.uniforms.nightMap.value = map;
+    // The cloud reads the same night lights to know what is glowing beneath it.
+    cloudMaterial.uniforms.nightMap.value = map;
     disposeReplacedTexture(previous, map);
   } else if (name === 'snowCover') {
     const previous = earthMaterial.uniforms.snowCoverMap.value;
@@ -1328,7 +1342,9 @@ qualifyPreparedEarthStateRendering = async (prepared, tier) => {
   assign(earthMaterial, 'dayMapFrom', seasonalSurface.from);
   assign(earthMaterial, 'dayMapTo', seasonalSurface.to);
   assign(earthMaterial, 'seasonalMix', seasonalSurface.mix);
-  assign(earthMaterial, 'nightMap', texture(active.layers.nightLights, previewLayers.nightLights, 'nightLights'));
+  const nightLightsTexture = texture(active.layers.nightLights, previewLayers.nightLights, 'nightLights');
+  assign(earthMaterial, 'nightMap', nightLightsTexture);
+  assign(cloudMaterial, 'nightMap', nightLightsTexture);
   assign(earthMaterial, 'snowCoverMap', texture(active.layers.snowCover, previewLayers.snowCover, 'snowCover'));
   assign(earthMaterial, 'seaIceMap', texture(active.layers.seaIce, previewLayers.seaIce, 'seaIce'));
   for (const material of [earthMaterial, cloudMaterial]) {
