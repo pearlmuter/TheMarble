@@ -10,3 +10,10 @@ export function describeDispatchOutcome(status: number, body?: string): {
   status: number;
   detail: string;
 };
+
+export function workflowForCron(cron: string | undefined, schedules: {
+  publisherWorkflow: string;
+  publisherCron?: string;
+  healthCron?: string;
+  healthWorkflow?: string;
+}): string;

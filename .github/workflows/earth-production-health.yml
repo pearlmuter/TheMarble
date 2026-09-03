@@ -1,8 +1,13 @@
 name: Earth production health
 
 on:
+  # A slow backstop only. GitHub drops most scheduled runs -- a '7,37' cron
+  # managed about five runs a day out of forty-eight -- so the real trigger is
+  # the Cloudflare Worker in infrastructure/publisher-scheduler, which dispatches
+  # this workflow on the half hour. This hourly cron keeps the monitor alive if
+  # that Worker is ever removed.
   schedule:
-    - cron: '7,37 * * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:

@@ -34,3 +34,14 @@ export function describeDispatchOutcome(status, body) {
   if (status === 404) return { ok: false, status, detail: 'repository or workflow not found, or the token cannot see it' };
   return { ok: false, status, detail: body || 'unexpected response' };
 }
+
+/**
+ * One Worker, two schedules. Cloudflare reports which cron fired, so the trigger
+ * picks the workflow. An unknown or absent cron pokes the publisher: a duplicate
+ * poke reports `unchanged` and costs one API call, while a missed publish leaves
+ * the globe stale.
+ */
+export function workflowForCron(cron, { publisherWorkflow, healthCron, healthWorkflow }) {
+  if (healthWorkflow && healthCron && cron === healthCron) return healthWorkflow;
+  return publisherWorkflow;
+}

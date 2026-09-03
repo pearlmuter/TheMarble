@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { describeDispatchOutcome, workflowDispatchRequest } from '../src/publisher-dispatch.js';
+import { describeDispatchOutcome, workflowDispatchRequest, workflowForCron } from '../src/publisher-dispatch.js';
 
 const valid = { repository: 'pearlmuter/TheMarble', workflow: 'earth-state-clouds.yml', token: 'secret' };
 
@@ -33,4 +33,29 @@ test('a failure keeps the reason instead of discarding it', () => {
   assert.match(describeDispatchOutcome(404, '').detail, /not found/);
   assert.match(describeDispatchOutcome(500, 'upstream boom').detail, /upstream boom/);
   for (const status of [401, 403, 404, 500]) assert.equal(describeDispatchOutcome(status, '').ok, false);
+});
+
+test('the cron that fired picks the workflow, so one Worker can drive both schedules', () => {
+  const schedules = {
+    publisherCron: '*/10 * * * *', publisherWorkflow: 'earth-state-clouds.yml',
+    healthCron: '7,37 * * * *', healthWorkflow: 'earth-production-health.yml',
+  };
+  assert.equal(workflowForCron('*/10 * * * *', schedules), 'earth-state-clouds.yml');
+  assert.equal(workflowForCron('7,37 * * * *', schedules), 'earth-production-health.yml');
+});
+
+test('an unrecognised or absent cron pokes the publisher rather than nothing', () => {
+  const schedules = {
+    publisherCron: '*/10 * * * *', publisherWorkflow: 'earth-state-clouds.yml',
+    healthCron: '7,37 * * * *', healthWorkflow: 'earth-production-health.yml',
+  };
+  // A duplicate publish poke returns `unchanged`; a missed publish goes stale.
+  assert.equal(workflowForCron('0 3 * * *', schedules), 'earth-state-clouds.yml');
+  assert.equal(workflowForCron(undefined, schedules), 'earth-state-clouds.yml');
+});
+
+test('a Worker configured without the health schedule still drives the publisher', () => {
+  const schedules = { publisherCron: '*/10 * * * *', publisherWorkflow: 'earth-state-clouds.yml' };
+  assert.equal(workflowForCron('*/10 * * * *', schedules), 'earth-state-clouds.yml');
+  assert.equal(workflowForCron('7,37 * * * *', schedules), 'earth-state-clouds.yml');
 });
