@@ -37,7 +37,17 @@ async function readJson(value) {
   return JSON.parse(new TextDecoder().decode(await readBytes(value)));
 }
 
-async function readJsonResult(value) {
+/**
+ * An unset GitHub Actions variable arrives as the empty string, which is a
+ * different fact from a source that exists and could not be read. Both leave the
+ * monitor without the evidence, and both must still produce a diagnosis.
+ */
+function unconfigured(name) {
+  return `${name} is not configured, so this evidence was never collected`;
+}
+
+async function readJsonResult(value, name) {
+  if (!value) return { error: unconfigured(name) };
   try {
     return { value: await readJson(value) };
   } catch (error) {
@@ -45,7 +55,8 @@ async function readJsonResult(value) {
   }
 }
 
-async function probeLatest(value) {
+async function probeLatest(value, name) {
+  if (!value) return { available: false, bundleId: 'unavailable', error: unconfigured(name) };
   try {
     const latest = await readJson(value);
     if (typeof latest?.bundleId !== 'string' || latest.bundleId.length === 0) throw new Error('latest pointer has no bundleId');
@@ -233,7 +244,11 @@ async function writeAtomic(path, body) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  for (const required of ['snapshot', 'origin-latest', 'cdn-latest', 'smoke-report', 'policy', 'history', 'output']) {
+  // `snapshot` and `origin-latest` are deliberately absent from this list. They
+  // are external evidence this deployment may not publish, and the monitor is
+  // built to fail loudly with a retained diagnosis when it cannot see them --
+  // which it cannot do if it refuses to start.
+  for (const required of ['cdn-latest', 'smoke-report', 'policy', 'history', 'output']) {
     if (!options[required]) throw new Error(`The production monitor requires --${required}`);
   }
   const now = new Date(options.now ?? Date.now());
@@ -244,10 +259,10 @@ async function main() {
   await Promise.all([mkdir(dirname(historyPath), { recursive: true }), mkdir(outputDirectory, { recursive: true })]);
   const policy = await readJson(options.policy);
   const [snapshotResult, origin, cdn, smokeResult] = await Promise.all([
-    readJsonResult(options.snapshot),
-    probeLatest(options['origin-latest']),
-    probeLatest(options['cdn-latest']),
-    readJsonResult(options['smoke-report']),
+    readJsonResult(options.snapshot, '--snapshot'),
+    probeLatest(options['origin-latest'], '--origin-latest'),
+    probeLatest(options['cdn-latest'], '--cdn-latest'),
+    readJsonResult(options['smoke-report'], '--smoke-report'),
   ]);
   let snapshot = snapshotResult.value ?? unavailableSnapshot(checkedAt, policy, snapshotResult.error);
   const smoke = smokeResult.value ?? {

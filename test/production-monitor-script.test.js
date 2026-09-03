@@ -207,3 +207,38 @@ test('malformed soak history is quarantined, partially recovered, diagnosed, and
   assert.match(quarantine, /broken-json/);
   assert.equal(recovered.length, 2);
 });
+
+test('an unconfigured telemetry source is diagnosed, not turned into a stack trace', async t => {
+  const { directory, paths } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const output = join(directory, 'diagnostics');
+
+  // An unset GitHub Actions variable arrives as the empty string. Refusing it at
+  // argument parsing killed the run before it could retain any diagnosis, which
+  // is how the scheduled monitor spent days failing with nothing to read.
+  await assert.rejects(execFileAsync(process.execPath, [
+    fileURLToPath(new URL('../scripts/monitor-earth-production.mjs', import.meta.url)),
+    '--snapshot', '', '--origin-latest', '', '--cdn-latest', paths.cdn,
+    '--smoke-report', paths.smoke, '--policy', paths.policy,
+    '--history', join(directory, 'soak.ndjson'), '--output', output,
+    '--now', '2026-08-29T08:00:00Z',
+  ]));
+
+  const health = JSON.parse(await readFile(join(output, 'health.json'), 'utf8'));
+  assert.equal(health.status, 'failing');
+  assert.match(JSON.stringify(health), /not configured/i);
+  // The soak history still gets its sample, so a gap is not silently invented.
+  const history = (await readFile(join(directory, 'soak.ndjson'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(history.length, 1);
+});
+
+test('the inputs that do exist are still required, so a typo is not silently tolerated', async t => {
+  const { directory, paths } = await fixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await assert.rejects(execFileAsync(process.execPath, [
+    fileURLToPath(new URL('../scripts/monitor-earth-production.mjs', import.meta.url)),
+    '--snapshot', '', '--origin-latest', '', '--cdn-latest', '',
+    '--smoke-report', paths.smoke, '--policy', paths.policy,
+    '--history', join(directory, 'soak.ndjson'), '--output', join(directory, 'diagnostics'),
+  ]), /requires --cdn-latest/);
+});
