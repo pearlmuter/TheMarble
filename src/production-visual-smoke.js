@@ -37,15 +37,20 @@ export async function runEarthProductionVisualSmoke({ appUrl, checkedAt, capture
     }
   }
 
-  const bundleIds = new Set(captures.map(capture => capture.bundleId).filter(Boolean));
-  if (bundleIds.size > 1) failures.push('Fixed visual smoke views rendered different bundles');
+  // The views load one after another and the publisher advances every ten
+  // minutes, so a run straddling a publish legitimately sees two bundles. That
+  // is the feed working. What matters is that every view reached production
+  // data, which is checked per view above; the last bundle observed is the
+  // freshest thing the client was seen on.
+  const bundleIds = captures.map(capture => capture.bundleId).filter(Boolean);
   if (captures.length !== FIXED_VIEWS.length) failures.push('Not every fixed visual smoke view produced a diagnostic artifact');
 
   return {
     schemaVersion: 1,
     checkedAt: new Date(checkedAtMilliseconds).toISOString().replace('.000Z', 'Z'),
     ok: failures.length === 0,
-    bundleId: bundleIds.size === 1 ? [...bundleIds][0] : undefined,
+    bundleId: bundleIds.at(-1),
+    bundleIds: [...new Set(bundleIds)],
     artifacts,
     failures,
     views: captures.map(({ name, bundleId, runtimeSource, refresh, refreshReason, consoleErrors, pageErrors }) => ({

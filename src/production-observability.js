@@ -137,7 +137,13 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
     alerts.push(alert('client-currentness', 'latest-content-stale', 'The delivered latest bundle has not advanced within policy'));
   }
   const visualOk = boolean(visualSmoke.ok, 'client.visualSmoke.ok');
-  if (client.bundleId !== deliveredBundleId || !visualOk) {
+  // Currentness is the per-view verdict, not a comparison of bundle identities
+  // taken at different moments. A view reports `current` only after activating
+  // whatever the pointer advertised at that instant, so it cannot be current and
+  // stale at once -- while the publisher advancing between the first view and
+  // this check would make any identity comparison fail on a healthy feed. Feed
+  // staleness is measured directly, from the delivered manifest's valid time.
+  if (!visualOk) {
     alerts.push(alert('client-currentness', 'client-not-current', visualSmoke.error ?? 'Client is stale or visual smoke failed'));
   }
 
@@ -172,6 +178,7 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
       latestBundleAgeMinutes,
       client: {
         bundleId: string(client.bundleId, 'client.bundleId'),
+        bundleMatchesDelivered: client.bundleId === deliveredBundleId,
         visualSmokeOk: visualOk,
         visualArtifacts: [...visualSmoke.artifacts],
       },

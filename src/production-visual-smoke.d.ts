@@ -13,6 +13,7 @@ export interface EarthVisualSmokeReport {
   checkedAt: string;
   ok: boolean;
   bundleId?: string;
+  bundleIds: string[];
   artifacts: string[];
   failures: string[];
   views: Array<{

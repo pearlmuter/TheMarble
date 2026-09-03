@@ -47,7 +47,6 @@ test('visual smoke retains every diagnostic image and fails on fallback, stale, 
 
   assert.equal(report.ok, false);
   assert.deepEqual(artifacts, ['day.png', 'terminator.png', 'night.png']);
-  assert.ok(report.failures.some(failure => /different bundles/i.test(failure)));
   assert.ok(report.failures.some(failure => /not current/i.test(failure)));
   assert.ok(report.failures.some(failure => /console|page/i.test(failure)));
 });
@@ -89,4 +88,25 @@ test('a healthy view carries no refresh reason to explain away', async () => {
 
   assert.equal(report.ok, true);
   assert.deepEqual(report.views.map(view => view.refreshReason), [undefined, undefined, undefined]);
+});
+
+test('a publish landing between views is the feed working, not a failure', async () => {
+  // The views load one after another and the publisher advances every ten
+  // minutes, so a run that straddles a publish sees two bundles. Every view
+  // still reached production data, which is the thing being checked.
+  const bundles = { day: 'earth-18h', terminator: 'earth-18h', night: 'earth-19h' };
+  const report = await runEarthProductionVisualSmoke({
+    appUrl: 'https://marble.test/',
+    checkedAt: '2026-08-29T08:00:00Z',
+    async captureView({ name }) {
+      return { screenshot: new Uint8Array([1]), bundleId: bundles[name], runtimeSource: 'remote', refresh: 'current', consoleErrors: [], pageErrors: [] };
+    },
+    async retainArtifact() {},
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.failures, []);
+  // The freshest bundle the client was seen on, and every one observed.
+  assert.equal(report.bundleId, 'earth-19h');
+  assert.deepEqual(report.bundleIds, ['earth-18h', 'earth-19h']);
 });
