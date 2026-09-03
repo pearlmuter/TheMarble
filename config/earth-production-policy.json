@@ -12,7 +12,15 @@
         "minimumCoverageFraction": 0.9
       }
     },
-    "maximumLatestManifestAgeMinutes": 180
+    "maximumLatestManifestAgeMinutes": 180,
+    "waivedStages": [
+      "upstream-provider-lateness",
+      "transformation",
+      "compositor",
+      "publication",
+      "delivery"
+    ],
+    "waiver": "No provider telemetry snapshot is published, so every producer-side stage -- provider lateness, transformation, compositor, publication, and the origin half of delivery -- is observed as unavailable on every run. Their alerts are still raised and reported under waivedAlerts, but they do not fail a run that no evidence could ever pass. What stays enforced is what the monitor observes for itself: the deployed client reaching current production data, and the delivered bundle advancing within maximumLatestManifestAgeMinutes. Remove a stage from waivedStages once THEMARBLE_HEALTH_SNAPSHOT_URL publishes evidence for it."
   },
   "soak": {
     "version": "themarble-cloud-soak-v1",

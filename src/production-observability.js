@@ -115,7 +115,11 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
   if (!originAvailable || !cdnAvailable || delivery.originBundleId !== delivery.cdnBundleId) {
     alerts.push(alert('delivery', 'latest-delivery-failed', 'Origin and CDN do not expose the same available latest bundle'));
   }
-  if (publication.bundleId !== delivery.originBundleId) {
+  // Where no separate origin pointer is observed, the CDN pointer is the only
+  // delivered truth there is, and currentness must be judged against it rather
+  // than against a placeholder nobody measured.
+  const deliveredBundleId = originAvailable ? delivery.originBundleId : delivery.cdnBundleId;
+  if (publication.bundleId !== deliveredBundleId) {
     alerts.push(alert('delivery', 'published-bundle-not-delivered', 'The publisher, origin, and CDN do not expose one bundle identity'));
   }
   const latestManifestRetrievedAt = timestamp(delivery.latestManifestRetrievedAt, 'delivery.latestManifestRetrievedAt');
@@ -133,14 +137,22 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
     alerts.push(alert('client-currentness', 'latest-content-stale', 'The delivered latest bundle has not advanced within policy'));
   }
   const visualOk = boolean(visualSmoke.ok, 'client.visualSmoke.ok');
-  if (client.bundleId !== delivery.originBundleId || !visualOk) {
+  if (client.bundleId !== deliveredBundleId || !visualOk) {
     alerts.push(alert('client-currentness', 'client-not-current', visualSmoke.error ?? 'Client is stale or visual smoke failed'));
   }
+
+  // A stage whose evidence this deployment does not publish cannot be judged.
+  // Waiving it is a recorded decision, not a silence: the alert is still raised
+  // and still reported, it just does not fail a run that nothing could ever pass.
+  // The waiver text in the policy says why, the way the cryosphere waiver does.
+  const waivedStages = new Set(Array.isArray(policy.waivedStages) ? policy.waivedStages : []);
+  const waived = alerts.filter(item => waivedStages.has(item.stage));
+  const enforced = alerts.filter(item => !waivedStages.has(item.stage));
 
   return {
     schemaVersion: 1,
     checkedAt: new Date(checkedAt).toISOString().replace('.000Z', 'Z'),
-    status: alerts.length === 0 ? 'healthy' : 'failing',
+    status: enforced.length === 0 ? 'healthy' : 'failing',
     metrics: {
       providers,
       transformation: { ok: transformation.ok, durationMs: number(transformation.durationMs, 'transformation.durationMs') },
@@ -164,6 +176,8 @@ export function evaluateEarthProductionHealth(snapshot, policy) {
         visualArtifacts: [...visualSmoke.artifacts],
       },
     },
-    alerts,
+    alerts: enforced,
+    waivedAlerts: waived,
+    ...(waivedStages.size > 0 && typeof policy.waiver === 'string' ? { waiver: policy.waiver } : {}),
   };
 }

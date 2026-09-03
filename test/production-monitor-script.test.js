@@ -242,3 +242,73 @@ test('the inputs that do exist are still required, so a typo is not silently tol
     '--history', join(directory, 'soak.ndjson'), '--output', join(directory, 'diagnostics'),
   ]), /requires --cdn-latest/);
 });
+
+/** The real shipped policy, so the waiver these tests rely on is the deployed one. */
+async function shippedPolicy() {
+  return JSON.parse(await readFile(new URL('../config/earth-production-policy.json', import.meta.url), 'utf8'));
+}
+
+async function waivedFixture(t, { validAt = '2026-08-29T07:00:00Z', bundleId = 'earth-current' } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'themarble-waived-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const paths = Object.fromEntries(['cdn', 'manifest', 'smoke', 'policy'].map(name => [name, join(directory, `${name}.json`)]));
+  await writeFile(paths.manifest, JSON.stringify({ times: { validAt } }));
+  await writeFile(paths.cdn, JSON.stringify({ schemaVersion: 1, bundleId, manifest: { href: './manifest.json' } }));
+  await writeFile(paths.smoke, JSON.stringify({ ok: true, bundleId, artifacts: ['day.png'], failures: [] }));
+  await writeFile(paths.policy, JSON.stringify(await shippedPolicy()));
+  return { directory, paths };
+}
+
+function runMonitor(paths, directory, now) {
+  return execFileAsync(process.execPath, [
+    fileURLToPath(new URL('../scripts/monitor-earth-production.mjs', import.meta.url)),
+    '--snapshot', '', '--origin-latest', '', '--cdn-latest', paths.cdn,
+    '--smoke-report', paths.smoke, '--policy', paths.policy,
+    '--history', join(directory, 'soak.ndjson'), '--output', join(directory, 'diagnostics'),
+    '--now', now,
+  ]);
+}
+
+test('with producer telemetry waived, a current client on a fresh bundle is healthy', async t => {
+  const { directory, paths } = await waivedFixture(t);
+  await runMonitor(paths, directory, '2026-08-29T08:00:00Z');
+
+  const health = JSON.parse(await readFile(join(directory, 'diagnostics/health.json'), 'utf8'));
+  assert.equal(health.status, 'healthy');
+  assert.deepEqual(health.alerts, []);
+  // Waived is recorded, not hidden: the unobservable stages still appear.
+  assert.ok(health.waivedAlerts.length > 0);
+  assert.ok(health.waivedAlerts.every(item => item.stage !== 'client-currentness'));
+  assert.match(health.waiver, /No provider telemetry snapshot is published/);
+});
+
+test('a feed that has quietly stopped advancing still fails, waiver or not', async t => {
+  // The bundle is delivered and the client is on it -- everyone agrees. Only its
+  // age gives it away, and that age is read from the delivered manifest.
+  const { directory, paths } = await waivedFixture(t, { validAt: '2026-08-29T00:00:00Z' });
+  await assert.rejects(runMonitor(paths, directory, '2026-08-29T08:00:00Z'));
+
+  const health = JSON.parse(await readFile(join(directory, 'diagnostics/health.json'), 'utf8'));
+  assert.equal(health.status, 'failing');
+  assert.ok(health.alerts.some(item => item.code === 'latest-content-stale'));
+  assert.ok(health.metrics.latestBundleAgeMinutes > 180);
+});
+
+test('a client left behind the delivered bundle still fails, waiver or not', async t => {
+  const { directory, paths } = await waivedFixture(t);
+  await writeFile(paths.smoke, JSON.stringify({ ok: true, bundleId: 'earth-yesterday', artifacts: [], failures: [] }));
+  await assert.rejects(runMonitor(paths, directory, '2026-08-29T08:00:00Z'));
+
+  const health = JSON.parse(await readFile(join(directory, 'diagnostics/health.json'), 'utf8'));
+  assert.ok(health.alerts.some(item => item.code === 'client-not-current'));
+});
+
+test('a failed visual smoke still fails, waiver or not', async t => {
+  const { directory, paths } = await waivedFixture(t);
+  await writeFile(paths.smoke, JSON.stringify({ ok: false, bundleId: 'earth-current', artifacts: [], failures: ['night is not current production data: Failed to fetch'] }));
+  await assert.rejects(runMonitor(paths, directory, '2026-08-29T08:00:00Z'));
+
+  const health = JSON.parse(await readFile(join(directory, 'diagnostics/health.json'), 'utf8'));
+  assert.ok(health.alerts.some(item => item.code === 'client-not-current'));
+  assert.match(JSON.stringify(health.alerts), /Failed to fetch/);
+});

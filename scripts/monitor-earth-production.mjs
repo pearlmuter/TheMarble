@@ -55,12 +55,24 @@ async function readJsonResult(value, name) {
   }
 }
 
-async function probeLatest(value, name) {
+async function probeLatest(value, name, { withValidAt = false } = {}) {
   if (!value) return { available: false, bundleId: 'unavailable', error: unconfigured(name) };
   try {
     const latest = await readJson(value);
     if (typeof latest?.bundleId !== 'string' || latest.bundleId.length === 0) throw new Error('latest pointer has no bundleId');
-    return { available: true, bundleId: latest.bundleId };
+    const probe = { available: true, bundleId: latest.bundleId };
+    if (!withValidAt) return probe;
+    // The pointer names the delivered bundle; only its manifest says when that
+    // bundle was valid. Without it, bundle age has to come from producer
+    // telemetry, and a feed that silently stopped advancing looks perfectly
+    // healthy -- every party agreeing on the same stale bundle.
+    try {
+      const manifest = await readJson(new URL(latest.manifest.href, sourceUrl(value)).href);
+      const validAt = manifest?.times?.validAt;
+      return Number.isNaN(Date.parse(validAt)) ? probe : { ...probe, validAt };
+    } catch {
+      return probe;
+    }
   } catch (error) {
     return { available: false, bundleId: 'unavailable', error: error.message ?? String(error) };
   }
@@ -200,6 +212,9 @@ function monitoredSnapshot(snapshot, smoke, origin, cdn, checkedAt) {
     checkedAt,
     delivery: {
       ...snapshot.delivery,
+      // Observed bundle age beats absent telemetry: this is what catches a feed
+      // that has quietly stopped advancing.
+      ...(cdn.validAt ? { latestManifestRetrievedAt: checkedAt, latestManifestAdvancedAt: cdn.validAt } : {}),
       originAvailable: origin.available,
       cdnAvailable: cdn.available,
       originBundleId: origin.bundleId,
@@ -261,7 +276,7 @@ async function main() {
   const [snapshotResult, origin, cdn, smokeResult] = await Promise.all([
     readJsonResult(options.snapshot, '--snapshot'),
     probeLatest(options['origin-latest'], '--origin-latest'),
-    probeLatest(options['cdn-latest'], '--cdn-latest'),
+    probeLatest(options['cdn-latest'], '--cdn-latest', { withValidAt: true }),
     readJsonResult(options['smoke-report'], '--smoke-report'),
   ]);
   let snapshot = snapshotResult.value ?? unavailableSnapshot(checkedAt, policy, snapshotResult.error);
