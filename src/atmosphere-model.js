@@ -225,6 +225,7 @@ export const ATMOSPHERE_MODEL_GLSL = `
   const vec2 TRANSMITTANCE_LUT_SIZE=vec2(${f(TRANSMITTANCE_LUT_WIDTH)},${f(TRANSMITTANCE_LUT_HEIGHT)});
   const float SOLAR_IRRADIANCE=${f(SOLAR_IRRADIANCE)};
   const float ATMOSPHERE_MARCH_CURVATURE=${f(ATMOSPHERE_MARCH_CURVATURE)};
+  const float ATMOSPHERE_MARCH_STEPS_F=${f(ATMOSPHERE_MARCH_STEPS)};
 
   float atmosphereRayleighDensity(float altitude){ return exp(-max(altitude,0.0)/RAYLEIGH_SCALE_HEIGHT); }
   float atmosphereMieDensity(float altitude){ return exp(-max(altitude,0.0)/MIE_SCALE_HEIGHT); }

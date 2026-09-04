@@ -14,6 +14,15 @@ import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from '.
 import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
 import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
+import {
+  ATMOSPHERE_MARCH_STEPS,
+  ATMOSPHERE_RADIUS,
+  ATMOSPHERE_MODEL_GLSL,
+  ATMOSPHERE_TRANSMITTANCE_GLSL,
+  TRANSMITTANCE_LUT_FRAGMENT_SHADER,
+  TRANSMITTANCE_LUT_HEIGHT,
+  TRANSMITTANCE_LUT_WIDTH,
+} from './atmosphere-model.js';
 import { activateEarthStateAtStartup, activateEarthStateCacheCandidate, createEarthStateBundleCache } from './earth-state-cache.js';
 import type { EarthStateBundleCache, EarthStateCacheCandidate, EarthStateCacheEntry } from './earth-state-cache.js';
 import { parseEarthStateJson } from './earth-state-codec.js';
@@ -119,6 +128,120 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.08;
+
+// ---------------------------------------------------------------- atmosphere lookup tables
+//
+// Baked once into a linear half-float target. This is what pays for the shell march being
+// correct: walking toward the Sun used to cost five samples per step and recovered 68% of a
+// vertical column, so it reported too little optical depth and therefore too much
+// transmittance. Baking affords sixty-four samples and lands within 1% of the analytic
+// column, and the per-frame cost drops to one fetch. See src/atmosphere-model.js.
+const lookupScene = new THREE.Scene();
+const lookupCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const lookupQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+lookupQuad.frustumCulled = false;
+lookupScene.add(lookupQuad);
+
+function bakeAtmosphereLookup(width: number, height: number, fragmentShader: string, uniforms: Record<string, THREE.IUniform> = {}) {
+  const target = new THREE.WebGLRenderTarget(width, height, {
+    type: THREE.HalfFloatType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    wrapS: THREE.ClampToEdgeWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+  });
+  // A physical quantity, not an image: it must not be read back through a transfer function.
+  target.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }',
+    fragmentShader,
+    depthTest: false,
+    depthWrite: false,
+  });
+  lookupQuad.material = material;
+  const restore = renderer.getRenderTarget();
+  renderer.setRenderTarget(target);
+  renderer.render(lookupScene, lookupCamera);
+  renderer.setRenderTarget(restore);
+  material.dispose();
+  return target.texture;
+}
+
+const transmittanceLookup = bakeAtmosphereLookup(
+  TRANSMITTANCE_LUT_WIDTH,
+  TRANSMITTANCE_LUT_HEIGHT,
+  TRANSMITTANCE_LUT_FRAGMENT_SHADER,
+);
+
+// ---------------------------------------------------------------- linear rendering pipeline
+//
+// Every material in this scene writes physical radiance, and radiance is not what a display
+// wants. Tone mapping and the sRGB transfer function belong once, at the end, after the
+// additive layers have been summed: the atmosphere over the ocean, the corona over the sky,
+// stars over the Milky Way. Encoding each layer on its own and adding the results in display
+// space is a different sum, and a wrong one.
+//
+// It was also not happening at all. three only *supplies* toneMapping() and
+// linearToOutputTexel(); a custom ShaderMaterial has to call them, and none of these did. So
+// renderer.toneMapping and renderer.outputColorSpace had no effect on the Earth, the clouds,
+// the atmosphere, the Moon or the sky, and linear radiance went straight to an sRGB display.
+// Displaying linear light as though it were sRGB darkens the midtones and stretches contrast,
+// which is exactly why the ocean read as space, why the land looked lacquered, and why nearly
+// every term in these shaders carried a hand-tuned multiplier to claw the brightness back.
+//
+// Rendering into a half-float target and resolving once puts the curve where it belongs.
+const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
+  type: THREE.HalfFloatType,
+  format: THREE.RGBAFormat,
+  colorSpace: THREE.LinearSRGBColorSpace,
+  minFilter: THREE.LinearFilter,
+  magFilter: THREE.LinearFilter,
+  depthBuffer: true,
+  stencilBuffer: false,
+  // The canvas asks for antialiasing, but nothing is drawn to the canvas any more, so the
+  // multisampling has to move to the target the scene actually lands in.
+  samples: 4,
+});
+const presentScene = new THREE.Scene();
+const presentCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const presentQuad = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.ShaderMaterial({
+    uniforms: { sceneColor: { value: sceneTarget.texture } },
+    depthTest: false,
+    depthWrite: false,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }',
+    // The two includes resolve against whatever the renderer is configured for, so the curve
+    // stays a renderer setting rather than becoming a constant buried in a shader.
+    fragmentShader: `
+      uniform sampler2D sceneColor; varying vec2 vUv;
+      void main(){
+        gl_FragColor=texture2D(sceneColor,vUv);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  }),
+);
+presentQuad.frustumCulled = false;
+presentScene.add(presentQuad);
+
+function sizeSceneTarget() {
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  sceneTarget.setSize(Math.max(size.x, 1), Math.max(size.y, 1));
+}
+sizeSceneTarget();
+
+function presentFrame() {
+  renderer.setRenderTarget(sceneTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(presentScene, presentCamera);
+}
 
 const scene = new THREE.Scene();
 // A full-Earth orbital view: Earth stays jewel-sized while the Sun retains its true 0.53° disc.
@@ -620,7 +743,7 @@ function animate() {
   controls.update();
   updateCameraClipping();
   updateFrame();
-  renderer.render(scene, camera);
+  presentFrame();
 }
 animate();
 
@@ -1012,53 +1135,56 @@ cloudObservationController = createCloudObservationController<THREE.Texture>({
 });
 
 const atmosphere = new THREE.Mesh(
-  new THREE.SphereGeometry(1.02, 192, 192),
+  new THREE.SphereGeometry(ATMOSPHERE_RADIUS, 192, 192),
   new THREE.ShaderMaterial({
     transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
-    uniforms: { sunDirection: { value: new THREE.Vector3(1, 0, 0) } },
+    uniforms: { sunDirection: { value: new THREE.Vector3(1, 0, 0) }, transmittanceLut: { value: transmittanceLookup } },
     vertexShader: `varying vec3 vWorldPosition; void main(){ vWorldPosition=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
-      uniform vec3 sunDirection; varying vec3 vWorldPosition;
-      const float PI=3.14159265359; const float GROUND_RADIUS=1.0; const float ATMOSPHERE_RADIUS=1.02;
-      const float RAYLEIGH_HEIGHT=.001258; const float MIE_HEIGHT=.000189;
-      const vec3 BETA_R=vec3(36.96,86.38,210.88); const vec3 BETA_M_EXT=vec3(28.3); const vec3 BETA_M_SCA=vec3(25.46); const vec3 BETA_O3=vec3(4.14,11.98,.54);
+      uniform vec3 sunDirection; uniform sampler2D transmittanceLut; varying vec3 vWorldPosition;
+      ${ATMOSPHERE_MODEL_GLSL}
+      ${ATMOSPHERE_TRANSMITTANCE_GLSL}
       vec2 sphereInterval(vec3 origin,vec3 direction,float radius){ float b=dot(origin,direction); float h=b*b-dot(origin,origin)+radius*radius; if(h<0.0)return vec2(1e5,-1e5); h=sqrt(h); return vec2(-b-h,-b+h); }
-      bool earthShadow(vec3 point,vec3 lightDirection){ vec2 hit=sphereInterval(point+lightDirection*.00002,lightDirection,GROUND_RADIUS); return hit.y>0.0&&hit.x>0.0; }
-      vec3 extinction(float odR,float odM,float odO){ return exp(-(BETA_R*odR+BETA_M_EXT*odM+BETA_O3*odO)); }
       void main(){
         vec3 rayDirection=normalize(vWorldPosition-cameraPosition); vec3 lightDirection=normalize(sunDirection);
-        vec2 atmosphereHit=sphereInterval(cameraPosition,rayDirection,ATMOSPHERE_RADIUS); float nearDistance=max(atmosphereHit.x,0.0); float farDistance=atmosphereHit.y;
-        vec2 groundHit=sphereInterval(cameraPosition,rayDirection,GROUND_RADIUS); if(groundHit.x>0.0) farDistance=min(farDistance,groundHit.x);
+        vec2 atmosphereHit=sphereInterval(cameraPosition,rayDirection,ATMOSPHERE_RADIUS);
+        float nearDistance=max(atmosphereHit.x,0.0); float farDistance=atmosphereHit.y;
+        vec2 groundHit=sphereInterval(cameraPosition,rayDirection,GROUND_RADIUS);
+        bool hitsGround=groundHit.x>0.0;
+        if(hitsGround) farDistance=min(farDistance,groundHit.x);
         if(farDistance<=nearDistance) discard;
-        float mu=clamp(dot(rayDirection,lightDirection),-1.0,1.0); float phaseR=3.0/(16.0*PI)*(1.0+mu*mu);
-        float g=.8; float phaseM=3.0/(8.0*PI)*((1.0-g*g)*(1.0+mu*mu))/((2.0+g*g)*pow(max(1.0+g*g-2.0*g*mu,.001),1.5));
-        float stepLength=(farDistance-nearDistance)/10.0; float odR=0.0; float odM=0.0; float odO=0.0; vec3 radiance=vec3(0.0);
-        for(int i=0;i<10;i++){
-          float distanceAlong=nearDistance+(float(i)+.5)*stepLength; vec3 point=cameraPosition+rayDirection*distanceAlong; float altitude=max(length(point)-GROUND_RADIUS,0.0);
-          float densityR=exp(-altitude/RAYLEIGH_HEIGHT); float densityM=exp(-altitude/MIE_HEIGHT); float densityO=max(0.0,1.0-abs(altitude-.00393)/.0026);
-          odR+=densityR*stepLength; odM+=densityM*stepLength; odO+=densityO*stepLength;
-          if(!earthShadow(point,lightDirection)){
-            vec2 sunHit=sphereInterval(point,lightDirection,ATMOSPHERE_RADIUS); float sunLength=max(sunHit.y,0.0)/5.0; float sunR=0.0; float sunM=0.0; float sunO=0.0;
-            for(int j=0;j<5;j++){
-              vec3 sunPoint=point+lightDirection*(float(j)+.5)*sunLength; float sunAltitude=max(length(sunPoint)-GROUND_RADIUS,0.0);
-              sunR+=exp(-sunAltitude/RAYLEIGH_HEIGHT)*sunLength; sunM+=exp(-sunAltitude/MIE_HEIGHT)*sunLength; sunO+=max(0.0,1.0-abs(sunAltitude-.00393)/.0026)*sunLength;
-            }
-            vec3 transmittance=extinction(odR,odM,odO)*extinction(sunR,sunM,sunO);
-            radiance+=transmittance*(BETA_R*densityR*phaseR+BETA_M_SCA*densityM*phaseM)*stepLength;
-          }
+
+        float mu=clamp(dot(rayDirection,lightDirection),-1.0,1.0);
+        float phaseRayleigh=atmosphereRayleighPhase(mu);
+        float phaseMie=atmosphereMiePhase(mu);
+
+        // Every transmittance below is measured from this one entry point, so the ratios of
+        // outward lookups compose along the ray instead of each guessing its own origin.
+        vec3 entry=cameraPosition+rayDirection*nearDistance;
+        float entryRadius=max(length(entry),GROUND_RADIUS);
+        float entryMu=clamp(dot(entry/entryRadius,rayDirection),-1.0,1.0);
+
+        // Samples bunch toward the lowest point of the segment: the ground for a ray that
+        // lands, the tangent point for a limb ray.
+        float closest=clamp(-dot(cameraPosition,rayDirection),nearDistance,farDistance);
+        vec3 radiance=vec3(0.0);
+        for(int index=0;index<${ATMOSPHERE_MARCH_STEPS};index++){
+          float from=atmosphereMarchDistance(float(index)/ATMOSPHERE_MARCH_STEPS_F,nearDistance,closest,farDistance);
+          float to=atmosphereMarchDistance(float(index+1)/ATMOSPHERE_MARCH_STEPS_F,nearDistance,closest,farDistance);
+          float span=to-from;
+          if(span<=0.0) continue;
+          float along=(from+to)*.5;
+          vec3 point=cameraPosition+rayDirection*along;
+          float altitude=max(length(point)-GROUND_RADIUS,0.0);
+          vec3 sunlight=atmosphereSunTransmittance(transmittanceLut,point,lightDirection);
+          vec3 viewTransmittance=atmosphereTransmittanceOverSegment(transmittanceLut,entryRadius,entryMu,along-nearDistance,hitsGround);
+          radiance+=viewTransmittance*sunlight*(
+              BETA_RAYLEIGH*atmosphereRayleighDensity(altitude)*phaseRayleigh
+             +BETA_MIE_SCATTERING*atmosphereMieDensity(altitude)*phaseMie)*span;
         }
-        // A small exposure lift stands in for unresolved multiple scattering at this scale.
-        // It remains gated by the same tangent height, solar direction, and Earth shadow.
-        float nearestTime=max(-dot(cameraPosition,rayDirection),0.0); vec3 tangentPoint=cameraPosition+rayDirection*nearestTime;
-        float impact=length(tangentPoint); float tangentHeight=max(impact-GROUND_RADIUS,0.0);
-        float limbEnvelope=step(GROUND_RADIUS,impact)*exp(-tangentHeight/(RAYLEIGH_HEIGHT*4.2));
-        float tangentSun=dot(normalize(tangentPoint),lightDirection); float illuminated=smoothstep(-.018,.035,tangentSun);
-        float forwardAureole=pow(max(mu,0.0),30.0);
-        vec3 exposedLimb=vec3(.014,.18,.42)*limbEnvelope*illuminated*.62;
-        exposedLimb+=vec3(1.0,.36,.035)*limbEnvelope*illuminated*forwardAureole*.08;
-        // Additive light carries its own physical intensity; an alpha derived from intensity
-        // would multiply the already-dim limb a second time and erase it.
-        vec3 color=radiance*vec3(13.0,13.0,10.0)+exposedLimb; gl_FragColor=vec4(color,1.0);
+        // Carries its own physical intensity, so the alpha stays at one and additive blending
+        // does not attenuate it a second time.
+        gl_FragColor=vec4(radiance*SOLAR_IRRADIANCE,1.0);
       }`
   })
 );
@@ -1178,6 +1304,17 @@ const lensFlareGhosts = [
 lensFlareGhosts.forEach(({ sprite }) => { sprite.renderOrder = 20; scene.add(sprite); });
 const sunScreenPosition = new THREE.Vector3();
 const flareDirection = new THREE.Vector3();
+// The sky was authored against a pipeline that wrote linear radiance straight to the display,
+// which crushed it. Now that the transfer function is applied once at the end, the same numbers
+// read about seven times brighter and the Milky Way's core clipped toward white. This returns
+// it to the exposure the golden scenes were shot at. It is a one-off correction for the
+// pipeline change rather than a physical quantity: how far the camera stops down for a bright
+// scene is still orbital-photography-state.js's job.
+// Two factors rather than one: the diffuse galaxy and the point stars occupy different parts
+// of the tone curve, so the same correction moves them by different amounts. Both were solved
+// against the committed golden scenes rather than guessed.
+const MILKY_WAY_LINEAR_EXPOSURE_CORRECTION = .27;
+const STAR_LINEAR_EXPOSURE_CORRECTION = .11;
 let skyExposure = .1;
 
 function radians(value: number) { return value * Math.PI / 180; }
@@ -1259,15 +1396,15 @@ function updateCelestialScene(now: Date) {
   });
   // Human eyes and ordinary cameras cannot expose a direct Sun and a rich Milky Way at once.
   skyExposure = THREE.MathUtils.lerp(skyExposure, photograph.exposure.milkyWay, photograph.sun.inFrame ? .045 : .012);
-  milkyWayMaterial.uniforms.exposure.value = skyExposure;
-  if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars;
+  milkyWayMaterial.uniforms.exposure.value = skyExposure * MILKY_WAY_LINEAR_EXPOSURE_CORRECTION;
+  if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars * STAR_LINEAR_EXPOSURE_CORRECTION;
   const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
   clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
   sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${activeEarthStateStatus} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
   renderEarthStateProvenance(now);
 }
 
-window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
+window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);sizeSceneTarget();if(starMaterial)starMaterial.uniforms.pixelRatio.value=renderer.getPixelRatio();});
 function disposeReplacedTexture(previous: THREE.Texture, replacement: THREE.Texture) {
   if (previous !== replacement) previous.dispose();
 }

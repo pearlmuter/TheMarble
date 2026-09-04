@@ -50,6 +50,30 @@ The real defects, measured, are:
 A ground-hitting ray is the case where marching matters, and there the old uniform march
 undercounts by about 10%. The importance-sampled march lands within 2%.
 
+### The finding that turned out to matter most
+
+**The colour pipeline was open.** `renderer.toneMapping = ACESFilmicToneMapping` and
+`renderer.outputColorSpace = SRGBColorSpace` had no effect on anything in this scene. three
+only *supplies* `toneMapping()` and `linearToOutputTexel()` (see `three.module.js:20084`); a
+custom `ShaderMaterial` has to call them via `#include <tonemapping_fragment>` and
+`#include <colorspace_fragment>`, and not one of the Earth, cloud, atmosphere, Moon, Sun, star
+or Milky Way shaders did. Their linear radiance went straight to an sRGB display.
+
+Displaying linear light as though it were already sRGB darkens the midtones and stretches
+contrast. That single fact accounts for most of the Apollo comparison: the ocean reading as
+space, the land looking lacquered, the crushed shadows — and for why nearly every term in these
+shaders carried a hand-tuned multiplier (`*1.22`, `*1.32`, `vec3(13,13,10)`) clawing brightness
+back.
+
+The fix is not per-shader includes, because additive layers must be summed in linear light and
+encoded **once**: the atmosphere over the ocean, the corona over the sky, stars over the Milky
+Way. Encoding each layer separately and adding the results in display space is a different sum.
+So the scene now renders into a half-float target and one composite pass applies the curve.
+
+Measured effect on the daylight scene, with no other change: deep-ocean sRGB 18,25,36 →
+48,72,98, and land saturation 0.36 → 0.14. The physics had already been made correct; it simply
+could not be seen.
+
 Also, independently of the atmosphere:
 
 5. The ocean threw away all bathymetry: `day=mix(land,oceanLight,ocean)` replaced every ocean
@@ -104,14 +128,16 @@ curve concentrating toward `tc`. Quadrature uses segment boundaries so `ds` stay
 Each stage is one commit, independently revertible, with `npm test` green before it lands.
 
 - [x] **0 — Scaffolding.** Branch, this plan, `scripts/capture-render-scenes.mjs`, baseline captures.
-- [x] **1 — Transmittance LUT.** Build it; use it for sun-path and view-path transmittance in the shell. Delete the inner 5-sample loop. No visual retuning yet.
+- [x] **1 — Transmittance LUT.** Physics module, CPU mirrors, tests. Landed as `7ef70bf`; not yet consumed by main.ts.
+- [x] **1b — Wire the shell to the LUT** and to the importance-sampled march, deleting the inner Sun loop, `vec3(13,13,10)` and `exposedLimb`.
 - [x] **2 — Importance-sampled march.** Closest-approach distribution, raised sample count. Expect the limb to broaden and go blue, and the magenta to disappear.
-- [x] **3 — Multiple scattering LUT.** Remove `vec3(13,13,10)` and `exposedLimb`.
-- [x] **4 — Surface coupling.** Sun transmittance and sky irradiance from the LUTs, replacing `exp(-vec3(.04,.07,.15)*airMass)`. View-path extinction on the surface. True cosine falloff replacing the saturating smoothstep.
-- [x] **5 — Ocean.** Keep bathymetry from the day map; sky-reflection floor at all view angles; keep the existing GGX glint.
-- [x] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.
-- [x] **7 — Tone.** Re-examine exposure and the ACES toe now that the airlight floor exists.
-- [x] **8 — Tests and docs.** Update `test/earth-surface-render-contract.test.js`, add invariants for the new physics, refresh golden scenes.
+- [x] **1c — Close the colour pipeline.** HDR target plus one composite pass; sky exposure re-solved against the golden scenes.
+- [ ] **3 — Multiple scattering LUT.** Remove `vec3(13,13,10)` and `exposedLimb`.
+- [ ] **4 — Surface coupling.** Sun transmittance and sky irradiance from the LUTs, replacing `exp(-vec3(.04,.07,.15)*airMass)`. View-path extinction on the surface. True cosine falloff replacing the saturating smoothstep.
+- [ ] **5 — Ocean.** Keep bathymetry from the day map; sky-reflection floor at all view angles; keep the existing GGX glint.
+- [ ] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.
+- [ ] **7 — Tone.** Re-examine exposure and the ACES toe now that the airlight floor exists.
+- [ ] **8 — Tests and docs.** Update `test/earth-surface-render-contract.test.js`, add invariants for the new physics, refresh golden scenes.
 
 ## Verification
 
@@ -144,4 +170,5 @@ not an opinion.
 
 ## Session log
 
+- **2026-09-04** — Stages 1, 1b, 1c, 2. The colour pipeline was the dominant defect; see above. Sky exposure corrections (`0.27` Milky Way, `0.11` stars) were solved against `docs/golden-scenes/`, not guessed.
 - **2026-09-04** — Stage 0. Branch cut from `bd3056c`, plan written, capture harness added, baseline captured.
