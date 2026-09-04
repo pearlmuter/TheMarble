@@ -78,6 +78,19 @@ export const MULTIPLE_SCATTERING_STEPS = 20;
  */
 export const GROUND_ALBEDO = 0.3;
 
+/**
+ * Downward sky irradiance: what the whole dome delivers to a horizontal surface, as a fraction
+ * of the solar constant. It is the term that replaces the constant `.055` ambient floor the
+ * surface shader used to carry — the reason twilight is blue rather than merely dark, and why
+ * a surface under a low Sun is not lit by the Sun alone.
+ *
+ * Shares the transmittance and multiple-scattering tables, so it costs one more bake and no
+ * extra per-frame work.
+ */
+export const SKY_IRRADIANCE_LUT_SIZE = 32;
+export const SKY_IRRADIANCE_DIRECTIONS = 6;
+export const SKY_RADIANCE_STEPS = 12;
+
 export const TRANSMITTANCE_LUT_WIDTH = 256;
 export const TRANSMITTANCE_LUT_HEIGHT = 64;
 /** One-time cost, so it is sampled far past what a per-frame march could afford. */
@@ -203,21 +216,34 @@ export function closestApproach(origin, direction, t0, t1) {
 }
 
 /**
- * The multiple-scattering table is indexed by altitude and Sun zenith cosine only — after the
- * first bounce the direction is treated as forgotten, so no view angle enters.
+ * Altitude against Sun zenith cosine — the indexing shared by the multiple-scattering and sky
+ * irradiance tables. Neither depends on a view direction: multiple scattering has forgotten
+ * which way it was going, and irradiance has already been integrated over every direction.
  */
-export function multipleScatteringUv(r, muSun) {
+export function altitudeSunUv(r, muSun, size) {
   return [
-    unitToTexture(muSun * 0.5 + 0.5, MULTIPLE_SCATTERING_LUT_SIZE),
-    unitToTexture((r - GROUND_RADIUS) / (ATMOSPHERE_RADIUS - GROUND_RADIUS), MULTIPLE_SCATTERING_LUT_SIZE),
+    unitToTexture(muSun * 0.5 + 0.5, size),
+    unitToTexture((r - GROUND_RADIUS) / (ATMOSPHERE_RADIUS - GROUND_RADIUS), size),
   ];
 }
 
-export function multipleScatteringRMu(u, v) {
+export function altitudeSunRMu(u, v, size) {
   return {
-    muSun: clamp(textureToUnit(u, MULTIPLE_SCATTERING_LUT_SIZE) * 2 - 1, -1, 1),
-    r: GROUND_RADIUS + clamp(textureToUnit(v, MULTIPLE_SCATTERING_LUT_SIZE), 0, 1) * (ATMOSPHERE_RADIUS - GROUND_RADIUS),
+    muSun: clamp(textureToUnit(u, size) * 2 - 1, -1, 1),
+    r: GROUND_RADIUS + clamp(textureToUnit(v, size), 0, 1) * (ATMOSPHERE_RADIUS - GROUND_RADIUS),
   };
+}
+
+export function multipleScatteringUv(r, muSun) {
+  return altitudeSunUv(r, muSun, MULTIPLE_SCATTERING_LUT_SIZE);
+}
+
+export function multipleScatteringRMu(u, v) {
+  return altitudeSunRMu(u, v, MULTIPLE_SCATTERING_LUT_SIZE);
+}
+
+export function skyIrradianceUv(r, muSun) {
+  return altitudeSunUv(r, muSun, SKY_IRRADIANCE_LUT_SIZE);
 }
 
 export function rayleighPhase(mu) {
@@ -275,6 +301,7 @@ export const ATMOSPHERE_MODEL_GLSL = `
   const float ATMOSPHERE_MARCH_STEPS_F=${f(ATMOSPHERE_MARCH_STEPS)};
   const float GROUND_ALBEDO=${f(GROUND_ALBEDO)};
   const float MULTIPLE_SCATTERING_LUT_SIZE=${f(MULTIPLE_SCATTERING_LUT_SIZE)};
+  const float SKY_IRRADIANCE_LUT_SIZE=${f(SKY_IRRADIANCE_LUT_SIZE)};
 
   float atmosphereRayleighDensity(float altitude){ return exp(-max(altitude,0.0)/RAYLEIGH_SCALE_HEIGHT); }
   float atmosphereMieDensity(float altitude){ return exp(-max(altitude,0.0)/MIE_SCALE_HEIGHT); }
@@ -305,13 +332,15 @@ export const ATMOSPHERE_MODEL_GLSL = `
     return vec2(atmosphereUnitToTexture((d-dMin)/(dMax-dMin),TRANSMITTANCE_LUT_SIZE.x),
                 atmosphereUnitToTexture(rho/H,TRANSMITTANCE_LUT_SIZE.y));
   }
-  vec2 atmosphereMultipleScatteringUv(float r,float muSun){
-    return vec2(atmosphereUnitToTexture(muSun*.5+.5,MULTIPLE_SCATTERING_LUT_SIZE),
-                atmosphereUnitToTexture((r-GROUND_RADIUS)/(ATMOSPHERE_RADIUS-GROUND_RADIUS),MULTIPLE_SCATTERING_LUT_SIZE));
+  // Altitude against Sun zenith cosine, shared by the multiple-scattering and irradiance
+  // tables. Neither takes a view direction.
+  vec2 atmosphereAltitudeSunUv(float r,float muSun,float size){
+    return vec2(atmosphereUnitToTexture(muSun*.5+.5,size),
+                atmosphereUnitToTexture((r-GROUND_RADIUS)/(ATMOSPHERE_RADIUS-GROUND_RADIUS),size));
   }
-  void atmosphereMultipleScatteringRMu(vec2 uv,out float r,out float muSun){
-    muSun=clamp(atmosphereTextureToUnit(uv.x,MULTIPLE_SCATTERING_LUT_SIZE)*2.0-1.0,-1.0,1.0);
-    r=GROUND_RADIUS+clamp(atmosphereTextureToUnit(uv.y,MULTIPLE_SCATTERING_LUT_SIZE),0.0,1.0)*(ATMOSPHERE_RADIUS-GROUND_RADIUS);
+  void atmosphereAltitudeSunRMu(vec2 uv,float size,out float r,out float muSun){
+    muSun=clamp(atmosphereTextureToUnit(uv.x,size)*2.0-1.0,-1.0,1.0);
+    r=GROUND_RADIUS+clamp(atmosphereTextureToUnit(uv.y,size),0.0,1.0)*(ATMOSPHERE_RADIUS-GROUND_RADIUS);
   }
   void atmosphereTransmittanceRMu(vec2 uv,out float r,out float mu){
     float H=sqrt(ATMOSPHERE_RADIUS*ATMOSPHERE_RADIUS-GROUND_RADIUS*GROUND_RADIUS);
@@ -359,7 +388,12 @@ export const ATMOSPHERE_TRANSMITTANCE_GLSL = `
   }
   // Isotropic by construction, so it takes no phase function and no view direction.
   vec3 atmosphereMultipleScattering(sampler2D lut,float r,float muSun){
-    return texture2D(lut,atmosphereMultipleScatteringUv(clamp(r,GROUND_RADIUS,ATMOSPHERE_RADIUS),clamp(muSun,-1.0,1.0))).rgb;
+    return texture2D(lut,atmosphereAltitudeSunUv(clamp(r,GROUND_RADIUS,ATMOSPHERE_RADIUS),clamp(muSun,-1.0,1.0),MULTIPLE_SCATTERING_LUT_SIZE)).rgb;
+  }
+  // What the whole sky dome delivers to a horizontal surface, as a fraction of the solar
+  // constant. Already integrated over every direction, so it takes no view vector.
+  vec3 atmosphereSkyIrradiance(sampler2D lut,float r,float muSun){
+    return texture2D(lut,atmosphereAltitudeSunUv(clamp(r,GROUND_RADIUS,ATMOSPHERE_RADIUS),clamp(muSun,-1.0,1.0),SKY_IRRADIANCE_LUT_SIZE)).rgb;
   }
   vec3 atmosphereScattering(float altitude){
     return BETA_RAYLEIGH*atmosphereRayleighDensity(altitude)+BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
@@ -403,7 +437,7 @@ export const MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER = `
   ${ATMOSPHERE_TRANSMITTANCE_GLSL}
   void main(){
     float r; float muSun;
-    atmosphereMultipleScatteringRMu(vUv,r,muSun);
+    atmosphereAltitudeSunRMu(vUv,MULTIPLE_SCATTERING_LUT_SIZE,r,muSun);
     vec3 position=vec3(0.0,0.0,r);
     vec3 sunDirection=vec3(sqrt(clamp(1.0-muSun*muSun,0.0,1.0)),0.0,muSun);
     float uniformPhase=1.0/(4.0*ATMOSPHERE_PI);
@@ -444,5 +478,67 @@ export const MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER = `
     // Every further order is the previous one multiplied by the same transfer factor, so the
     // tail closes analytically instead of being marched.
     gl_FragColor=vec4(secondOrder/max(vec3(1.0)-transfer,vec3(1e-3)),1.0);
+  }
+`;
+
+/**
+ * Single plus multiple scattered radiance arriving at `origin` from `direction`. The shell runs
+ * its own importance-sampled version because it needs far more precision near the limb; this
+ * is the smooth, cheap one the irradiance bake integrates over the dome.
+ */
+export const ATMOSPHERE_SKY_RADIANCE_GLSL = `
+  vec3 atmosphereSkyRadiance(sampler2D transmittanceLut,sampler2D multipleScatteringLut,vec3 origin,vec3 direction,vec3 sunDirection){
+    float r=max(length(origin),GROUND_RADIUS);
+    float mu=dot(origin/r,direction);
+    bool hitsGround=atmosphereRayHitsGround(r,mu);
+    float span=hitsGround?atmosphereDistanceToGround(r,mu):atmosphereDistanceToTop(r,mu);
+    float step=span/${f(SKY_RADIANCE_STEPS)};
+    float cosSun=clamp(dot(direction,sunDirection),-1.0,1.0);
+    float phaseRayleigh=atmosphereRayleighPhase(cosSun);
+    float phaseMie=atmosphereMiePhase(cosSun);
+    vec3 radiance=vec3(0.0);
+    for(int index=0;index<${SKY_RADIANCE_STEPS};index++){
+      float along=(float(index)+.5)*step;
+      vec3 point=origin+direction*along;
+      float radius=max(length(point),GROUND_RADIUS);
+      float altitude=radius-GROUND_RADIUS;
+      vec3 rayleigh=BETA_RAYLEIGH*atmosphereRayleighDensity(altitude);
+      vec3 mie=BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
+      vec3 throughput=atmosphereTransmittanceOverSegment(transmittanceLut,r,mu,along,hitsGround);
+      radiance+=throughput*(
+          atmosphereSunTransmittance(transmittanceLut,point,sunDirection)*(rayleigh*phaseRayleigh+mie*phaseMie)
+        +(rayleigh+mie)*atmosphereMultipleScattering(multipleScatteringLut,radius,dot(point/radius,sunDirection)))*step;
+    }
+    return radiance;
+  }
+`;
+
+/** Bakes the sky irradiance table by integrating that radiance over the upper hemisphere. */
+export const SKY_IRRADIANCE_LUT_FRAGMENT_SHADER = `
+  uniform sampler2D transmittanceLut;
+  uniform sampler2D multipleScatteringLut;
+  varying vec2 vUv;
+  ${ATMOSPHERE_MODEL_GLSL}
+  ${ATMOSPHERE_TRANSMITTANCE_GLSL}
+  ${ATMOSPHERE_SKY_RADIANCE_GLSL}
+  void main(){
+    float r; float muSun;
+    atmosphereAltitudeSunRMu(vUv,SKY_IRRADIANCE_LUT_SIZE,r,muSun);
+    vec3 position=vec3(0.0,0.0,r);
+    vec3 sunDirection=vec3(sqrt(clamp(1.0-muSun*muSun,0.0,1.0)),0.0,muSun);
+    vec3 irradiance=vec3(0.0);
+    for(int azimuthIndex=0;azimuthIndex<${SKY_IRRADIANCE_DIRECTIONS};azimuthIndex++){
+      for(int zenithIndex=0;zenithIndex<${SKY_IRRADIANCE_DIRECTIONS};zenithIndex++){
+        float azimuth=2.0*ATMOSPHERE_PI*(float(azimuthIndex)+.5)/${f(SKY_IRRADIANCE_DIRECTIONS)};
+        // Uniform in the cosine, so the samples are uniform in solid angle over the dome.
+        float cosZenith=(float(zenithIndex)+.5)/${f(SKY_IRRADIANCE_DIRECTIONS)};
+        float sinZenith=sqrt(clamp(1.0-cosZenith*cosZenith,0.0,1.0));
+        vec3 direction=vec3(cos(azimuth)*sinZenith,sin(azimuth)*sinZenith,cosZenith);
+        irradiance+=atmosphereSkyRadiance(transmittanceLut,multipleScatteringLut,position,direction,sunDirection)*cosZenith;
+      }
+    }
+    // Hemisphere solid angle divided by the sample count.
+    irradiance*=2.0*ATMOSPHERE_PI/${f(SKY_IRRADIANCE_DIRECTIONS * SKY_IRRADIANCE_DIRECTIONS)};
+    gl_FragColor=vec4(irradiance,1.0);
   }
 `;

@@ -298,7 +298,9 @@ function formatScene(report) {
     `    centre vs limb    ${m.centreLand?.saturation ?? '—'} -> ${m.limbLand?.saturation ?? '—'}  (aerial ${m.aerialPerspective})`,
     `    space sRGB        ${rgb(m.space)}   median ${m.spaceMedian}`,
     `    halo              peak ${m.halo.peak}  width ${m.halo.widthPixels}px  disc r=${m.discRadiusPixels}px`,
-    report.consoleErrors.length ? `    console errors    ${report.consoleErrors.length}` : '',
+    report.consoleErrors.length
+      ? `    CONSOLE ERRORS    ${report.consoleErrors.length}\n${report.consoleErrors.map(line => `      ${line.split('\n')[0]}`).join('\n')}`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -363,6 +365,14 @@ async function main() {
   const report = { capturedAt: new Date().toISOString(), width: WIDTH, height: HEIGHT, scenes };
   await writeFile(join(outputDirectory, 'measurements.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nwrote ${join(outputDirectory, 'measurements.json')}`);
+
+  // A shader that fails to compile still renders a picture -- just one missing whatever that
+  // shader contributed. Measurements alone will not say so, so this has to be fatal.
+  const broken = scenes.filter(scene => scene.consoleErrors.length > 0);
+  if (broken.length > 0) {
+    console.error(`\nFAILED: ${broken.map(scene => scene.scene).join(', ')} emitted console errors`);
+    process.exitCode = 1;
+  }
 }
 
 await main();

@@ -4,6 +4,7 @@ import {
   ATMOSPHERE_MARCH_STEPS,
   ATMOSPHERE_MODEL_GLSL,
   ATMOSPHERE_RADIUS,
+  ATMOSPHERE_SKY_RADIANCE_GLSL,
   ATMOSPHERE_TRANSMITTANCE_GLSL,
   MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
   MULTIPLE_SCATTERING_LUT_SIZE,
@@ -14,6 +15,8 @@ import {
   OZONE_PEAK_ALTITUDE,
   RAYLEIGH_SCALE_HEIGHT,
   TRANSMITTANCE_LUT_HEIGHT,
+  SKY_IRRADIANCE_LUT_FRAGMENT_SHADER,
+  TRANSMITTANCE_LUT_FRAGMENT_SHADER,
   TRANSMITTANCE_LUT_SAMPLES,
   TRANSMITTANCE_LUT_WIDTH,
   closestApproach,
@@ -321,4 +324,25 @@ test('distance to ground and to the top of atmosphere agree at the horizon', () 
   const horizon = -Math.sqrt(1 - (GROUND_RADIUS * GROUND_RADIUS) / (r * r));
   assert.ok(Math.abs(distanceToGround(r, horizon) - -r * horizon) < 1e-6);
   assert.equal(distanceToGround(r, 1), 0);
+});
+
+test('every atmosphere function a bake shader calls is one the shared GLSL defines', () => {
+  // A GLSL compile failure is silent from the outside: the scene still renders, just without
+  // whatever that shader contributed. Renaming a shared helper and missing one call site cost a
+  // whole multiple-scattering table once already, so the reference is checked without a GPU.
+  const shared = ATMOSPHERE_MODEL_GLSL + ATMOSPHERE_TRANSMITTANCE_GLSL + ATMOSPHERE_SKY_RADIANCE_GLSL;
+  const defined = new Set([...shared.matchAll(/(?:^|\s)(?:float|vec2|vec3|vec4|bool|void)\s+(atmosphere\w+)\s*\(/g)].map(match => match[1]));
+  assert.ok(defined.size > 8, `only found ${defined.size} shared atmosphere helpers`);
+
+  for (const [name, source] of [
+    ['transmittance bake', TRANSMITTANCE_LUT_FRAGMENT_SHADER],
+    ['multiple scattering bake', MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER],
+    ['sky irradiance bake', SKY_IRRADIANCE_LUT_FRAGMENT_SHADER],
+    ['sky radiance helper', ATMOSPHERE_SKY_RADIANCE_GLSL],
+  ]) {
+    const called = new Set([...source.matchAll(/\b(atmosphere\w+)\s*\(/g)].map(match => match[1]));
+    for (const callee of called) {
+      assert.ok(defined.has(callee), `${name} calls ${callee}, which nothing defines`);
+    }
+  }
 });

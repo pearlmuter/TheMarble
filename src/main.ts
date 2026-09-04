@@ -21,6 +21,8 @@ import {
   ATMOSPHERE_TRANSMITTANCE_GLSL,
   MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
   MULTIPLE_SCATTERING_LUT_SIZE,
+  SKY_IRRADIANCE_LUT_FRAGMENT_SHADER,
+  SKY_IRRADIANCE_LUT_SIZE,
   TRANSMITTANCE_LUT_FRAGMENT_SHADER,
   TRANSMITTANCE_LUT_HEIGHT,
   TRANSMITTANCE_LUT_WIDTH,
@@ -185,6 +187,13 @@ const multipleScatteringLookup = bakeAtmosphereLookup(
   MULTIPLE_SCATTERING_LUT_SIZE,
   MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
   { transmittanceLut: { value: transmittanceLookup } },
+);
+// Reads both of the above.
+const skyIrradianceLookup = bakeAtmosphereLookup(
+  SKY_IRRADIANCE_LUT_SIZE,
+  SKY_IRRADIANCE_LUT_SIZE,
+  SKY_IRRADIANCE_LUT_FRAGMENT_SHADER,
+  { transmittanceLut: { value: transmittanceLookup }, multipleScatteringLut: { value: multipleScatteringLookup } },
 );
 
 // ---------------------------------------------------------------- linear rendering pipeline
@@ -955,7 +964,8 @@ const earthMaterial = new THREE.ShaderMaterial({
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
     cloudPhysicsFrom: { value: cloudPhysicsMap }, cloudPhysicsTo: { value: cloudPhysicsMap },
     cloudAgeFrom: { value: cloudAgeMap }, cloudAgeTo: { value: cloudAgeMap },
-    sunDirection: { value: new THREE.Vector3(1, 0, 0) }, sunLocalDirection: { value: new THREE.Vector3(1, 0, 0) }
+    sunDirection: { value: new THREE.Vector3(1, 0, 0) }, sunLocalDirection: { value: new THREE.Vector3(1, 0, 0) },
+    transmittanceLut: { value: transmittanceLookup }, skyIrradianceLut: { value: skyIrradianceLookup }
   },
   vertexShader: `varying vec2 vUv; varying vec3 vObjectNormal; varying vec3 vViewNormal; varying vec3 vViewPosition; void main(){ vUv=uv; vObjectNormal=normalize(normal); vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*vec4(vViewPosition,1.0); }`,
   fragmentShader: `
@@ -963,15 +973,29 @@ const earthMaterial = new THREE.ShaderMaterial({
     uniform sampler2D nightMap; uniform sampler2D snowCoverMap; uniform sampler2D seaIceMap; uniform sampler2D cloudMapFrom; uniform sampler2D cloudMapTo;
     uniform sampler2D cloudDensityFrom; uniform sampler2D cloudDensityTo; uniform sampler2D cloudPhysicsFrom; uniform sampler2D cloudPhysicsTo;
     uniform sampler2D cloudAgeFrom; uniform sampler2D cloudAgeTo; uniform float cloudMix; uniform vec3 sunDirection; uniform vec3 sunLocalDirection;
+    uniform sampler2D transmittanceLut; uniform sampler2D skyIrradianceLut;
     varying vec2 vUv; varying vec3 vObjectNormal; varying vec3 vViewNormal; varying vec3 vViewPosition;
     const float PI=3.14159265359;
+    ${ATMOSPHERE_MODEL_GLSL}
+    ${ATMOSPHERE_TRANSMITTANCE_GLSL}
     ${CLOUD_RENDER_GLSL}
     void main() {
       vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz);
       float solar=dot(normal,sunView); float nDotL=max(solar,0.0); float nDotV=max(dot(normal,viewDirection),.001);
-      float daylight=smoothstep(-.012,.028,solar); float directLight=.055+1.32*smoothstep(-.015,.72,solar);
-      float zenithDegrees=degrees(acos(clamp(solar,0.0,1.0))); float airMass=1.0/(max(solar,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
-      vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
+      float daylight=smoothstep(-.012,.028,solar);
+      vec3 surfaceDirection=normalize(vObjectNormal); vec3 localSun=normalize(sunLocalDirection);
+      // What the Sun still has after crossing the air above this point, from the same table the
+      // atmosphere shell reads. The superseded exp(-vec3(.04,.07,.15)*airMass) was extinction
+      // invented in place, and extinction alone only ever darkens and reddens.
+      vec3 sunTransmittance=atmosphereSunTransmittance(transmittanceLut,surfaceDirection,localSun);
+      // And what every other direction of the sky delivers. This is the term that replaces a
+      // constant .055 ambient floor: it is why twilight is blue rather than merely dark, and why
+      // ground under a low Sun is not lit by the Sun alone.
+      vec3 skyIrradiance=atmosphereSkyIrradiance(skyIrradianceLut,GROUND_RADIUS,solar);
+      // Lambert, not a smoothstep that saturated 44 degrees from the subsolar point and left the
+      // whole middle of the disc flat-lit. Irradiance is in units of the solar constant, so a
+      // white surface facing an airless Sun reads exactly one.
+      vec3 surfaceIrradiance=sunTransmittance*nDotL+skyIrradiance;
       vec3 surface=mix(texture2D(dayMapFrom,vUv).rgb,texture2D(dayMapTo,vUv).rgb,seasonalMix);
       float luminance=dot(surface,vec3(.2126,.7152,.0722));
       float blueDominance=surface.b-max(surface.r,surface.g);
@@ -980,8 +1004,8 @@ const earthMaterial = new THREE.ShaderMaterial({
       float seaIce=texture2D(seaIceMap,vUv).r;
       float landSnow=snowCover;
       float oceanIce=seaIce;
-      vec3 land=surface*directLight*1.22*mix(vec3(1.0),sunlight,.82);
-      vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*directLight*mix(vec3(1.0),sunlight,.72);
+      vec3 land=surface*surfaceIrradiance;
+      vec3 snowAlbedo=mix(vec3(.58,.66,.72),vec3(.94,.965,.985),clamp(luminance*2.2,.0,1.0))*surfaceIrradiance;
       vec3 halfVector=normalize(sunView+viewDirection); float nDotH=max(dot(normal,halfVector),0.0); float vDotH=max(dot(viewDirection,halfVector),0.0);
       float roughness=.14; roughness=mix(roughness,.68,oceanIce); float alpha2=roughness*roughness; alpha2*=alpha2;
       float denominator=nDotH*nDotH*(alpha2-1.0)+1.0; float distribution=alpha2/(3.14159265*denominator*denominator+.00001);
@@ -989,12 +1013,15 @@ const earthMaterial = new THREE.ShaderMaterial({
       float fresnel=.0204+(1.0-.0204)*pow(1.0-vDotH,5.0);
       float specular=distribution*geometryView*geometryLight*fresnel/(4.0*nDotV*max(nDotL,.001)+.0001);
       float horizonFresnel=.0204+(1.0-.0204)*pow(1.0-nDotV,5.0);
-      vec3 deepWater=vec3(.0022,.012,.026); vec3 waterDiffuse=deepWater*(.13+.48*nDotL)*mix(vec3(1.0),sunlight,.7);
-      vec3 atmosphericReflection=vec3(.018,.075,.15)*horizonFresnel*(.3+.7*daylight);
+      vec3 deepWater=vec3(.0022,.012,.026); vec3 waterDiffuse=deepWater*surfaceIrradiance;
+      // Water reflects the sky at every angle, not only at the horizon. Schlick from a 0.02 base
+      // gives the fraction, and the sky's mean radiance is its irradiance over pi.
+      vec3 skyRadiance=skyIrradiance/PI;
+      vec3 atmosphericReflection=skyRadiance*mix(.0204,1.0,horizonFresnel)*PI;
       float glintResponse=1.0-exp(-specular*.22);
-      vec3 sunGlint=vec3(1.0,.93,.82)*glintResponse*nDotL*.62;
+      vec3 sunGlint=sunTransmittance*glintResponse*nDotL*.62;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
-      vec3 seaIceLight=vec3(.68,.76,.82)*(.3+.92*nDotL)*mix(vec3(1.0),sunlight,.68)+atmosphericReflection*.28;
+      vec3 seaIceLight=vec3(.68,.76,.82)*surfaceIrradiance+atmosphericReflection*.28;
       vec3 day=mix(land,oceanLight,ocean);
       day=mix(day,snowAlbedo,landSnow*.94);
       day=mix(day,seaIceLight,oceanIce);
@@ -1005,7 +1032,6 @@ const earthMaterial = new THREE.ShaderMaterial({
       vec4 localCloud=mix(texture2D(cloudMapFrom,vUv),texture2D(cloudMapTo,vUv),cloudMix);
       opticalDepth=mix(assumedCloudOpticalDepth(localCloud.a),opticalDepth,physicalWeight);
       cloudQuality=mix(weather.g,cloudQuality,physicalWeight);
-      vec3 surfaceDirection=normalize(vObjectNormal); vec3 localSun=normalize(sunLocalDirection);
       vec2 probeUv0=sphericalCloudShadowUv(surfaceDirection,localSun,1.5);
       vec2 probeUv1=sphericalCloudShadowUv(surfaceDirection,localSun,6.5);
       vec2 probeUv2=sphericalCloudShadowUv(surfaceDirection,localSun,11.5);
@@ -1038,7 +1064,10 @@ const earthMaterial = new THREE.ShaderMaterial({
       float nightFalloff=1.0-smoothstep(-.035,.008,solar);
       vec3 night=emittedNightLight(texture2D(nightMap,vUv).rgb)*nightFalloff*1.8;
       night*=cloudTransmission(opticalDepth,cloudQuality);
-      gl_FragColor=vec4(mix(night,day,daylight),1.0);
+      // Everything leaving the surface still has to climb out through the air above it. The
+      // shell adds the light scattered into that same path.
+      vec3 viewTransmittance=atmosphereTransmittanceToTop(transmittanceLut,GROUND_RADIUS,nDotV);
+      gl_FragColor=vec4(mix(night,day,daylight)*viewTransmittance,1.0);
     }
   `
 });
