@@ -334,3 +334,63 @@ class ForwardBinningGaps(unittest.TestCase):
     def test_a_grid_with_nothing_in_it_is_left_alone(self):
         grid = np.zeros((3, 3), dtype=np.uint8)
         np.testing.assert_array_equal(adapter.close_resampling_gaps(grid, rounds=3), grid)
+
+
+class PolarResamplingGaps(unittest.TestCase):
+    """Meridians converge, so a fixed number of dilation rounds is a fixed distance
+    only at the equator. Near the pole a whole target row spans tens of kilometres,
+    and a 24 km analysis reaches only a handful of its cells."""
+
+    @staticmethod
+    def _forward_binned(height, width, source_km):
+        grid = np.zeros((height, width), dtype=np.int64)
+        latitudes = adapter.target_latitudes(height)
+        for row in range(height):
+            circumference = adapter.EARTH_CIRCUMFERENCE_KM * max(
+                np.cos(np.deg2rad(latitudes[row])), 1e-9
+            )
+            hits = max(1, int(circumference / source_km))
+            grid[row, (np.arange(hits) * width) // hits] = 3
+        return grid
+
+    def test_a_polar_row_is_closed_rather_than_left_striped(self):
+        # The defect this covers reached production: the published sea ice texture
+        # averaged 8 of 255 in the top rows against 189 a few degrees south, and the
+        # renderer drew the alternating columns as a fan centred on the pole.
+        height, width = 256, 512
+        binned = self._forward_binned(height, width, source_km=24.0)
+        self.assertLess((binned[0] > 0).mean(), 0.05, "the polar row should start almost empty")
+        closed = adapter.close_resampling_gaps(binned, 4)
+        self.assertEqual((closed[0] > 0).mean(), 1.0)
+        self.assertEqual((closed[8] > 0).mean(), 1.0)
+
+    def test_the_equatorial_reach_is_the_cell_count_it_always_was(self):
+        # Expressing rounds as a distance must not change what they meant where they
+        # were tuned. Four rounds on this grid reach four cells at the equator.
+        height, width = 256, 512
+        grid = np.zeros((height, width), dtype=np.int64)
+        equator = height // 2
+        grid[equator, 100] = 5
+        closed = adapter.close_resampling_gaps(grid, 4)
+        row = closed[equator]
+        self.assertTrue((row[96:105] == 5).all(), "four cells either side should be reached")
+        self.assertEqual(row[95], 0, "and nothing beyond that")
+        self.assertEqual(row[105], 0)
+
+    def test_a_latitude_the_source_never_reached_stays_unobserved(self):
+        # The published waiver says the Southern Hemisphere is recorded as unobserved
+        # rather than filled. Closing gaps must never quietly extend coverage.
+        height, width = 128, 256
+        grid = np.zeros((height, width), dtype=np.int64)
+        grid[: height // 2] = 3
+        closed = adapter.close_resampling_gaps(grid, 4)
+        self.assertTrue((closed[height // 2 + 6 :] == 0).all())
+
+    def test_the_fill_wraps_at_the_antimeridian(self):
+        height, width = 128, 256
+        grid = np.zeros((height, width), dtype=np.int64)
+        equator = height // 2
+        grid[equator, 0] = 7
+        closed = adapter.close_resampling_gaps(grid, 4)
+        self.assertEqual(closed[equator, width - 1], 7, "the grid meets itself at the antimeridian")
+        self.assertEqual(closed[equator, width - 4], 7)

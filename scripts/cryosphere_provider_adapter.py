@@ -270,6 +270,58 @@ def _load_grid(path):
     raise ValueError(f"Unsupported provider input format: {path}")
 
 
+EARTH_CIRCUMFERENCE_KM = 40075.0
+
+
+def _row_nearest_fill(grid, radius_km):
+    """Fill empty cells from the nearest filled cell in the same row, within a real distance.
+
+    Rounds of neighbour dilation reach a fixed number of *cells*, which is a fixed distance only
+    at the equator. Meridians converge, so a target row near the pole spans a few tens of
+    kilometres in total: a 24 km analysis can land in only a handful of that row's four thousand
+    cells, and dilating by four cells leaves the rest empty. That is the radial fan that appeared
+    over the Arctic as soon as sea ice was bright enough to show it.
+
+    Expressing the same reach as a distance closes it, and closes nothing else: at the equator
+    the reach is the cell count it always was, and a row the source never touched stays empty
+    because there is nothing in it to spread.
+    """
+    grid = np.asarray(grid)
+    height, width = grid.shape
+    latitudes = np.deg2rad(target_latitudes(height))
+    cell_km = np.maximum(EARTH_CIRCUMFERENCE_KM * np.cos(latitudes) / width, 1e-9)
+    reach = np.minimum(np.floor(radius_km / cell_km), width).astype(np.int64)
+
+    # Repeating each row three times turns the wrap at the antimeridian into a plain linear
+    # scan. Two copies are not enough: the wrapped right-hand neighbour of the last column
+    # lies beyond the end of a doubled row, so the seam would close from one side only.
+    filled = grid != 0
+    repeated = np.concatenate([filled, filled, filled], axis=1)
+    span = 3 * width
+    columns = np.arange(span, dtype=np.int64)[None, :]
+
+    left = np.where(repeated, columns, -1)
+    np.maximum.accumulate(left, axis=1, out=left)
+    right = np.where(repeated[:, ::-1], columns, -1)
+    np.maximum.accumulate(right, axis=1, out=right)
+    right = right[:, ::-1]
+    right = np.where(right >= 0, (span - 1) - right, -1)
+
+    target = np.arange(width, dtype=np.int64)[None, :] + width
+    left_source = left[:, width : 2 * width]
+    right_source = right[:, width : 2 * width]
+    unreachable = span
+    left_distance = np.where(left_source >= 0, target - left_source, unreachable)
+    right_distance = np.where(right_source >= 0, right_source - target, unreachable)
+    source = np.where(left_distance <= right_distance, left_source, right_source)
+    distance = np.minimum(left_distance, right_distance)
+
+    within = (source >= 0) & (distance <= reach[:, None])
+    rows = np.arange(height, dtype=np.int64)[:, None]
+    picked = grid[rows, np.mod(np.where(within, source, target), width)]
+    return np.where((grid == 0) & within, picked, grid)
+
+
 def close_resampling_gaps(values, rounds):
     """Fill target cells that forward binning left empty, from their nearest
     binned neighbour.
@@ -281,6 +333,13 @@ def close_resampling_gaps(values, rounds):
     `rounds` steps nothing has travelled more than that many cells, so a
     hemispheric source stays hemispheric.
 
+    Latitude is closed by dilation and longitude by `_row_nearest_fill`, which
+    reads `rounds` as the distance those rounds reached at the equator so that it
+    means the same thing at every latitude. Splitting the two keeps the envelope
+    exactly what eight-connected dilation gave -- `rounds` rows, then `rounds`
+    cells along a row -- while fixing the pole, where a fixed cell count reaches
+    almost no distance at all.
+
     Longitude wraps, because the grid meets itself at the antimeridian.
     Latitude does not, because the poles are not neighbours and Arctic ice must
     never leak onto Antarctica.
@@ -291,21 +350,17 @@ def close_resampling_gaps(values, rounds):
         if not empty.any():
             break
         candidate = np.zeros_like(grid)
-        for vertical in (-1, 0, 1):
-            for horizontal in (-1, 0, 1):
-                if vertical == 0 and horizontal == 0:
-                    continue
-                shifted = np.roll(grid, horizontal, axis=1)
-                if vertical != 0:
-                    rolled = np.roll(shifted, vertical, axis=0)
-                    # A row shifted in from beyond a pole is not a neighbour.
-                    if vertical > 0:
-                        rolled[:vertical, :] = 0
-                    else:
-                        rolled[vertical:, :] = 0
-                    shifted = rolled
-                candidate = np.where((candidate == 0) & (shifted > 0), shifted, candidate)
+        for vertical in (-1, 1):
+            rolled = np.roll(grid, vertical, axis=0)
+            # A row shifted in from beyond a pole is not a neighbour.
+            if vertical > 0:
+                rolled[:vertical, :] = 0
+            else:
+                rolled[vertical:, :] = 0
+            candidate = np.where((candidate == 0) & (rolled > 0), rolled, candidate)
         grid = np.where(empty, candidate, grid)
+    if int(rounds) > 0:
+        grid = _row_nearest_fill(grid, int(rounds) * EARTH_CIRCUMFERENCE_KM / grid.shape[1])
     return grid
 
 
