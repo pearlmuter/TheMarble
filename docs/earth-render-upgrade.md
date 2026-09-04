@@ -132,7 +132,7 @@ Each stage is one commit, independently revertible, with `npm test` green before
 - [x] **1b — Wire the shell to the LUT** and to the importance-sampled march, deleting the inner Sun loop, `vec3(13,13,10)` and `exposedLimb`.
 - [x] **2 — Importance-sampled march.** Closest-approach distribution, raised sample count. Expect the limb to broaden and go blue, and the magenta to disappear.
 - [x] **1c — Close the colour pipeline.** HDR target plus one composite pass; sky exposure re-solved against the golden scenes.
-- [ ] **3 — Multiple scattering LUT.** Remove `vec3(13,13,10)` and `exposedLimb`.
+- [x] **3 — Multiple scattering LUT.** Remove `vec3(13,13,10)` and `exposedLimb`.
 - [ ] **4 — Surface coupling.** Sun transmittance and sky irradiance from the LUTs, replacing `exp(-vec3(.04,.07,.15)*airMass)`. View-path extinction on the surface. True cosine falloff replacing the saturating smoothstep.
 - [ ] **5 — Ocean.** Keep bathymetry from the day map; sky-reflection floor at all view angles; keep the existing GGX glint.
 - [ ] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.

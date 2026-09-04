@@ -55,6 +55,29 @@ export const SOLAR_IRRADIANCE = Math.PI;
 export const ATMOSPHERE_MARCH_STEPS = 32;
 export const ATMOSPHERE_MARCH_CURVATURE = 3;
 
+/**
+ * Multiple scattering, as Hillaire (2020) approximates it: a small table of how much light
+ * arrives at a point after bouncing around the atmosphere more than once, assuming that after
+ * the first bounce the distribution is isotropic.
+ *
+ * This is not polish. Single scattering alone leaves the limb far too dim, because at a tangent
+ * the optical depth is several units and the Sun sits on the horizon of the point being looked
+ * at — direct sunlight has already been extinguished, and essentially everything visible got
+ * there by scattering more than once. That is why the superseded shell needed a synthetic limb
+ * envelope: it was standing in for this term.
+ */
+export const MULTIPLE_SCATTERING_LUT_SIZE = 32;
+/** 8 x 8 = 64 directions over the sphere, Hillaire's default. One-time cost. */
+export const MULTIPLE_SCATTERING_DIRECTIONS = 8;
+export const MULTIPLE_SCATTERING_STEPS = 20;
+/**
+ * Earth's Bond albedo. The table is indexed only by altitude and Sun angle, so it cannot know
+ * whether ocean or cloud lies underneath; a planetary mean is the honest choice at this
+ * resolution, and light bounced off the ground back into the air is a real part of why a lit
+ * limb is as bright as it is.
+ */
+export const GROUND_ALBEDO = 0.3;
+
 export const TRANSMITTANCE_LUT_WIDTH = 256;
 export const TRANSMITTANCE_LUT_HEIGHT = 64;
 /** One-time cost, so it is sampled far past what a per-frame march could afford. */
@@ -79,6 +102,12 @@ export function ozoneDensity(altitude) {
 export function distanceToTopAtmosphere(r, mu) {
   const discriminant = r * r * (mu * mu - 1) + ATMOSPHERE_RADIUS * ATMOSPHERE_RADIUS;
   return Math.max(0, -r * mu + Math.sqrt(Math.max(discriminant, 0)));
+}
+
+/** Distance from radius `r` along zenith cosine `mu` to the ground, for rays that reach it. */
+export function distanceToGround(r, mu) {
+  const discriminant = r * r * (mu * mu - 1) + GROUND_RADIUS * GROUND_RADIUS;
+  return Math.max(0, -r * mu - Math.sqrt(Math.max(discriminant, 0)));
 }
 
 export function rayIntersectsGround(r, mu) {
@@ -173,6 +202,24 @@ export function closestApproach(origin, direction, t0, t1) {
   return clamp(along, t0, t1);
 }
 
+/**
+ * The multiple-scattering table is indexed by altitude and Sun zenith cosine only — after the
+ * first bounce the direction is treated as forgotten, so no view angle enters.
+ */
+export function multipleScatteringUv(r, muSun) {
+  return [
+    unitToTexture(muSun * 0.5 + 0.5, MULTIPLE_SCATTERING_LUT_SIZE),
+    unitToTexture((r - GROUND_RADIUS) / (ATMOSPHERE_RADIUS - GROUND_RADIUS), MULTIPLE_SCATTERING_LUT_SIZE),
+  ];
+}
+
+export function multipleScatteringRMu(u, v) {
+  return {
+    muSun: clamp(textureToUnit(u, MULTIPLE_SCATTERING_LUT_SIZE) * 2 - 1, -1, 1),
+    r: GROUND_RADIUS + clamp(textureToUnit(v, MULTIPLE_SCATTERING_LUT_SIZE), 0, 1) * (ATMOSPHERE_RADIUS - GROUND_RADIUS),
+  };
+}
+
 export function rayleighPhase(mu) {
   return (3 / (16 * Math.PI)) * (1 + mu * mu);
 }
@@ -226,6 +273,8 @@ export const ATMOSPHERE_MODEL_GLSL = `
   const float SOLAR_IRRADIANCE=${f(SOLAR_IRRADIANCE)};
   const float ATMOSPHERE_MARCH_CURVATURE=${f(ATMOSPHERE_MARCH_CURVATURE)};
   const float ATMOSPHERE_MARCH_STEPS_F=${f(ATMOSPHERE_MARCH_STEPS)};
+  const float GROUND_ALBEDO=${f(GROUND_ALBEDO)};
+  const float MULTIPLE_SCATTERING_LUT_SIZE=${f(MULTIPLE_SCATTERING_LUT_SIZE)};
 
   float atmosphereRayleighDensity(float altitude){ return exp(-max(altitude,0.0)/RAYLEIGH_SCALE_HEIGHT); }
   float atmosphereMieDensity(float altitude){ return exp(-max(altitude,0.0)/MIE_SCALE_HEIGHT); }
@@ -234,6 +283,10 @@ export const ATMOSPHERE_MODEL_GLSL = `
     return BETA_RAYLEIGH*atmosphereRayleighDensity(altitude)
       +BETA_MIE_EXTINCTION*atmosphereMieDensity(altitude)
       +BETA_OZONE*atmosphereOzoneDensity(altitude);
+  }
+  float atmosphereDistanceToGround(float r,float mu){
+    float discriminant=r*r*(mu*mu-1.0)+GROUND_RADIUS*GROUND_RADIUS;
+    return max(0.0,-r*mu-sqrt(max(discriminant,0.0)));
   }
   float atmosphereDistanceToTop(float r,float mu){
     float discriminant=r*r*(mu*mu-1.0)+ATMOSPHERE_RADIUS*ATMOSPHERE_RADIUS;
@@ -251,6 +304,14 @@ export const ATMOSPHERE_MODEL_GLSL = `
     float dMin=ATMOSPHERE_RADIUS-r; float dMax=rho+H;
     return vec2(atmosphereUnitToTexture((d-dMin)/(dMax-dMin),TRANSMITTANCE_LUT_SIZE.x),
                 atmosphereUnitToTexture(rho/H,TRANSMITTANCE_LUT_SIZE.y));
+  }
+  vec2 atmosphereMultipleScatteringUv(float r,float muSun){
+    return vec2(atmosphereUnitToTexture(muSun*.5+.5,MULTIPLE_SCATTERING_LUT_SIZE),
+                atmosphereUnitToTexture((r-GROUND_RADIUS)/(ATMOSPHERE_RADIUS-GROUND_RADIUS),MULTIPLE_SCATTERING_LUT_SIZE));
+  }
+  void atmosphereMultipleScatteringRMu(vec2 uv,out float r,out float muSun){
+    muSun=clamp(atmosphereTextureToUnit(uv.x,MULTIPLE_SCATTERING_LUT_SIZE)*2.0-1.0,-1.0,1.0);
+    r=GROUND_RADIUS+clamp(atmosphereTextureToUnit(uv.y,MULTIPLE_SCATTERING_LUT_SIZE),0.0,1.0)*(ATMOSPHERE_RADIUS-GROUND_RADIUS);
   }
   void atmosphereTransmittanceRMu(vec2 uv,out float r,out float mu){
     float H=sqrt(ATMOSPHERE_RADIUS*ATMOSPHERE_RADIUS-GROUND_RADIUS*GROUND_RADIUS);
@@ -296,6 +357,13 @@ export const ATMOSPHERE_TRANSMITTANCE_GLSL = `
     float w=split<1.0?(u-split)/(1.0-split):0.0;
     return tc+lengthB*pow(w,ATMOSPHERE_MARCH_CURVATURE);
   }
+  // Isotropic by construction, so it takes no phase function and no view direction.
+  vec3 atmosphereMultipleScattering(sampler2D lut,float r,float muSun){
+    return texture2D(lut,atmosphereMultipleScatteringUv(clamp(r,GROUND_RADIUS,ATMOSPHERE_RADIUS),clamp(muSun,-1.0,1.0))).rgb;
+  }
+  vec3 atmosphereScattering(float altitude){
+    return BETA_RAYLEIGH*atmosphereRayleighDensity(altitude)+BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
+  }
   float atmosphereRayleighPhase(float mu){ return 3.0/(16.0*ATMOSPHERE_PI)*(1.0+mu*mu); }
   float atmosphereMiePhase(float mu){
     float g=MIE_ASYMMETRY;
@@ -319,5 +387,62 @@ export const TRANSMITTANCE_LUT_FRAGMENT_SHADER = `
       depth+=atmosphereExtinction(radius-GROUND_RADIUS)*step;
     }
     gl_FragColor=vec4(exp(-depth),1.0);
+  }
+`;
+
+/**
+ * Bakes the multiple-scattering table. For each altitude and Sun angle it fires rays over the
+ * whole sphere, collects what a single bounce delivers under uniform illumination, and closes
+ * the remaining orders as a geometric series — Hillaire's approximation, which holds because
+ * after one bounce the light really has lost most of its directionality.
+ */
+export const MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER = `
+  uniform sampler2D transmittanceLut;
+  varying vec2 vUv;
+  ${ATMOSPHERE_MODEL_GLSL}
+  ${ATMOSPHERE_TRANSMITTANCE_GLSL}
+  void main(){
+    float r; float muSun;
+    atmosphereMultipleScatteringRMu(vUv,r,muSun);
+    vec3 position=vec3(0.0,0.0,r);
+    vec3 sunDirection=vec3(sqrt(clamp(1.0-muSun*muSun,0.0,1.0)),0.0,muSun);
+    float uniformPhase=1.0/(4.0*ATMOSPHERE_PI);
+    vec3 secondOrder=vec3(0.0);
+    vec3 transfer=vec3(0.0);
+    for(int azimuthIndex=0;azimuthIndex<${MULTIPLE_SCATTERING_DIRECTIONS};azimuthIndex++){
+      for(int zenithIndex=0;zenithIndex<${MULTIPLE_SCATTERING_DIRECTIONS};zenithIndex++){
+        float azimuth=2.0*ATMOSPHERE_PI*(float(azimuthIndex)+.5)/${f(MULTIPLE_SCATTERING_DIRECTIONS)};
+        float cosZenith=1.0-2.0*(float(zenithIndex)+.5)/${f(MULTIPLE_SCATTERING_DIRECTIONS)};
+        float sinZenith=sqrt(clamp(1.0-cosZenith*cosZenith,0.0,1.0));
+        vec3 direction=vec3(cos(azimuth)*sinZenith,sin(azimuth)*sinZenith,cosZenith);
+        float mu=dot(position/r,direction);
+        bool hitsGround=atmosphereRayHitsGround(r,mu);
+        float span=hitsGround?atmosphereDistanceToGround(r,mu):atmosphereDistanceToTop(r,mu);
+        float step=span/${f(MULTIPLE_SCATTERING_STEPS)};
+        for(int sampleIndex=0;sampleIndex<${MULTIPLE_SCATTERING_STEPS};sampleIndex++){
+          float along=(float(sampleIndex)+.5)*step;
+          vec3 point=position+direction*along;
+          float radius=max(length(point),GROUND_RADIUS);
+          vec3 scattering=atmosphereScattering(radius-GROUND_RADIUS);
+          vec3 throughput=atmosphereTransmittanceOverSegment(transmittanceLut,r,mu,along,hitsGround);
+          secondOrder+=throughput*atmosphereSunTransmittance(transmittanceLut,point,sunDirection)*scattering*uniformPhase*step;
+          transfer+=throughput*scattering*step;
+        }
+        if(hitsGround){
+          // Light that reaches the ground and comes back up is part of what lights the air.
+          vec3 groundNormal=normalize(position+direction*span);
+          vec3 throughput=atmosphereTransmittanceOverSegment(transmittanceLut,r,mu,span,true);
+          secondOrder+=throughput
+            *atmosphereSunTransmittance(transmittanceLut,groundNormal*GROUND_RADIUS,sunDirection)
+            *max(dot(groundNormal,sunDirection),0.0)*GROUND_ALBEDO/ATMOSPHERE_PI;
+        }
+      }
+    }
+    float directions=${f(MULTIPLE_SCATTERING_DIRECTIONS * MULTIPLE_SCATTERING_DIRECTIONS)};
+    secondOrder/=directions;
+    transfer/=directions;
+    // Every further order is the previous one multiplied by the same transfer factor, so the
+    // tail closes analytically instead of being marched.
+    gl_FragColor=vec4(secondOrder/max(vec3(1.0)-transfer,vec3(1e-3)),1.0);
   }
 `;

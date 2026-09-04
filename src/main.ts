@@ -19,6 +19,8 @@ import {
   ATMOSPHERE_RADIUS,
   ATMOSPHERE_MODEL_GLSL,
   ATMOSPHERE_TRANSMITTANCE_GLSL,
+  MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
+  MULTIPLE_SCATTERING_LUT_SIZE,
   TRANSMITTANCE_LUT_FRAGMENT_SHADER,
   TRANSMITTANCE_LUT_HEIGHT,
   TRANSMITTANCE_LUT_WIDTH,
@@ -176,6 +178,13 @@ const transmittanceLookup = bakeAtmosphereLookup(
   TRANSMITTANCE_LUT_WIDTH,
   TRANSMITTANCE_LUT_HEIGHT,
   TRANSMITTANCE_LUT_FRAGMENT_SHADER,
+);
+// Reads the table above, so it has to be baked second.
+const multipleScatteringLookup = bakeAtmosphereLookup(
+  MULTIPLE_SCATTERING_LUT_SIZE,
+  MULTIPLE_SCATTERING_LUT_SIZE,
+  MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
+  { transmittanceLut: { value: transmittanceLookup } },
 );
 
 // ---------------------------------------------------------------- linear rendering pipeline
@@ -1138,10 +1147,14 @@ const atmosphere = new THREE.Mesh(
   new THREE.SphereGeometry(ATMOSPHERE_RADIUS, 192, 192),
   new THREE.ShaderMaterial({
     transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
-    uniforms: { sunDirection: { value: new THREE.Vector3(1, 0, 0) }, transmittanceLut: { value: transmittanceLookup } },
+    uniforms: {
+      sunDirection: { value: new THREE.Vector3(1, 0, 0) },
+      transmittanceLut: { value: transmittanceLookup },
+      multipleScatteringLut: { value: multipleScatteringLookup },
+    },
     vertexShader: `varying vec3 vWorldPosition; void main(){ vWorldPosition=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
-      uniform vec3 sunDirection; uniform sampler2D transmittanceLut; varying vec3 vWorldPosition;
+      uniform vec3 sunDirection; uniform sampler2D transmittanceLut; uniform sampler2D multipleScatteringLut; varying vec3 vWorldPosition;
       ${ATMOSPHERE_MODEL_GLSL}
       ${ATMOSPHERE_TRANSMITTANCE_GLSL}
       vec2 sphereInterval(vec3 origin,vec3 direction,float radius){ float b=dot(origin,direction); float h=b*b-dot(origin,origin)+radius*radius; if(h<0.0)return vec2(1e5,-1e5); h=sqrt(h); return vec2(-b-h,-b+h); }
@@ -1176,11 +1189,19 @@ const atmosphere = new THREE.Mesh(
           float along=(from+to)*.5;
           vec3 point=cameraPosition+rayDirection*along;
           float altitude=max(length(point)-GROUND_RADIUS,0.0);
+          float radius=max(length(point),GROUND_RADIUS);
           vec3 sunlight=atmosphereSunTransmittance(transmittanceLut,point,lightDirection);
           vec3 viewTransmittance=atmosphereTransmittanceOverSegment(transmittanceLut,entryRadius,entryMu,along-nearDistance,hitsGround);
-          radiance+=viewTransmittance*sunlight*(
-              BETA_RAYLEIGH*atmosphereRayleighDensity(altitude)*phaseRayleigh
-             +BETA_MIE_SCATTERING*atmosphereMieDensity(altitude)*phaseMie)*span;
+          vec3 rayleigh=BETA_RAYLEIGH*atmosphereRayleighDensity(altitude);
+          vec3 mie=BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
+          // Light that arrived here directly, weighted by which way it has to turn to reach
+          // the camera.
+          radiance+=viewTransmittance*sunlight*(rayleigh*phaseRayleigh+mie*phaseMie)*span;
+          // Light that arrived after bouncing, which has forgotten its direction. At the limb
+          // this is most of what there is: the Sun is already below the horizon of the air
+          // being looked at, so the direct term above has been extinguished.
+          radiance+=viewTransmittance*(rayleigh+mie)
+            *atmosphereMultipleScattering(multipleScatteringLut,radius,dot(point/radius,lightDirection))*span;
         }
         // Carries its own physical intensity, so the alpha stays at one and additive blending
         // does not attenuate it a second time.

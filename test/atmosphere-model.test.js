@@ -5,6 +5,8 @@ import {
   ATMOSPHERE_MODEL_GLSL,
   ATMOSPHERE_RADIUS,
   ATMOSPHERE_TRANSMITTANCE_GLSL,
+  MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER,
+  MULTIPLE_SCATTERING_LUT_SIZE,
   BETA_OZONE,
   BETA_RAYLEIGH,
   GROUND_RADIUS,
@@ -15,8 +17,11 @@ import {
   TRANSMITTANCE_LUT_SAMPLES,
   TRANSMITTANCE_LUT_WIDTH,
   closestApproach,
+  distanceToGround,
   distanceToTopAtmosphere,
   marchDistance,
+  multipleScatteringRMu,
+  multipleScatteringUv,
   miePhase,
   opticalDepthToTopAtmosphere,
   ozoneDensity,
@@ -274,4 +279,46 @@ test('closest approach is where the ray comes nearest the centre, clamped into t
   // A limb ray passing to one side keeps its tangent point inside the segment.
   const tangent = closestApproach([0, 0, 6], [0, 0.1, -1].map((v, _, a) => v / Math.hypot(...a)), 0, 12);
   assert.ok(tangent > 0 && tangent < 12);
+});
+
+test('the multiple-scattering table round-trips its parametrisation', () => {
+  for (let v = 0; v <= 1.0001; v += 0.1) {
+    for (let u = 0; u <= 1.0001; u += 0.1) {
+      const uv = [
+        0.5 / MULTIPLE_SCATTERING_LUT_SIZE + u * (1 - 1 / MULTIPLE_SCATTERING_LUT_SIZE),
+        0.5 / MULTIPLE_SCATTERING_LUT_SIZE + v * (1 - 1 / MULTIPLE_SCATTERING_LUT_SIZE),
+      ];
+      const { r, muSun } = multipleScatteringRMu(uv[0], uv[1]);
+      assert.ok(r >= GROUND_RADIUS - 1e-9 && r <= ATMOSPHERE_RADIUS + 1e-9, `r ${r}`);
+      assert.ok(muSun >= -1.0000001 && muSun <= 1.0000001, `muSun ${muSun}`);
+      const back = multipleScatteringUv(r, muSun);
+      assert.ok(Math.abs(back[0] - uv[0]) < 1e-9 && Math.abs(back[1] - uv[1]) < 1e-9);
+    }
+  }
+});
+
+test('multiple scattering carries no view direction, because it has forgotten one', () => {
+  // The whole approximation is that after the first bounce direction is lost. If a view angle
+  // ever entered this table it would no longer be the thing the shell is allowed to add
+  // without a phase function.
+  assert.equal(multipleScatteringUv.length, 2);
+  // Only the bake's own body: the shared GLSL it includes defines the phase functions for
+  // other callers, and their presence there says nothing about this shader.
+  const bakeBody = MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER.slice(
+    MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER.lastIndexOf('void main()'),
+  );
+  assert.doesNotMatch(bakeBody, /atmosphereRayleighPhase\(|atmosphereMiePhase\(/);
+  assert.match(bakeBody, /uniformPhase=1\.0\/\(4\.0\*ATMOSPHERE_PI\)/);
+  // The remaining orders close as a geometric series rather than being marched.
+  assert.match(bakeBody, /secondOrder\/max\(vec3\(1\.0\)-transfer/);
+  // Ground bounce is part of what lights the air above it.
+  assert.match(bakeBody, /GROUND_ALBEDO/);
+});
+
+test('distance to ground and to the top of atmosphere agree at the horizon', () => {
+  // A ray that grazes the ground has both roots meeting, so the two distances coincide there.
+  const r = ATMOSPHERE_RADIUS;
+  const horizon = -Math.sqrt(1 - (GROUND_RADIUS * GROUND_RADIUS) / (r * r));
+  assert.ok(Math.abs(distanceToGround(r, horizon) - -r * horizon) < 1e-6);
+  assert.equal(distanceToGround(r, 1), 0);
 });
