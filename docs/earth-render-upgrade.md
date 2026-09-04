@@ -201,8 +201,50 @@ the scattering term at render time, as Bruneton's `GetSkyRadianceToPoint` does.
 | Land saturation toward limb | rises | falls | Aerial perspective. |
 | Space background | (0,0,0) | (0,0,0) | Must not drift; a lifted background means airlight is leaking. |
 
+## Exercising the paths no data has reached
+
+Three branches this work touched had never executed anywhere. The bundled offline state carries
+only `surfaceAlbedo`, `nightLights`, `cloudOpacity` and `cloudDensity`; production adds real
+GMGSI cloud but still no `cloudPhysics`, `snowCover` or `seaIce`, and the clouds workflow runs
+the feed with no cloud catalog so it always takes the GMGSI path. Every published state has said
+"Cloud thickness · assumed".
+
+`scripts/preview_satcorps_fixture.py` synthesises a SatCORPS granule so the real compositor,
+manifest builder and publisher can run end to end, and `preview-live-earth-state.mjs` gained a
+`--satcorps-fixture` flag beside the cryosphere one:
+
+```bash
+npm run preview:live -- --cryosphere-fixture true --satcorps-fixture true \
+  --python "$PWD/.venv-integration/bin/python" --port 5184
+node scripts/capture-render-scenes.mjs --url http://localhost:5184/index.html --out artifacts/render-physical
+```
+
+The SatCORPS soak gate is satisfied rather than bypassed: a history is generated and the report
+derived from it with the same function the gate re-derives it with, so it stays a real check of
+whether the samples support promotion.
+
+**Established.** The retrieved cloud-physics path runs — clouds provider `satcorps`, no console
+errors, no NaN, no blown highlights — and the relief shading demonstrably responds to retrieved
+cloud-top heights. `snowCover` and `seaIce` both publish and render, and neither `snowAlbedo` nor
+`seaIceLight` blows out under the new irradiance basis; both got dimmer, not brighter.
+
+**Not established.** How any of it will *look* against real SatCORPS data. The fixture is a
+synthetic field, and two attempts to make it realistic showed how easy it is to fool yourself
+here: the first was smooth at continental scale, so its cloud-top steps came out at 36 m — below
+the 78 m the compositor's 8-bit height channel can even represent — and rendered perfectly flat
+blobs. The second overcorrected into solid zonal belts. Its purpose is to exercise code, not to
+be a picture; do not read it as a preview of the feature.
+
+**Found, and worth checking when real retrievals arrive.** The cloud mesh is displaced per-vertex
+on a 192x192 sphere while the height field is 4096x2048. With a constant 11 km assumed height
+that is invisible. With retrieved heights spanning 0-20 km it produces visible ledges at sharp
+height discontinuities, because the geometry cannot represent the field's detail. Mitigations, in
+increasing cost: smooth the displacement, raise the mesh density, or stop displacing geometry and
+carry the height as parallax in the fragment shader.
+
 ## Session log
 
+- **2026-09-04** — Exercised the retrieved-physics and cryosphere paths behind fixtures; see above. Merged as #22 and deployed.
 - **2026-09-04** — Stages 5, 6, 7, 8. Golden scenes in `docs/golden-scenes/` regenerated against the new render; the checks each one guards are unchanged.
 - **2026-09-04** — Stages 3, 4, and the night-lights wash fix.
 - **2026-09-04** — Stages 1, 1b, 1c, 2. The colour pipeline was the dominant defect; see above. Sky exposure corrections (`0.27` Milky Way, `0.11` stars) were solved against `docs/golden-scenes/`, not guessed.
