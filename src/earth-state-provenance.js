@@ -134,6 +134,7 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
   let stale;
   let observed = 0;
   let modelAssisted = 0;
+  let unobserved = 0;
 
   if (manifest.cloudSequence) {
     const [from, to] = manifest.cloudSequence.frames;
@@ -148,7 +149,20 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
     cloudItems.push(thresholdSeconds === undefined
       ? `Observation age · ${age.short} old · staleness unknown (provider freshness policy unavailable)`
       : `Observation age · ${age.short} old · ${stale ? 'stale' : 'current'} (${provider === 'satcorps' ? 'SatCORPS' : 'GMGSI'} provider freshness limit ${Math.round(thresholdSeconds / 60)} min from valid time)`);
-    cloudItems.push(`Coverage · ${observed}% observed · ${percent(to.coverage.fallbackFraction)}% static fallback`);
+    // Whatever the provider did not deliver is drawn as nothing at all, which
+    // on a lit night side is indistinguishable from a clear sky unless the
+    // corner says so. The poles are always part of it: a geostationary arc
+    // cannot see them.
+    const fallback = percent(to.coverage.fallbackFraction);
+    unobserved = Math.max(0, 100 - observed - modelAssisted - fallback);
+    const coverage = [`${observed}% observed`];
+    if (fallback > 0) coverage.push(`${fallback}% static fallback`);
+    if (unobserved > 0) coverage.push(`${unobserved}% not observed and left undrawn`);
+    cloudItems.push(`Coverage · ${coverage.join(' · ')}`);
+    const [south, north] = to.coverage.latitudeRange ?? [];
+    if (Number.isFinite(south) && Number.isFinite(north)) {
+      cloudItems.push(`Observed band · ${Math.abs(south).toFixed(1)}°S–${north.toFixed(1)}°N · beyond it no geostationary satellite sees the surface`);
+    }
     const model = to.assistance?.model;
     cloudItems.push(model && modelAssisted > 0
       ? `Model assistance · ${modelAssisted}% model-assisted · GFS ${model.version} run ${utcTime(model.runAt)} UTC · f${String(model.forecastHour).padStart(3, '0')}`
@@ -182,7 +196,7 @@ export function buildEarthStateProvenancePresentation({ manifest, now, runtime }
     ? ''
     : ' Cloud thickness is assumed rather than retrieved.';
   const cloudSummary = `${manifest.cloudSequence
-    ? `Cloud observations are ${age.spoken} old and ${freshnessSummary}, with ${observed}% observed and ${modelAssisted}% model-assisted coverage.`
+    ? `Cloud observations are ${age.spoken} old and ${freshnessSummary}, with ${observed}% observed and ${modelAssisted}% model-assisted coverage${unobserved > 0 ? `, and ${unobserved}% not observed` : ''}.`
     : 'Static bundled clouds are displayed with no interpolation or model assistance.'}${assumedThickness}`;
   return {
     stateLabel: runtimeState.label,

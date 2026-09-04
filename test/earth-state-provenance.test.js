@@ -254,3 +254,42 @@ test('every runtime source reports its failure reason, and none invents one when
     assert.doesNotMatch(current.sections[0].items[0], /checksum mismatch|because/, source);
   }
 });
+
+test('cloud a provider did not deliver is named as unobserved, not passed off as clear sky', () => {
+  // A dropped GMGSI sector draws no cloud at all. Once the night side is lit
+  // that reads as a hard-edged hole, and a viewer must be able to learn it is
+  // missing data rather than a clear night.
+  const manifest = contemporaryManifest();
+  manifest.cloudSequence.provider = 'gmgsi';
+  for (const frame of manifest.cloudSequence.frames) {
+    frame.coverage = { observedFraction: .913, latitudeRange: [-72.7368, 72.7154] };
+    delete frame.assistance;
+  }
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest,
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /91% observed/);
+  assert.match(text, /9% not observed/);
+  // And why the poles are always part of it.
+  assert.match(text, /72\.7°S–72\.7°N/);
+  assert.match(presentation.accessibleSummary, /9% not observed/);
+});
+
+test('a fully observed frame does not invent a gap', () => {
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest: contemporaryManifest(),
+    now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  // 76% observed + 19% model-assisted + 5% static fallback leaves nothing out.
+  assert.match(text, /76% observed/);
+  assert.match(text, /5% static fallback/);
+  assert.doesNotMatch(text, /not observed/);
+  assert.doesNotMatch(presentation.accessibleSummary, /not observed/);
+});
