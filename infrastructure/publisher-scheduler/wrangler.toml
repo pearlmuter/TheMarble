@@ -2,19 +2,24 @@ name = "themarble-publisher-scheduler"
 main = "worker.js"
 compatibility_date = "2026-08-01"
 
-# The publisher every ten minutes, the health monitor every half hour.
+# The publisher every ten minutes, the health monitor hourly at :25.
 # Cloudflare honours both; GitHub's own scheduler honoured neither, dropping
 # roughly nine in ten of each. The publisher advances at most once per validated
 # nominal hour and the monitor only reads, so extra pokes cost one API call and
 # change nothing.
+#
+# The monitor's interval must stay comfortably longer than a run, which takes
+# twenty to thirty minutes: its concurrency group queues at most one run, so a
+# poke arriving mid-run cancels the one already waiting. Half-hourly did exactly
+# that. :25 also keeps it clear of the hourly GitHub backstop at :07.
 [triggers]
-crons = ["*/10 * * * *", "7,37 * * * *"]
+crons = ["*/10 * * * *", "25 * * * *"]
 
 [vars]
 REPOSITORY = "pearlmuter/TheMarble"
 WORKFLOW = "earth-state-clouds.yml"
 HEALTH_WORKFLOW = "earth-production-health.yml"
-HEALTH_CRON = "7,37 * * * *"
+HEALTH_CRON = "25 * * * *"
 REF = "main"
 
 # GITHUB_TOKEN is a secret, set with `wrangler secret put GITHUB_TOKEN` or in the

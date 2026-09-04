@@ -2,7 +2,7 @@
 
 A Cloudflare Worker whose only job is to ask GitHub to run two workflows on
 time: the publisher (`earth-state-clouds.yml`) every ten minutes, and the health
-monitor (`earth-production-health.yml`) every half hour.
+monitor (`earth-production-health.yml`) hourly.
 
 ## Why this exists
 
@@ -33,7 +33,7 @@ returns `unchanged` and leaves `latest.json` untouched.
 | `REPOSITORY` | var | `pearlmuter/TheMarble` |
 | `WORKFLOW` | var | `earth-state-clouds.yml` |
 | `HEALTH_WORKFLOW` | var | `earth-production-health.yml` |
-| `HEALTH_CRON` | var | `7,37 * * * *` — the trigger that selects the monitor |
+| `HEALTH_CRON` | var | `25 * * * *` — the trigger that selects the monitor |
 | `REF` | var | `main` |
 | `GITHUB_TOKEN` | **secret** | fine-grained PAT, `Actions: read and write`, this repository only |
 
