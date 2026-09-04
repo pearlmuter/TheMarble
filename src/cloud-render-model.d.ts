@@ -8,6 +8,18 @@ export const NIGHT_CLOUD_AIRGLOW_SCALE: number;
 export const NIGHT_CLOUD_UPWELLING_SCALE: number;
 export const NIGHT_CLOUD_UPWELLING_SPREAD_UV: readonly [number, number];
 export const CLOUD_ALTITUDE_PROBES_KM: readonly number[];
+export const NIGHT_SURFACE_WASH_TINT: readonly [number, number, number];
+export const ASSUMED_CLOUD_BASE_KM: number;
+export const ASSUMED_CLOUD_RELIEF_KM: number;
+export const ASSUMED_CLOUD_HEIGHT_CURVATURE: number;
+export const CLOUD_RELIEF_SAMPLE_UV: number;
+export const CLOUD_RELIEF_EXAGGERATION: number;
+export const EARTH_RADIUS_KM: number;
+export const CLOUD_RELIEF_WRAP: number;
+export const MINIMUM_CLOUD_SHADOW: number;
+export const MAXIMUM_CLOUD_SHADOW: number;
+export function cloudTopHeightKm(opticalDepth: number, retrievedHeightKm?: number, retrieved?: number): number;
+export function emittedNightLight(sampled: readonly number[]): number[];
 export function sphereUv(direction: [number, number, number]): [number, number];
 export function shadowCasterUv(surfaceDirection: [number, number, number], sunDirection: [number, number, number], heightKm: number): [number, number];
 export function discoverCloudCaster(
