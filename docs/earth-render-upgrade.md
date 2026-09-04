@@ -1,6 +1,6 @@
 # Earth render upgrade — working plan
 
-**Status: in progress.** This file is the source of truth for the work. It is written so
+**Status: complete on `feat/earth-render-upgrade`.** This file is the source of truth for the work. It is written so
 that a fresh session (or a different person) can pick it up cold. Update the checkboxes and
 the "Session log" as stages land.
 
@@ -136,8 +136,8 @@ Each stage is one commit, independently revertible, with `npm test` green before
 - [x] **4 — Surface coupling.** Sun transmittance and sky irradiance from the LUTs, replacing `exp(-vec3(.04,.07,.15)*airMass)`. View-path extinction on the surface. True cosine falloff replacing the saturating smoothstep.
 - [x] **5 — Ocean.** Sky-reflection floor at all view angles landed with stage 4. **The bathymetry half of this item was wrong and was dropped:** the packaged Blue Marble carries no usable bathymetry. Its deep ocean is one flat value (linear 0.0011, 0.0017, 0.007) in the Atlantic, the Pacific, the Red Sea and over the Sahul and Great Barrier shelves alike; only the Bahamas bank differs, and the water classifier already routes that to the land path where its colour survives. There was nothing being discarded to restore.
 - [x] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.
-- [ ] **7 — Tone.** Re-examine exposure and the ACES toe now that the airlight floor exists.
-- [ ] **8 — Tests and docs.** Update `test/earth-surface-render-contract.test.js`, add invariants for the new physics, refresh golden scenes.
+- [x] **7 — Tone.** Re-examined and **left alone**. Closing the colour pipeline was the tone fix: clipping on the daylight scene fell from 1.09% of the frame to 0.13% while the disc got brighter, because ACES now rolls the highlights off instead of the shader clamping them. Changing exposure on top of that would have been taste applied to a curve that had only just started working.
+- [x] **8 — Tests and docs.** Update `test/earth-surface-render-contract.test.js`, add invariants for the new physics, refresh golden scenes.
 
 ## Verification
 
@@ -156,7 +156,40 @@ against regressions at low sun angle; `crescent-earth` guards the night side.
 
 The script also prints mean linear RGB for the ocean, land and space regions of `daylight`,
 which is the quantitative check that matters here — "ocean is no longer black" is a number,
-not an opinion.
+not an opinion. It **exits non-zero on any console error**: a shader that fails to compile still
+renders a picture, just one missing whatever that shader contributed, and measurements alone will
+not say so. That happened once during this work — a renamed GLSL helper silently emptied the
+multiple-scattering table — which is also why `test/atmosphere-model.test.js` resolves every
+atmosphere function the bake shaders call against the shared GLSL, without needing a GPU.
+
+### Outcome
+
+Daylight scene, baseline → final:
+
+| Measure | Baseline | Final | Target |
+| --- | --- | --- | --- |
+| Deep-ocean sRGB | 32,53,74 | 55,82,121 | a lit navy, not space |
+| Sahara sRGB | 217,161,119 | 196,171,157 | pale and hazy |
+| Sahara saturation | 0.45 | 0.20 | falls |
+| Land saturation centre→limb | rises | falls | aerial perspective |
+| Limb hue | magenta-tinted | blue | ozone tints twilight, not the day limb |
+| Frame clipped to white | 1.09% | 0.13% | highlights roll off |
+| Tangent halo (`sunrise-limb`) | 3 px | 22 px | broad decay |
+
+**On the remaining gap to Apollo.** The Sahara now measures saturation 0.20 against roughly 0.31
+in AS17-148-22727. That gap is not a defect to chase. Apollo was shot on Ektachrome, which is
+warm and high-saturation; a calibrated instrument looking at the same desert through the same air
+— DSCOVR EPIC, say — sees it pale, and that is where the render now sits. The sky-irradiance
+table was checked against published atmospheric ratios rather than against the photograph: 4.7%
+diffuse fraction at zenith Sun from single scattering (about 10% once multiple scattering is
+included, which is the clear-sky value), rising to 44% at 85°. If the Apollo *look* is wanted, it
+is a grading choice and belongs in one place, not spread back through the physics.
+
+**Known approximation.** `GROUND_ALBEDO` is a single planetary mean, because the
+multiple-scattering table is indexed only by altitude and Sun angle and cannot know whether ocean
+or desert lies beneath. Airlight over bright desert is therefore slightly bluer than it should be,
+and over open ocean slightly brighter. Fixing it properly means carrying surface reflectance into
+the scattering term at render time, as Bruneton's `GetSkyRadianceToPoint` does.
 
 ### Acceptance targets (daylight scene)
 
@@ -170,5 +203,7 @@ not an opinion.
 
 ## Session log
 
+- **2026-09-04** — Stages 5, 6, 7, 8. Golden scenes in `docs/golden-scenes/` regenerated against the new render; the checks each one guards are unchanged.
+- **2026-09-04** — Stages 3, 4, and the night-lights wash fix.
 - **2026-09-04** — Stages 1, 1b, 1c, 2. The colour pipeline was the dominant defect; see above. Sky exposure corrections (`0.27` Milky Way, `0.11` stars) were solved against `docs/golden-scenes/`, not guessed.
 - **2026-09-04** — Stage 0. Branch cut from `bd3056c`, plan written, capture harness added, baseline captured.
