@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildCryosphereCatalog, newestObservedCryosphereDays } from '../src/cryosphere-catalog.js';
+import { buildCryosphereCatalog, configuredEndpoint, newestObservedCryosphereDays } from '../src/cryosphere-catalog.js';
 
 const product = (name, options = {}) => ({
   product: name,
@@ -173,4 +173,22 @@ test('the configured IMS endpoint is the archive that serves values, not the one
     assert.ok(ims.input.grids[axis].dtype);
   }
   assert.deepEqual(ims.semantics.allowed, [0, 1, 2, 3, 4]);
+});
+
+test('an unset environment override does not erase the configured endpoint', () => {
+  // An unset GitHub Actions variable arrives as the empty string, and `??` only
+  // rejects null and undefined. That silently replaced a working default with
+  // nothing, and every provider was reported as having no endpoint.
+  assert.equal(configuredEndpoint('', 'https://archive.test/{YYYY}.asc.gz'), 'https://archive.test/{YYYY}.asc.gz');
+  assert.equal(configuredEndpoint('   ', 'https://archive.test/{YYYY}.asc.gz'), 'https://archive.test/{YYYY}.asc.gz');
+  assert.equal(configuredEndpoint(undefined, 'https://archive.test/{YYYY}.asc.gz'), 'https://archive.test/{YYYY}.asc.gz');
+});
+
+test('a real environment override still wins over the configured endpoint', () => {
+  assert.equal(configuredEndpoint('https://ops.test/x', 'https://archive.test/y'), 'https://ops.test/x');
+});
+
+test('a source with neither an override nor a configured endpoint has none', () => {
+  assert.equal(configuredEndpoint('', null), undefined);
+  assert.equal(configuredEndpoint(undefined, undefined), undefined);
 });

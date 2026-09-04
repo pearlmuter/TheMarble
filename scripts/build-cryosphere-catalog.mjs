@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCryosphereCatalog, newestObservedCryosphereDays } from '../src/cryosphere-catalog.js';
+import { buildCryosphereCatalog, configuredEndpoint, newestObservedCryosphereDays } from '../src/cryosphere-catalog.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CANDIDATE_DAYS = 3;
@@ -48,7 +48,10 @@ function expand(template, values) {
 }
 
 function resolveUrl(descriptor, values) {
-  const template = (descriptor.urlTemplateEnv ? process.env[descriptor.urlTemplateEnv] : undefined) ?? descriptor.urlTemplate;
+  const template = configuredEndpoint(
+    descriptor.urlTemplateEnv ? process.env[descriptor.urlTemplateEnv] : undefined,
+    descriptor.urlTemplate,
+  );
   return template ? expand(template, values) : undefined;
 }
 

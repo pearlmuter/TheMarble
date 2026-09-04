@@ -91,3 +91,16 @@ export function buildCryosphereCatalog({ products, retrievedAt }) {
     } : {}),
   };
 }
+
+/**
+ * Choose a provider endpoint from an optional environment override and the
+ * configured default.
+ *
+ * An unset GitHub Actions variable arrives as the empty string, not as absent,
+ * so `??` keeps it and erases a perfectly good default. A blank override means
+ * "not configured here", never "no endpoint exists".
+ */
+export function configuredEndpoint(override, configured) {
+  if (typeof override === 'string' && override.trim() !== '') return override;
+  return configured || undefined;
+}

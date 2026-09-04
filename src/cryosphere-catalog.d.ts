@@ -33,3 +33,5 @@ export function buildCryosphereCatalog(options: {
   products: CryosphereAdapterProduct[];
   retrievedAt: string;
 }): CryosphereCatalog;
+
+export function configuredEndpoint(override: string | undefined, configured: string | null | undefined): string | undefined;
