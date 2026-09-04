@@ -293,3 +293,35 @@ test('a fully observed frame does not invent a gap', () => {
   assert.doesNotMatch(text, /not observed/);
   assert.doesNotMatch(presentation.accessibleSummary, /not observed/);
 });
+
+test('a hemispheric cryosphere analysis says which half of the globe it did not see', () => {
+  const manifest = contemporaryManifest();
+  for (const name of ['snowCover', 'seaIce']) {
+    manifest.layers[name].provenance = {
+      validAt: '2026-09-03T00:00:00Z', producedAt: '2026-09-03T13:10:15Z', retrievedAt: '2026-09-04T07:00:00Z',
+      sourceVersion: 'usnic-ims-24km-v1.3',
+      coverage: { observedFraction: .5009, latitudeRange: [-0.351562, 90], fallbackFraction: 0 },
+      fallback: 'No global analysis is configured, so IMS covers the Northern Hemisphere and the Southern Hemisphere is not observed.',
+      attribution: 'U.S. National Ice Center IMS',
+    };
+  }
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest, now: new Date('2026-09-04T08:00:00Z'), runtime: { source: 'remote', refresh: 'current' },
+  });
+  const text = presentation.sections.flatMap(section => section.items).join(' | ');
+
+  assert.match(text, /Snow · valid 3 Sept 2026 · 50% observed/);
+  assert.match(text, /50% not observed/);
+  assert.match(text, /0\.4°S–90\.0°N/);
+  assert.match(presentation.accessibleSummary, /50% not observed/);
+});
+
+test('a fully observed cryosphere layer does not claim a gap', () => {
+  const presentation = buildEarthStateProvenancePresentation({
+    manifest: contemporaryManifest(), now: new Date('2026-08-28T12:00:00Z'),
+    runtime: { source: 'remote', refresh: 'current' },
+  });
+  const snow = presentation.sections.flatMap(section => section.items).filter(item => item.startsWith('Snow ·')).join('');
+  assert.match(snow, /91% observed · 9% seasonal fallback/);
+  assert.doesNotMatch(snow, /not observed/);
+});

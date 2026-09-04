@@ -57,9 +57,19 @@ function cryospherePresentation(label, layer) {
     summary: `${label} contemporary product is not present.`,
   };
   const provenance = layer.provenance;
+  const observed = percent(provenance.coverage.observedFraction);
+  const fallback = percent(provenance.coverage.fallbackFraction);
+  // IMS is a Northern Hemisphere analysis, so half the globe is simply not seen.
+  // Observed plus fallback is the whole story only when they reach 100.
+  const unobserved = Math.max(0, 100 - observed - fallback);
+  const [south, north] = provenance.coverage.latitudeRange ?? [];
+  const band = unobserved > 0 && Number.isFinite(south) && Number.isFinite(north)
+    ? ` · observed ${Math.abs(south).toFixed(1)}°${south < 0 ? 'S' : 'N'}–${north.toFixed(1)}°N`
+    : '';
+  const gap = unobserved > 0 ? ` · ${unobserved}% not observed` : '';
   return {
-    detail: `${label} · valid ${utcDate(provenance.validAt)} · ${percent(provenance.coverage.observedFraction)}% observed · ${percent(provenance.coverage.fallbackFraction)}% seasonal fallback · source ${provenance.sourceVersion} · ${provenance.attribution}`,
-    summary: `${label} is valid ${utcDate(provenance.validAt)}, ${percent(provenance.coverage.observedFraction)}% observed and ${percent(provenance.coverage.fallbackFraction)}% seasonal fallback.`,
+    detail: `${label} · valid ${utcDate(provenance.validAt)} · ${observed}% observed · ${fallback}% seasonal fallback${gap}${band} · source ${provenance.sourceVersion} · ${provenance.attribution}`,
+    summary: `${label} is valid ${utcDate(provenance.validAt)}, ${observed}% observed and ${fallback}% seasonal fallback${unobserved > 0 ? `, with ${unobserved}% not observed` : ''}.`,
   };
 }
 
