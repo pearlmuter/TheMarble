@@ -1036,7 +1036,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
       day*=1.0-cloudShadow*daylight*mix(.12,.34,clamp(casterOpticalDepth/18.0,0.0,1.0))*casterQuality;
       float nightFalloff=1.0-smoothstep(-.035,.008,solar);
-      vec3 night=texture2D(nightMap,vUv).rgb*nightFalloff*1.8;
+      vec3 night=emittedNightLight(texture2D(nightMap,vUv).rgb)*nightFalloff*1.8;
       night*=cloudTransmission(opticalDepth,cloudQuality);
       gl_FragColor=vec4(mix(night,day,daylight),1.0);
     }

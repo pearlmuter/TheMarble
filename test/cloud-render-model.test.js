@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  ASSUMED_THICK_CLOUD_OPTICAL_DEPTH,
   ASSUMED_THICKNESS_CURVATURE,
+  ASSUMED_THICK_CLOUD_OPTICAL_DEPTH,
   CLOUD_RENDER_GLSL,
   NIGHT_CLOUD_AIRGLOW_SCALE,
   NIGHT_CLOUD_AIRGLOW_TINT,
@@ -10,10 +10,12 @@ import {
   NIGHT_CLOUD_MOONLIGHT_TINT,
   NIGHT_CLOUD_UPWELLING_SCALE,
   NIGHT_CLOUD_UPWELLING_SPREAD_UV,
+  NIGHT_SURFACE_WASH_TINT,
   assumedCloudOpticalDepth,
   cityLightTransmission,
   cloudShadowStrength,
   discoverCloudCaster,
+  emittedNightLight,
   nightCloudIllumination,
   shadowCasterUv,
   sphereUv,
@@ -171,7 +173,56 @@ test('the shader and its CPU mirror share one definition of night cloud light', 
   // The spread taps must preserve energy, or cloud brightness would depend on
   // how wide the sampling happens to be.
   const [, upwellingBody] = CLOUD_RENDER_GLSL.match(/vec3 upwellingCityLight\([^)]*\)\{([\s\S]*?)\n  \}/);
-  const weights = [...upwellingBody.matchAll(/\.rgb\*(\.\d+)/g)].map(match => Number(match[1]));
+  const weights = [...upwellingBody.matchAll(/\.rgb\)?\*(\.\d+)/g)].map(match => Number(match[1]));
   assert.equal(weights.length, 9);
   assert.ok(Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 1) < 1e-9);
+});
+
+test('the night composite keeps city light and drops the surface wash it is painted on', () => {
+  // Measured off the bundled 13500x6750 lights image. Brightness cannot tell these apart --
+  // rural India and the empty Sahara sit at the same level -- so the separation has to be by
+  // colour, and this is the check that it actually separates them.
+  const keeps = ratio => ratio > 0.75;
+  const removes = ratio => ratio < 0.25;
+  // Judged on the warm channels, which are the emitted light. Judging on blue would measure
+  // the wash itself.
+  const strength = sample => {
+    const before = Math.max(sample[0], sample[1]);
+    const after = emittedNightLight(sample.map(v => v / 255));
+    return before > 0 ? (Math.max(after[0], after[1]) * 255) / before : 0;
+  };
+
+  // Emitted light: warm or neutral, and must survive.
+  assert.ok(keeps(strength([212, 201, 183])), `Tokyo lost too much: ${strength([212, 201, 183])}`);
+  assert.ok(keeps(strength([177, 169, 168])), 'Cairo lost too much');
+  assert.ok(keeps(strength([85, 77, 68])), 'Lagos lost too much');
+  assert.ok(keeps(strength([41, 39, 48])), `rural India lost too much: ${strength([41, 39, 48])}`);
+
+  // Surface wash: blue-dominant, and must go.
+  assert.ok(removes(strength([5, 5, 15])), `open ocean survived: ${strength([5, 5, 15])}`);
+  assert.ok(removes(strength([26, 22, 45])), `Australia's interior survived: ${strength([26, 22, 45])}`);
+  assert.ok(removes(strength([35, 32, 60])), `the empty Sahara survived: ${strength([35, 32, 60])}`);
+  assert.ok(removes(strength([42, 51, 84])), `Antarctica survived: ${strength([42, 51, 84])}`);
+});
+
+test('removing the night wash can never add light or drive a channel negative', () => {
+  for (let red = 0; red <= 1; red += 0.25) {
+    for (let green = 0; green <= 1; green += 0.25) {
+      for (let blue = 0; blue <= 1; blue += 0.25) {
+        const result = emittedNightLight([red, green, blue]);
+        result.forEach((value, channel) => {
+          assert.ok(value >= 0, `channel ${channel} went negative`);
+          assert.ok(value <= [red, green, blue][channel] + 1e-12, `channel ${channel} gained light`);
+        });
+      }
+    }
+  }
+});
+
+test('the shader and the CPU mirror of the night wash share one tint', () => {
+  assert.ok(CLOUD_RENDER_GLSL.includes(`NIGHT_SURFACE_WASH_TINT=vec3(${NIGHT_SURFACE_WASH_TINT.join(',')})`));
+  assert.match(CLOUD_RENDER_GLSL, /vec3 emittedNightLight\(vec3 sampled\)/);
+  // The upwelling read must go through it too, or the cloud would glow over a wash the surface
+  // beneath it no longer has.
+  assert.doesNotMatch(CLOUD_RENDER_GLSL, /total\+=texture2D\(nightMap/);
 });

@@ -40,7 +40,30 @@ export const NIGHT_CLOUD_AIRGLOW_SCALE = .62;
 export const NIGHT_CLOUD_UPWELLING_SCALE = .50;
 export const NIGHT_CLOUD_UPWELLING_SPREAD_UV = Object.freeze([.0015, .003]);
 
+// The packaged night composite is not purely emitted light. It carries a blue wash over the
+// surface whose brightness tracks albedo, so that continents read as continents on a printed
+// map: measured on the bundled 13500x6750 lights image, open ocean sits at (5,5,15), Australia's
+// interior at (26,22,45), the empty Sahara at (35,32,60) and Antarctica at (42,51,84). Once the
+// renderer applies its tone curve that wash stops being invisible and becomes a violet glow over
+// any cloud-free land, most obviously Australia.
+//
+// Brightness cannot separate wash from light: rural India measures (41,39,48), level with the
+// Sahara's wash. Colour can. The wash is strongly blue-dominant; emitted city light is not,
+// because sodium and LED both put more energy into red than into blue. Tokyo is (212,201,183)
+// and Lagos (85,77,68) -- both have blue below their red, so neither loses anything here.
+//
+// So the wash is estimated from blue in excess of what a warm source could have, and removed in
+// the wash's own colour. Anything already warm or neutral is left untouched.
+export const NIGHT_SURFACE_WASH_TINT = Object.freeze([.55, .55, 1]);
+
 export const CLOUD_RENDER_GLSL = `
+  const vec3 NIGHT_SURFACE_WASH_TINT=vec3(${NIGHT_SURFACE_WASH_TINT[0]},${NIGHT_SURFACE_WASH_TINT[1]},${NIGHT_SURFACE_WASH_TINT[2]});
+  vec3 emittedNightLight(vec3 sampled){
+    float blueExcess=max(sampled.b-max(sampled.r,sampled.g),0.0);
+    // Per unit of wash, blue exceeds the warmer channels by (1 - max(r,g)) of the tint.
+    float wash=blueExcess/(1.0-max(NIGHT_SURFACE_WASH_TINT.r,NIGHT_SURFACE_WASH_TINT.g));
+    return max(sampled-wash*NIGHT_SURFACE_WASH_TINT,vec3(0.0));
+  }
   vec2 directionUv(vec3 direction){
     direction=normalize(direction);
     return vec2(fract(atan(direction.z,-direction.x)/(2.0*PI)),.5+asin(clamp(direction.y,-1.0,1.0))/PI);
@@ -55,15 +78,15 @@ export const CLOUD_RENDER_GLSL = `
   float cloudTransmission(float opticalDepth,float quality){ return exp(-opticalDepth*quality); }
   vec3 upwellingCityLight(sampler2D nightMap,vec2 uv){
     vec2 e=vec2(${NIGHT_CLOUD_UPWELLING_SPREAD_UV[0]},${NIGHT_CLOUD_UPWELLING_SPREAD_UV[1]});
-    vec3 total=texture2D(nightMap,uv).rgb*.28;
-    total+=texture2D(nightMap,uv+vec2(e.x,0.0)).rgb*.09;
-    total+=texture2D(nightMap,uv-vec2(e.x,0.0)).rgb*.09;
-    total+=texture2D(nightMap,uv+vec2(0.0,e.y)).rgb*.09;
-    total+=texture2D(nightMap,uv-vec2(0.0,e.y)).rgb*.09;
-    total+=texture2D(nightMap,uv+e*.7).rgb*.09;
-    total+=texture2D(nightMap,uv-e*.7).rgb*.09;
-    total+=texture2D(nightMap,uv+vec2(e.x,-e.y)*.7).rgb*.09;
-    total+=texture2D(nightMap,uv-vec2(e.x,-e.y)*.7).rgb*.09;
+    vec3 total=emittedNightLight(texture2D(nightMap,uv).rgb)*.28;
+    total+=emittedNightLight(texture2D(nightMap,uv+vec2(e.x,0.0)).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv-vec2(e.x,0.0)).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv+vec2(0.0,e.y)).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv-vec2(0.0,e.y)).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv+e*.7).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv-e*.7).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv+vec2(e.x,-e.y)*.7).rgb)*.09;
+    total+=emittedNightLight(texture2D(nightMap,uv-vec2(e.x,-e.y)*.7).rgb)*.09;
     return total;
   }
   vec3 nightCloudIllumination(float moonLambert,float moonIllumination,vec3 upwelling){
@@ -132,6 +155,18 @@ export function nightCloudIllumination({ moonLambert = 0, moonIllumination = 0, 
   return NIGHT_CLOUD_MOONLIGHT_TINT.map((tint, channel) => tint * moon
     + NIGHT_CLOUD_AIRGLOW_TINT[channel] * NIGHT_CLOUD_AIRGLOW_SCALE
     + Math.max(0, upwelling[channel] ?? 0) * NIGHT_CLOUD_UPWELLING_SCALE);
+}
+
+/**
+ * The CPU mirror of the shader's `emittedNightLight`, generated from the same tint. Estimates
+ * how much of a night-map sample is the composite's surface wash rather than emitted light, and
+ * removes it.
+ */
+export function emittedNightLight([red, green, blue]) {
+  const warmest = Math.max(red, green);
+  const blueExcess = Math.max(blue - warmest, 0);
+  const wash = blueExcess / (1 - Math.max(NIGHT_SURFACE_WASH_TINT[0], NIGHT_SURFACE_WASH_TINT[1]));
+  return [red, green, blue].map((value, channel) => Math.max(value - wash * NIGHT_SURFACE_WASH_TINT[channel], 0));
 }
 
 export function cityLightTransmission(opticalDepth, quality) {
