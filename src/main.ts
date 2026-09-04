@@ -13,7 +13,7 @@ import type { FixedSceneView } from './inertial-camera.js';
 import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
 import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
-import { CLOUD_RENDER_GLSL } from './cloud-render-model.js';
+import { CLOUD_RELIEF_SAMPLE_UV, CLOUD_RENDER_GLSL } from './cloud-render-model.js';
 import {
   ATMOSPHERE_MARCH_STEPS,
   ATMOSPHERE_RADIUS,
@@ -1060,7 +1060,7 @@ const earthMaterial = new THREE.ShaderMaterial({
       casterQuality=mix(casterWeather.g,casterQuality,casterPhysicalWeight);
       float casterDensity=mix(.72,1.18,casterWeather.r)*casterWeather.g;
       float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
-      day*=1.0-cloudShadow*daylight*mix(.12,.34,clamp(casterOpticalDepth/18.0,0.0,1.0))*casterQuality;
+      day*=1.0-cloudShadow*daylight*cloudShadowOpticalWeight(casterOpticalDepth)*casterQuality;
       float nightFalloff=1.0-smoothstep(-.035,.008,solar);
       vec3 night=emittedNightLight(texture2D(nightMap,vUv).rgb)*nightFalloff*1.8;
       night*=cloudTransmission(opticalDepth,cloudQuality);
@@ -1081,28 +1081,42 @@ const cloudMaterial = new THREE.ShaderMaterial({
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
     cloudPhysicsFrom: { value: cloudPhysicsMap }, cloudPhysicsTo: { value: cloudPhysicsMap },
     cloudAgeFrom: { value: cloudAgeMap }, cloudAgeTo: { value: cloudAgeMap },
-    sunDirection: { value: new THREE.Vector3(1, 0, 0) },
+    sunDirection: { value: new THREE.Vector3(1, 0, 0) }, sunLocalDirection: { value: new THREE.Vector3(1, 0, 0) },
+    transmittanceLut: { value: transmittanceLookup },
     nightMap: { value: nightMap },
     moonDirection: { value: new THREE.Vector3(0, 0, 1) },
     moonIllumination: { value: 0 },
   },
   vertexShader: `
     uniform sampler2D cloudPhysicsFrom; uniform sampler2D cloudPhysicsTo; uniform float cloudMix;
-    varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; varying vec4 vPhysics;
+    varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vObjectNormal; varying vec3 vViewPosition; varying vec4 vPhysics; varying float vCloudRadius;
     void main(){
       vUv=uv; vPhysics=mix(texture2D(cloudPhysicsFrom,uv),texture2D(cloudPhysicsTo,uv),cloudMix);
       float physicalWeight=step(.001,vPhysics.a); float heightKm=mix(11.0,vPhysics.b*20.0,physicalWeight);
       float cloudRadius=1.0+heightKm/6371.0; vec3 displaced=position*cloudRadius;
+      vCloudRadius=cloudRadius; vObjectNormal=normalize(normal);
       vViewNormal=normalize(normalMatrix*normal); vViewPosition=(modelViewMatrix*vec4(displaced,1.0)).xyz;
       gl_Position=projectionMatrix*vec4(vViewPosition,1.0);
     }`,
   fragmentShader: `
     uniform sampler2D cloudMapFrom; uniform sampler2D cloudMapTo; uniform sampler2D cloudDensityFrom; uniform sampler2D cloudDensityTo;
-    uniform sampler2D cloudAgeFrom; uniform sampler2D cloudAgeTo; uniform float cloudMix; uniform vec3 sunDirection;
+    uniform sampler2D cloudPhysicsFrom; uniform sampler2D cloudPhysicsTo;
+    uniform sampler2D cloudAgeFrom; uniform sampler2D cloudAgeTo; uniform float cloudMix; uniform vec3 sunDirection; uniform vec3 sunLocalDirection;
+    uniform sampler2D transmittanceLut;
     uniform sampler2D nightMap; uniform vec3 moonDirection; uniform float moonIllumination;
-    varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vViewPosition; varying vec4 vPhysics;
+    varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vObjectNormal; varying vec3 vViewPosition; varying vec4 vPhysics; varying float vCloudRadius;
     const float PI=3.14159265359;
+    ${ATMOSPHERE_MODEL_GLSL}
+    ${ATMOSPHERE_TRANSMITTANCE_GLSL}
     ${CLOUD_RENDER_GLSL}
+    // Cloud-top height at a neighbouring texel, for the slope of the deck.
+    float neighbourCloudTopKm(sampler2D opacityFrom,sampler2D opacityTo,sampler2D physicsFrom,sampler2D physicsTo,float mixAmount,vec2 uv){
+      float opacity=mix(texture2D(opacityFrom,uv).a,texture2D(opacityTo,uv).a,mixAmount);
+      vec4 physics=mix(texture2D(physicsFrom,uv),texture2D(physicsTo,uv),mixAmount);
+      float retrieved=step(.001,physics.a);
+      float depth=mix(assumedCloudOpticalDepth(opacity),decodeCloudOpticalDepth(physics.r),retrieved);
+      return cloudTopHeightKm(depth,physics.b*20.0,retrieved);
+    }
     void main(){
       vec4 cloud=mix(texture2D(cloudMapFrom,vUv),texture2D(cloudMapTo,vUv),cloudMix);
       vec4 weather=mix(texture2D(cloudDensityFrom,vUv),texture2D(cloudDensityTo,vUv),cloudMix);
@@ -1115,9 +1129,28 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float density=mix(mix(.72,1.18,weather.r),1.0-exp(-opticalDepth*.35),physicalWeight)*cloudQuality;
       vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz); vec3 viewDirection=normalize(-vViewPosition);
       float solarRaw=dot(normalize(vViewNormal),sunView); float solar=smoothstep(-.012,.035,solarRaw);
-      float zenithDegrees=degrees(acos(clamp(solarRaw,0.0,1.0)));
-      float airMass=1.0/(max(solarRaw,0.0)+.50572*pow(max(96.07995-zenithDegrees,.01),-1.6364));
-      vec3 sunlight=exp(-vec3(.04,.07,.15)*min(airMass,38.0));
+      // A deck at eleven kilometres sits above most of the air, so it keeps far more of the
+      // Sun's blue than the ground does. That is why cloud tops read white against a surface
+      // the same light has reddened, and it comes from the same table the surface reads.
+      vec3 surfaceDirection=normalize(vObjectNormal); vec3 localSun=normalize(sunLocalDirection);
+      vec3 sunlight=atmosphereSunTransmittance(transmittanceLut,surfaceDirection*vCloudRadius,localSun);
+      // The slope of the cloud top, which is what gives a deck relief instead of letting it read
+      // as a decal. Where SatCORPS retrieved a height that height is used; where it did not,
+      // thickness stands in for it.
+      float latitude=(vUv.y-.5)*PI;
+      vec2 reliefStep=vec2(${CLOUD_RELIEF_SAMPLE_UV},${CLOUD_RELIEF_SAMPLE_UV});
+      float heightEast=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv+vec2(reliefStep.x,0.0));
+      float heightWest=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv-vec2(reliefStep.x,0.0));
+      float heightNorth=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv+vec2(0.0,reliefStep.y));
+      float heightSouth=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv-vec2(0.0,reliefStep.y));
+      vec3 reliefNormal=cloudReliefNormal(surfaceDirection,heightEast,heightWest,heightNorth,heightSouth,latitude);
+      // The height taps are a fixed step in map coordinates. Toward the limb that step falls
+      // below a screen pixel, so the slope it recovers is sampling noise rather than cloud
+      // structure -- visible as a moire of parallel dashes. Let the deck settle back onto the
+      // shell where the sampling can no longer support relief.
+      float reliefConfidence=smoothstep(.14,.46,dot(normalize(vViewNormal),viewDirection));
+      float reliefShade=mix(cloudReliefShading(dot(surfaceDirection,localSun)),
+                            cloudReliefShading(dot(reliefNormal,localSun)),reliefConfidence);
       float forward=max(-dot(viewDirection,sunView),0.0);
       float phaseExponent=mix(12.0,22.0,icePhase); float silver=pow(forward,phaseExponent)*smoothstep(-.02,.28,solarRaw)*mix(.55,1.05,icePhase);
       vec3 phaseTint=mix(vec3(1.03,.995,.94),vec3(.94,.99,1.08),icePhase);
@@ -1135,7 +1168,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
         vec3 moonView=normalize((viewMatrix*vec4(moonDirection,0.0)).xyz);
         nightCloud=nightCloudIllumination(dot(normalize(vViewNormal),moonView),moonIllumination,upwellingCityLight(nightMap,vUv));
       }
-      vec3 cloudLight=litCloud*solar+vec3(1.0,.56,.2)*silver*.48*solar+nightCloud*(1.0-solar);
+      vec3 cloudLight=litCloud*reliefShade*solar+vec3(1.0,.56,.2)*silver*.48*solar+nightCloud*(1.0-solar);
       float ageTrust=1.0-observationAge*.18;
       gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.9*ageTrust);
     }`
@@ -1405,6 +1438,7 @@ function updateCelestialScene(now: Date) {
   }
   earthMaterial.uniforms.sunDirection.value.copy(sunDirection);
   earthMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
+  cloudMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
   cloudMaterial.uniforms.sunDirection.value.copy(sunDirection);
   (atmosphere.material as THREE.ShaderMaterial).uniforms.sunDirection.value.copy(sunDirection);
   sun.position.copy(sunDirection).multiplyScalar(frame.sun.distanceEarthRadii);

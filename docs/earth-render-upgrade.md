@@ -134,8 +134,8 @@ Each stage is one commit, independently revertible, with `npm test` green before
 - [x] **1c — Close the colour pipeline.** HDR target plus one composite pass; sky exposure re-solved against the golden scenes.
 - [x] **3 — Multiple scattering LUT.** Remove `vec3(13,13,10)` and `exposedLimb`.
 - [x] **4 — Surface coupling.** Sun transmittance and sky irradiance from the LUTs, replacing `exp(-vec3(.04,.07,.15)*airMass)`. View-path extinction on the surface. True cosine falloff replacing the saturating smoothstep.
-- [ ] **5 — Ocean.** Keep bathymetry from the day map; sky-reflection floor at all view angles; keep the existing GGX glint.
-- [ ] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.
+- [x] **5 — Ocean.** Sky-reflection floor at all view angles landed with stage 4. **The bathymetry half of this item was wrong and was dropped:** the packaged Blue Marble carries no usable bathymetry. Its deep ocean is one flat value (linear 0.0011, 0.0017, 0.007) in the Atlantic, the Pacific, the Red Sea and over the Sahul and Great Barrier shelves alike; only the Bahamas bank differs, and the water classifier already routes that to the land path where its colour survives. There was nothing being discarded to restore.
+- [x] **6 — Clouds.** Relief/self-shadowing from the optical-depth gradient; stronger cast shadows; clouds lit through the same solar transmittance.
 - [ ] **7 — Tone.** Re-examine exposure and the ACES toe now that the airlight floor exists.
 - [ ] **8 — Tests and docs.** Update `test/earth-surface-render-contract.test.js`, add invariants for the new physics, refresh golden scenes.
 

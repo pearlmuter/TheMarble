@@ -62,7 +62,10 @@ test('every unretrieved optical depth comes from the one shared assumed-thicknes
   assert.match(mainSource, /opticalDepth=mix\(assumedCloudOpticalDepth\(localCloud\.a\),opticalDepth,physicalWeight\)/);
   assert.match(mainSource, /casterOpticalDepth=mix\(assumedCloudOpticalDepth\(cloudShadow1\),casterOpticalDepth,casterPhysicalWeight\)/);
   assert.match(mainSource, /opticalDepth=mix\(assumedCloudOpticalDepth\(cloud\.a\),opticalDepth,physicalWeight\)/);
-  assert.equal(mainSource.match(/assumedCloudOpticalDepth\(/g).length, 3);
+  // Four now: the direct read, the caster, the cloud layer, and the neighbour taps that give
+  // the deck its relief. All four are the same physical quantity from the same curve.
+  assert.match(mainSource, /depth=mix\(assumedCloudOpticalDepth\(opacity\),decodeCloudOpticalDepth\(physics\.r\),retrieved\)/);
+  assert.equal(mainSource.match(/assumedCloudOpticalDepth\(/g).length, 4);
   assert.match(cloudModelSource, /float assumedCloudOpticalDepth\(/);
 });
 
@@ -76,7 +79,7 @@ test('the cloud layer is lit on the night side instead of being drawn black', ()
   assert.match(mainSource, /if\(solar<\.999\)\{/);
   // Crossfaded against the same terminator term as the sunlit cloud, so the two
   // cannot leave a seam between them.
-  assert.match(mainSource, /vec3 cloudLight=litCloud\*solar\+vec3\(1\.0,\.56,\.2\)\*silver\*\.48\*solar\+nightCloud\*\(1\.0-solar\)/);
+  assert.match(mainSource, /vec3 cloudLight=litCloud\*reliefShade\*solar\+vec3\(1\.0,\.56,\.2\)\*silver\*\.48\*solar\+nightCloud\*\(1\.0-solar\)/);
   assert.match(cloudModelSource, /vec3 nightCloudIllumination\(/);
 });
 

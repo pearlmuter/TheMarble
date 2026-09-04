@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ASSUMED_CLOUD_BASE_KM,
+  ASSUMED_CLOUD_RELIEF_KM,
   ASSUMED_THICKNESS_CURVATURE,
   ASSUMED_THICK_CLOUD_OPTICAL_DEPTH,
+  CLOUD_RELIEF_WRAP,
   CLOUD_RENDER_GLSL,
+  MAXIMUM_CLOUD_SHADOW,
+  MINIMUM_CLOUD_SHADOW,
   NIGHT_CLOUD_AIRGLOW_SCALE,
   NIGHT_CLOUD_AIRGLOW_TINT,
   NIGHT_CLOUD_MOONLIGHT_SCALE,
@@ -14,6 +19,7 @@ import {
   assumedCloudOpticalDepth,
   cityLightTransmission,
   cloudShadowStrength,
+  cloudTopHeightKm,
   discoverCloudCaster,
   emittedNightLight,
   nightCloudIllumination,
@@ -99,17 +105,19 @@ test('assumed thickness rescales the observed opacity range rather than flatteni
 });
 
 test('assumed thickness lets a shadow reach the full weighting the expression is scaled for', () => {
-  // #20: the old curve pinned the weighting at .141 of a possible .34.
+  // #20: the old curve pinned the weighting at .141 of a possible .34. The ceiling has since
+  // risen to MAXIMUM_CLOUD_SHADOW, because dimming the ground by a third under a convective
+  // anvil was far too gentle; what the curve has to do is still reach it.
   const solid = cloudShadowStrength({
     casterAlpha: 1, casterOpticalDepth: assumedCloudOpticalDepth(1), casterQuality: 1,
     casterDensity: 1, daylight: 1,
   });
-  assert.ok(Math.abs(solid - .34) < .001);
+  assert.ok(Math.abs(solid - MAXIMUM_CLOUD_SHADOW) < .001);
   const thin = cloudShadowStrength({
     casterAlpha: 1, casterOpticalDepth: assumedCloudOpticalDepth(.15), casterQuality: 1,
     casterDensity: 1, daylight: 1,
   });
-  assert.ok(thin < .14);
+  assert.ok(thin < MAXIMUM_CLOUD_SHADOW * .42);
 });
 
 test('the shader and its CPU mirror share one definition of assumed thickness', () => {
@@ -225,4 +233,56 @@ test('the shader and the CPU mirror of the night wash share one tint', () => {
   // The upwelling read must go through it too, or the cloud would glow over a wash the surface
   // beneath it no longer has.
   assert.doesNotMatch(CLOUD_RENDER_GLSL, /total\+=texture2D\(nightMap/);
+});
+
+test('cloud top height rises with thickness where nothing retrieved one', () => {
+  // Marine stratus near a kilometre, deep convection well above ten, and monotonic between.
+  assert.ok(Math.abs(cloudTopHeightKm(0) - ASSUMED_CLOUD_BASE_KM) < 1e-9);
+  assert.ok(cloudTopHeightKm(2) < 5, `thin cloud sat at ${cloudTopHeightKm(2)} km`);
+  assert.ok(cloudTopHeightKm(40) > 10, `thick cloud only reached ${cloudTopHeightKm(40)} km`);
+  assert.ok(cloudTopHeightKm(1e6) <= ASSUMED_CLOUD_BASE_KM + ASSUMED_CLOUD_RELIEF_KM + 1e-6);
+  let previous = -Infinity;
+  for (let depth = 0; depth <= 60; depth += 1) {
+    const height = cloudTopHeightKm(depth);
+    assert.ok(height >= previous, `height fell between ${depth - 1} and ${depth}`);
+    previous = height;
+  }
+});
+
+test('a retrieved cloud top wins over the assumed one', () => {
+  // The assumption exists only where SatCORPS has nothing to say. Where it does, it is the truth.
+  assert.equal(cloudTopHeightKm(30, 2.5, 1), 2.5);
+  assert.equal(cloudTopHeightKm(1, 16, 1), 16);
+  // And a partial weight interpolates rather than jumping.
+  const half = cloudTopHeightKm(30, 2.5, 0.5);
+  assert.ok(half > 2.5 && half < cloudTopHeightKm(30));
+});
+
+test('the cast shadow reaches a depth a thick deck actually casts', () => {
+  // Ground under a convective anvil keeps roughly a fifth to a third of clear-sky irradiance,
+  // so the darkening has to reach about .7. The superseded ceiling of .34 was far too gentle.
+  assert.ok(MAXIMUM_CLOUD_SHADOW > 0.6 && MAXIMUM_CLOUD_SHADOW < 0.85);
+  assert.ok(MINIMUM_CLOUD_SHADOW > 0 && MINIMUM_CLOUD_SHADOW < 0.25);
+  // And the shader reads the same curve, so the two cannot drift.
+  assert.match(CLOUD_RENDER_GLSL, /float cloudShadowOpticalWeight\(float opticalDepth\)/);
+  assert.ok(CLOUD_RENDER_GLSL.includes(`mix(${MINIMUM_CLOUD_SHADOW},${MAXIMUM_CLOUD_SHADOW},`));
+});
+
+test('a cloud slope turned away from the Sun goes grey, never black', () => {
+  // Cloud scatters far more than it absorbs. A plain cosine would render the shaded side of a
+  // deck as a hole, which is the opposite of what Apollo's clouds show.
+  const shade = relief => Math.min(Math.max((relief + CLOUD_RELIEF_WRAP) / (1 + CLOUD_RELIEF_WRAP), 0), 1);
+  assert.ok(Math.abs(shade(1) - 1) < 1e-9, 'a slope facing the Sun must be fully lit');
+  assert.ok(shade(0) > 0.25, `a slope edge-on went to ${shade(0)}`);
+  assert.equal(shade(-1), 0);
+  assert.match(CLOUD_RENDER_GLSL, /float cloudReliefShading\(float reliefSolar\)/);
+  assert.ok(CLOUD_RENDER_GLSL.includes(`(reliefSolar+${CLOUD_RELIEF_WRAP})/(1.0+${CLOUD_RELIEF_WRAP})`));
+});
+
+test('the relief normal tilts toward the downhill side and stays a unit vector', () => {
+  // Pure geometry, checked on the shader source: an east-west height difference has to scale by
+  // cos(latitude), or every deck would tilt harder the closer it got to a pole.
+  assert.match(CLOUD_RENDER_GLSL, /float eastKm=2\.0\*PI\*6371\.0\*max\(cos\(latitude\),\.08\)/);
+  assert.match(CLOUD_RENDER_GLSL, /float northKm=PI\*6371\.0/);
+  assert.match(CLOUD_RENDER_GLSL, /return normalize\(up-east\*slopeEast-north\*slopeNorth\)/);
 });

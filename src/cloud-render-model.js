@@ -56,6 +56,42 @@ export const NIGHT_CLOUD_UPWELLING_SPREAD_UV = Object.freeze([.0015, .003]);
 // the wash's own colour. Anything already warm or neutral is left untouched.
 export const NIGHT_SURFACE_WASH_TINT = Object.freeze([.55, .55, 1]);
 
+// A cloud deck is not a smooth shell, and shading it as one is why it reads as a decal pasted
+// onto the globe rather than as weather with depth. Apollo's clouds have grey undersides and
+// visible relief; a convective tower stands kilometres above the stratus beside it.
+//
+// Where SatCORPS retrieved a cloud-top height, that height is the truth. Where it did not --
+// which includes every bundled offline state -- thickness stands in for it, on the same
+// reasoning ASSUMED_THICK_CLOUD_OPTICAL_DEPTH already uses: a deck that intercepts more light
+// is a deck that reaches higher. Marine stratus sits near a kilometre and deep convection tops
+// out near sixteen, so the assumed curve spans that.
+export const ASSUMED_CLOUD_BASE_KM = 1.2;
+export const ASSUMED_CLOUD_RELIEF_KM = 14;
+export const ASSUMED_CLOUD_HEIGHT_CURVATURE = .12;
+// How far apart the height samples are taken. One thousandth of the map is about 40 km at the
+// equator, which is the scale the packaged cloud fields actually resolve.
+export const CLOUD_RELIEF_SAMPLE_UV = .001;
+// Slopes recovered this way are shallower than real convective walls, because the height comes
+// from a smoothed opacity field rather than from lidar. Exaggerating the slope restores the
+// relief the data implies without inventing structure that is not in it.
+export const CLOUD_RELIEF_EXAGGERATION = 34;
+export const EARTH_RADIUS_KM = 6371;
+
+// How dark a cast cloud shadow gets. The previous ceiling of .34 was far too gentle: a deep
+// convective anvil does not dim the ground by a third. Ground under a thick deck keeps only the
+// blue sky and the light bouncing off neighbouring cloud walls, which measures around a fifth to
+// a third of clear-sky irradiance -- so the darkening has to reach roughly .7. Thin cirrus at the
+// other end genuinely barely shades at all.
+// How much of the cosine is wrapped around the terminator of a cloud slope.
+export const CLOUD_RELIEF_WRAP = .45;
+export const MINIMUM_CLOUD_SHADOW = .15;
+export const MAXIMUM_CLOUD_SHADOW = .7;
+
+
+// GLSL has no implicit int-to-float conversion, so every interpolated constant has to arrive
+// with a decimal point whether or not the JavaScript value happens to be whole.
+const glslFloat = value => (Number.isInteger(value) ? `${value}.0` : String(value));
+
 export const CLOUD_RENDER_GLSL = `
   const vec3 NIGHT_SURFACE_WASH_TINT=vec3(${NIGHT_SURFACE_WASH_TINT[0]},${NIGHT_SURFACE_WASH_TINT[1]},${NIGHT_SURFACE_WASH_TINT[2]});
   vec3 emittedNightLight(vec3 sampled){
@@ -94,6 +130,33 @@ export const CLOUD_RENDER_GLSL = `
       *max(moonLambert,0.0)*clamp(moonIllumination,0.0,1.0)*${NIGHT_CLOUD_MOONLIGHT_SCALE};
     vec3 airglow=vec3(${NIGHT_CLOUD_AIRGLOW_TINT[0]},${NIGHT_CLOUD_AIRGLOW_TINT[1]},${NIGHT_CLOUD_AIRGLOW_TINT[2]})*${NIGHT_CLOUD_AIRGLOW_SCALE};
     return moonlight+airglow+max(upwelling,vec3(0.0))*${NIGHT_CLOUD_UPWELLING_SCALE};
+  }
+  // Retrieved top height where there is one, thickness standing in for it where there is not.
+  float cloudTopHeightKm(float opticalDepth,float retrievedHeightKm,float retrieved){
+    float assumed=${glslFloat(ASSUMED_CLOUD_BASE_KM)}+${glslFloat(ASSUMED_CLOUD_RELIEF_KM)}*(1.0-exp(-max(opticalDepth,0.0)*${glslFloat(ASSUMED_CLOUD_HEIGHT_CURVATURE)}));
+    return mix(assumed,retrievedHeightKm,retrieved);
+  }
+  // The deck's own surface normal, from the slope of its top. Equirectangular uv, so a step in u
+  // covers cos(latitude) as much ground as the same step in v covers, and the east-west slope has
+  // to be scaled accordingly or every deck would tilt harder toward the poles.
+  vec3 cloudReliefNormal(vec3 surfaceNormal,float heightEast,float heightWest,float heightNorth,float heightSouth,float latitude){
+    float eastKm=2.0*PI*${glslFloat(EARTH_RADIUS_KM)}*max(cos(latitude),.08)*${glslFloat(CLOUD_RELIEF_SAMPLE_UV)};
+    float northKm=PI*${glslFloat(EARTH_RADIUS_KM)}*${glslFloat(CLOUD_RELIEF_SAMPLE_UV)};
+    float slopeEast=(heightEast-heightWest)/(2.0*eastKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
+    float slopeNorth=(heightNorth-heightSouth)/(2.0*northKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
+    vec3 up=normalize(surfaceNormal);
+    vec3 east=normalize(cross(vec3(0.0,1.0,0.0),up));
+    vec3 north=cross(up,east);
+    return normalize(up-east*slopeEast-north*slopeNorth);
+  }
+  // Shared with cloudShadowStrength so the shader and its mirror cannot drift.
+  float cloudShadowOpticalWeight(float opticalDepth){
+    return mix(${glslFloat(MINIMUM_CLOUD_SHADOW)},${glslFloat(MAXIMUM_CLOUD_SHADOW)},clamp(opticalDepth/${glslFloat(ASSUMED_THICK_CLOUD_OPTICAL_DEPTH)},0.0,1.0));
+  }
+  // Cloud scatters far more than it absorbs, so a slope turned away from the Sun is grey rather
+  // than black -- which is what Apollo's decks show and what a plain cosine cannot.
+  float cloudReliefShading(float reliefSolar){
+    return clamp((reliefSolar+${glslFloat(CLOUD_RELIEF_WRAP)})/(1.0+${glslFloat(CLOUD_RELIEF_WRAP)}),0.0,1.0);
   }
   float cloudProbeScore(vec4 physics,float probeHeightKm){
     return physics.a*exp(-abs(physics.b*20.0-probeHeightKm)*0.45);
@@ -173,7 +236,17 @@ export function cityLightTransmission(opticalDepth, quality) {
   return Math.exp(-Math.max(0, opticalDepth) * Math.max(0, Math.min(1, quality)));
 }
 
+/**
+ * The CPU mirror of the shader's `cloudTopHeightKm`, from the same constants.
+ */
+export function cloudTopHeightKm(opticalDepth, retrievedHeightKm = 0, retrieved = 0) {
+  const assumed = ASSUMED_CLOUD_BASE_KM
+    + ASSUMED_CLOUD_RELIEF_KM * (1 - Math.exp(-Math.max(opticalDepth, 0) * ASSUMED_CLOUD_HEIGHT_CURVATURE));
+  return assumed + (retrievedHeightKm - assumed) * Math.max(0, Math.min(1, retrieved));
+}
+
 export function cloudShadowStrength({ casterAlpha, casterOpticalDepth, casterQuality, casterDensity, daylight }) {
-  const opticalWeight = .12 + (.34 - .12) * Math.max(0, Math.min(1, casterOpticalDepth / 18));
+  const opticalWeight = MINIMUM_CLOUD_SHADOW
+    + (MAXIMUM_CLOUD_SHADOW - MINIMUM_CLOUD_SHADOW) * Math.max(0, Math.min(1, casterOpticalDepth / ASSUMED_THICK_CLOUD_OPTICAL_DEPTH));
   return casterAlpha * casterDensity * opticalWeight * casterQuality * daylight;
 }
