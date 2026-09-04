@@ -72,6 +72,14 @@ jobs:
           # transfers only what is new.
           mkdir -p artifacts/earth-state
           aws s3 sync "$BUCKET" artifacts/earth-state --size-only --no-progress
+          # A pointer is a fixed size: the bundle id and href are the same length every time, so
+          # --size-only cannot see a pointer change and leaves the store believing an older
+          # bundle is still current. The upload step already excludes latest*.json from its sync
+          # for exactly this reason; this is that exclusion's mirror image on the way down.
+          # Bundle directories are content-addressed, so the sync above still fetches new ones.
+          for pointer in latest.json latest-presentations.json; do
+            aws s3 cp "$BUCKET/$pointer" "artifacts/earth-state/$pointer" --only-show-errors || true
+          done
       - name: Publish the newest validated cloud hour
         id: publish
         run: >-
