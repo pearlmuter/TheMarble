@@ -280,12 +280,26 @@ async function captureScene({ browser, baseUrl, sceneId, outputDirectory, readyT
     url.searchParams.set('golden', sceneId);
     await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 90_000 });
     await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: readyTimeoutMs });
-    // Textures stream in after the loading marker clears, and the camera damps into pose.
+    // The loading marker clears once the *first* state is activated, which against a deployment
+    // is the packaged fallback -- the remote state is still tens of megabytes away. Screenshotting
+    // there photographs the fallback and calls it live, which is exactly the mistake this harness
+    // made until a live capture came back within one sRGB level of a local one. Wait for the
+    // refresh to settle, as scripts/smoke-earth-production.mjs already does.
+    await page.waitForFunction(() => {
+      const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
+      return refresh === 'current' || refresh === 'failed';
+    }, undefined, { timeout: readyTimeoutMs });
+    const runtime = await page.locator('#earth-state-summary').evaluate(element => ({
+      bundleId: element.getAttribute('data-bundle-id') ?? '',
+      source: element.getAttribute('data-runtime-source') ?? '',
+      refresh: element.getAttribute('data-refresh') ?? '',
+    })).catch(() => ({ bundleId: '', source: '', refresh: '' }));
+    // Textures stream in after the state settles, and the camera damps into pose.
     await page.waitForTimeout(3_000);
     const screenshot = await page.screenshot({ type: 'png' });
     await writeFile(join(outputDirectory, `${sceneId}.png`), screenshot);
     const image = decodePng(screenshot);
-    return { scene: sceneId, consoleErrors, measurements: measure(image, scene) };
+    return { scene: sceneId, runtime, consoleErrors, measurements: measure(image, scene) };
   } finally {
     await page.close();
   }
@@ -295,7 +309,7 @@ function formatScene(report) {
   const m = report.measurements;
   const rgb = region => (region ? `${String(region.srgb[0]).padStart(3)},${String(region.srgb[1]).padStart(3)},${String(region.srgb[2]).padStart(3)}` : '   —');
   return [
-    `  ${report.scene}`,
+    `  ${report.scene}${report.runtime?.bundleId ? `   [${report.runtime.source} · ${report.runtime.refresh} · ${report.runtime.bundleId}]` : ''}`,
     `    deep ocean sRGB   ${rgb(m.deepOcean)}   (${m.deepOcean?.pixels ?? 0} px)`,
     `    land sRGB         ${rgb(m.land)}   saturation ${m.land?.saturation ?? '—'}`,
     `    centre vs limb    ${m.centreLand?.saturation ?? '—'} -> ${m.limbLand?.saturation ?? '—'}  (aerial ${m.aerialPerspective})`,
