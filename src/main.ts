@@ -1143,7 +1143,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       // as a decal. Where SatCORPS retrieved a height that height is used; where it did not,
       // thickness stands in for it.
       float latitude=(vUv.y-.5)*PI;
-      vec2 reliefStep=vec2(${CLOUD_RELIEF_SAMPLE_UV},${CLOUD_RELIEF_SAMPLE_UV});
+      vec2 reliefStep=vec2(cloudReliefStepU(latitude),${CLOUD_RELIEF_SAMPLE_UV});
       float heightEast=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv+vec2(reliefStep.x,0.0));
       float heightWest=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv-vec2(reliefStep.x,0.0));
       float heightNorth=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv+vec2(0.0,reliefStep.y));
@@ -1153,7 +1153,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       // below a screen pixel, so the slope it recovers is sampling noise rather than cloud
       // structure -- visible as a moire of parallel dashes. Let the deck settle back onto the
       // shell where the sampling can no longer support relief.
-      float reliefConfidence=smoothstep(.14,.46,dot(normalize(vViewNormal),viewDirection));
+      float reliefConfidence=smoothstep(.14,.46,dot(normalize(vViewNormal),viewDirection))*cloudReliefPolarConfidence(latitude);
       float reliefShade=mix(cloudReliefShading(dot(surfaceDirection,localSun)),
                             cloudReliefShading(dot(reliefNormal,localSun)),reliefConfidence);
       float forward=max(-dot(viewDirection,sunView),0.0);

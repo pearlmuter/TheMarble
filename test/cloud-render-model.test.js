@@ -5,8 +5,11 @@ import {
   ASSUMED_CLOUD_RELIEF_KM,
   ASSUMED_THICKNESS_CURVATURE,
   ASSUMED_THICK_CLOUD_OPTICAL_DEPTH,
+  CLOUD_RELIEF_MAX_STEP_UV,
+  CLOUD_RELIEF_SAMPLE_UV,
   CLOUD_RELIEF_WRAP,
   CLOUD_RENDER_GLSL,
+  EARTH_RADIUS_KM,
   MAXIMUM_CLOUD_SHADOW,
   MINIMUM_CLOUD_SHADOW,
   NIGHT_CLOUD_AIRGLOW_SCALE,
@@ -282,7 +285,48 @@ test('a cloud slope turned away from the Sun goes grey, never black', () => {
 test('the relief normal tilts toward the downhill side and stays a unit vector', () => {
   // Pure geometry, checked on the shader source: an east-west height difference has to scale by
   // cos(latitude), or every deck would tilt harder the closer it got to a pole.
-  assert.match(CLOUD_RENDER_GLSL, /float eastKm=2\.0\*PI\*6371\.0\*max\(cos\(latitude\),\.08\)/);
+  assert.match(CLOUD_RENDER_GLSL, /float eastKm=2\.0\*PI\*6371\.0\*max\(cos\(latitude\),1e-3\)\*cloudReliefStepU\(latitude\)/);
+  // The u step widens by 1/cos so the samples stay a constant distance apart on the ground, and
+  // the deck stops claiming relief where even the widened step has to be clamped. Without both,
+  // the pole tears into a radial fan.
+  assert.match(CLOUD_RENDER_GLSL, /float cloudReliefStepU\(float latitude\)/);
+  assert.match(CLOUD_RENDER_GLSL, /float cloudReliefPolarConfidence\(float latitude\)/);
   assert.match(CLOUD_RENDER_GLSL, /float northKm=PI\*6371\.0/);
   assert.match(CLOUD_RENDER_GLSL, /return normalize\(up-east\*slopeEast-north\*slopeNorth\)/);
+});
+
+test('the relief sample step keeps a constant ground distance as latitude rises', () => {
+  // The pole is where a fixed step in map coordinates stops meaning a fixed distance on the
+  // ground. Two texels a step apart at 89 degrees are almost the same place, so a fixed step
+  // turns a small height difference into an enormous slope -- which is what tore a radial fan
+  // into the deck over the Arctic once sea ice made the pole bright enough to see it.
+  const stepU = latitude => Math.min(
+    CLOUD_RELIEF_SAMPLE_UV / Math.max(Math.cos((latitude * Math.PI) / 180), 1e-3),
+    CLOUD_RELIEF_MAX_STEP_UV,
+  );
+  const groundKm = latitude =>
+    2 * Math.PI * EARTH_RADIUS_KM * Math.max(Math.cos((latitude * Math.PI) / 180), 1e-3) * stepU(latitude);
+
+  // Constant to within a percent everywhere the step is not clamped.
+  const equator = groundKm(0);
+  for (const latitude of [0, 30, 45, 60, 75, 85]) {
+    assert.ok(
+      Math.abs(groundKm(latitude) / equator - 1) < 0.01,
+      `sample spacing drifted to ${groundKm(latitude)} km at ${latitude} degrees`,
+    );
+  }
+  // And the step widens rather than staying put.
+  assert.ok(stepU(60) > stepU(0) * 1.9);
+  assert.ok(stepU(89) === CLOUD_RELIEF_MAX_STEP_UV, 'the step must be capped near the pole');
+});
+
+test('relief confidence falls to nothing at the pole', () => {
+  const confidence = latitude => {
+    const wanted = CLOUD_RELIEF_SAMPLE_UV / Math.max(Math.cos((latitude * Math.PI) / 180), 1e-3);
+    const t = Math.min(Math.max((wanted - CLOUD_RELIEF_MAX_STEP_UV * 0.6) / (CLOUD_RELIEF_MAX_STEP_UV * 0.4), 0), 1);
+    return 1 - t * t * (3 - 2 * t);
+  };
+  assert.ok(confidence(0) === 1 && confidence(60) === 1 && confidence(80) === 1);
+  assert.equal(confidence(90), 0);
+  assert.ok(confidence(88) < 1, 'relief must start fading before the pole');
 });

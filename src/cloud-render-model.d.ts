@@ -13,6 +13,7 @@ export const ASSUMED_CLOUD_BASE_KM: number;
 export const ASSUMED_CLOUD_RELIEF_KM: number;
 export const ASSUMED_CLOUD_HEIGHT_CURVATURE: number;
 export const CLOUD_RELIEF_SAMPLE_UV: number;
+export const CLOUD_RELIEF_MAX_STEP_UV: number;
 export const CLOUD_RELIEF_EXAGGERATION: number;
 export const EARTH_RADIUS_KM: number;
 export const CLOUD_RELIEF_WRAP: number;

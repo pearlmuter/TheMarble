@@ -71,6 +71,14 @@ export const ASSUMED_CLOUD_HEIGHT_CURVATURE = .12;
 // How far apart the height samples are taken. One thousandth of the map is about 40 km at the
 // equator, which is the scale the packaged cloud fields actually resolve.
 export const CLOUD_RELIEF_SAMPLE_UV = .001;
+// Equirectangular sampling converges at the poles: two texels a fixed step apart in u are
+// physically almost the same point up there, so a fixed step turns a small height difference into
+// an enormous slope and the deck tears into a radial fan centred on the pole. Widening the step
+// by 1/cos(latitude) keeps the samples a constant distance apart on the ground. The widened step
+// still has to stop somewhere, and 0.02 of the map is about seven degrees of longitude; past the
+// latitude where that binds -- roughly 87 -- the slope cannot be recovered at all and the deck
+// settles back onto the shell.
+export const CLOUD_RELIEF_MAX_STEP_UV = .02;
 // Slopes recovered this way are shallower than real convective walls, because the height comes
 // from a smoothed opacity field rather than from lidar. Exaggerating the slope restores the
 // relief the data implies without inventing structure that is not in it.
@@ -139,8 +147,18 @@ export const CLOUD_RENDER_GLSL = `
   // The deck's own surface normal, from the slope of its top. Equirectangular uv, so a step in u
   // covers cos(latitude) as much ground as the same step in v covers, and the east-west slope has
   // to be scaled accordingly or every deck would tilt harder toward the poles.
+  // How far apart in u the height samples must be taken at this latitude to stay a constant
+  // distance apart on the ground.
+  float cloudReliefStepU(float latitude){
+    return min(${glslFloat(CLOUD_RELIEF_SAMPLE_UV)}/max(cos(latitude),1e-3),${glslFloat(CLOUD_RELIEF_MAX_STEP_UV)});
+  }
+  // Zero where even the widened step has been clamped, so the pole gets no invented slope.
+  float cloudReliefPolarConfidence(float latitude){
+    return 1.0-smoothstep(${glslFloat(CLOUD_RELIEF_MAX_STEP_UV)}*0.6,${glslFloat(CLOUD_RELIEF_MAX_STEP_UV)},
+      ${glslFloat(CLOUD_RELIEF_SAMPLE_UV)}/max(cos(latitude),1e-3));
+  }
   vec3 cloudReliefNormal(vec3 surfaceNormal,float heightEast,float heightWest,float heightNorth,float heightSouth,float latitude){
-    float eastKm=2.0*PI*${glslFloat(EARTH_RADIUS_KM)}*max(cos(latitude),.08)*${glslFloat(CLOUD_RELIEF_SAMPLE_UV)};
+    float eastKm=2.0*PI*${glslFloat(EARTH_RADIUS_KM)}*max(cos(latitude),1e-3)*cloudReliefStepU(latitude);
     float northKm=PI*${glslFloat(EARTH_RADIUS_KM)}*${glslFloat(CLOUD_RELIEF_SAMPLE_UV)};
     float slopeEast=(heightEast-heightWest)/(2.0*eastKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
     float slopeNorth=(heightNorth-heightSouth)/(2.0*northKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
