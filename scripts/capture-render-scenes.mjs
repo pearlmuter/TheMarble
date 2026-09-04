@@ -22,6 +22,9 @@ import { ORBITAL_GOLDEN_SCENES } from '../src/orbital-golden-scenes.js';
 const WIDTH = 1600;
 const HEIGHT = 1000;
 const DEFAULT_SCENES = ['daylight', 'terminator', 'sunrise-limb', 'crescent-earth'];
+// A local vite server is quick. Production is not: the Milky Way alone is 47 MB, so a cold
+// fetch of the deployed site needs far longer than a dev build ever does.
+const DEFAULT_READY_TIMEOUT_MS = 180_000;
 
 // ---------------------------------------------------------------- PNG decoding
 
@@ -263,7 +266,7 @@ async function startViteServer(port) {
   return { server, url };
 }
 
-async function captureScene({ browser, baseUrl, sceneId, outputDirectory }) {
+async function captureScene({ browser, baseUrl, sceneId, outputDirectory, readyTimeoutMs }) {
   const scene = ORBITAL_GOLDEN_SCENES.find(entry => entry.id === sceneId);
   if (!scene) throw new Error(`Unknown golden scene ${sceneId}`);
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
@@ -276,7 +279,7 @@ async function captureScene({ browser, baseUrl, sceneId, outputDirectory }) {
     const url = new URL(baseUrl);
     url.searchParams.set('golden', sceneId);
     await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-    await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: 180_000 });
+    await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: readyTimeoutMs });
     // Textures stream in after the loading marker clears, and the camera damps into pose.
     await page.waitForTimeout(3_000);
     const screenshot = await page.screenshot({ type: 'png' });
@@ -337,6 +340,7 @@ async function main() {
   const outputDirectory = resolve(options.out ?? 'artifacts/render-capture');
   await mkdir(outputDirectory, { recursive: true });
   const sceneIds = (options.scenes ?? DEFAULT_SCENES.join(',')).split(',').filter(Boolean);
+  const readyTimeoutMs = Number(options['ready-timeout'] ?? DEFAULT_READY_TIMEOUT_MS);
 
   let vite = null;
   let baseUrl = options.url;
@@ -353,7 +357,7 @@ async function main() {
   const scenes = [];
   try {
     for (const sceneId of sceneIds) {
-      const report = await captureScene({ browser, baseUrl, sceneId, outputDirectory });
+      const report = await captureScene({ browser, baseUrl, sceneId, outputDirectory, readyTimeoutMs });
       scenes.push(report);
       console.log(formatScene(report));
     }
