@@ -242,8 +242,45 @@ height discontinuities, because the geometry cannot represent the field's detail
 increasing cost: smooth the displacement, raise the mesh density, or stop displacing geometry and
 carry the height as parallax in the fragment shader.
 
+## What it cost, and getting it back
+
+The upgrade was reported making a laptop hot. It was: measured headlessly at a resolution high
+enough to be GPU-bound rather than vsync-capped, a frame went from **11 ms before the upgrade to
+24.2 ms after**. Two things were responsible, and neither was the physics.
+
+| Change | Frame at 3200x2000 on a 2x display |
+| --- | ---: |
+| Before the upgrade (`bd3056c`) | 11.0 ms |
+| As first shipped | 24.2 ms |
+| Hoisting the constant transmittance out of the march | 23.8 ms |
+| Dropping 4x MSAA on the half-float target | 14.0 ms |
+| Twelve march steps instead of thirty-two | **14.7 ms** |
+
+**Multisampling was the larger half, and it was buying nothing.** Carrying the canvas's
+antialiasing over to the new half-float target looked like the obvious thing to do when the
+scene stopped being drawn to the canvas. But multisampling a full-screen float target is
+expensive, and against captures it produced an image indistinguishable from none — at the
+Earth's limb *and* at the Moon's. The reason is the upgrade itself: the atmosphere shell now
+draws a soft gradient over the silhouette that used to be a hard edge, so the thing that needed
+antialiasing stopped being one.
+
+**The step count was never the problem, which is the third correction to the original
+diagnosis.** Twelve importance-sampled steps match thirty-two to within 0.16 of an sRGB level on
+average, with 0.04% of pixels differing by more than two. Thirty-two was three times the cost of
+ten for no visible return. What mattered was always where the samples go, not how many there
+are — the very thing this module was written to fix, applied to itself a step too late.
+
+All eight golden scenes were re-diffed after the optimisation: mean difference below 0.16 of a
+level, fewer than 0.15% of pixels differing by more than three, with the isolated maxima at hard
+edges where multisampling used to blend.
+
+Roughly a third of the remaining increase over baseline is the physics that was added — multiple
+scattering, sky irradiance, aerial perspective, cloud relief — and that part is real work for a
+real return.
+
 ## Session log
 
+- **2026-09-04** — Recovered two thirds of the frame-cost regression the upgrade introduced; see above. Golden scenes regenerated.
 - **2026-09-04** — Exercised the retrieved-physics and cryosphere paths behind fixtures; see above. Merged as #22 and deployed.
 - **2026-09-04** — Stages 5, 6, 7, 8. Golden scenes in `docs/golden-scenes/` regenerated against the new render; the checks each one guards are unchanged.
 - **2026-09-04** — Stages 3, 4, and the night-lights wash fix.

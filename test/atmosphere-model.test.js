@@ -271,8 +271,14 @@ test('the importance march puts most of its samples in the bottom scale height',
     const b = marchDistance((index + 1) / ATMOSPHERE_MARCH_STEPS, t0, t1, t1);
     return (a + b) / 2;
   }).filter(value => value >= bottom).length;
+  // As a fraction, so the assertion stays true of the distribution rather than of one step
+  // count: the curve puts roughly two fifths of its samples in the bottom scale height, where a
+  // uniform march puts one tenth.
   assert.equal(uniform, 1);
-  assert.ok(importance >= 12, `only ${importance} of ${ATMOSPHERE_MARCH_STEPS} samples reached the dense air`);
+  assert.ok(
+    importance / ATMOSPHERE_MARCH_STEPS > 0.3,
+    `only ${importance} of ${ATMOSPHERE_MARCH_STEPS} samples reached the dense air`,
+  );
 });
 
 test('closest approach is where the ray comes nearest the centre, clamped into the segment', () => {
