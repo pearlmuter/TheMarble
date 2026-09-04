@@ -237,3 +237,100 @@ class AdaptedProductDescription(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PolarStereographicGridFiles(unittest.TestCase):
+    """The IMS analysis ships as a square polar grid whose corners fall off the
+    projection disc, with the latitude and longitude of every cell in separate
+    raw binary files."""
+
+    def test_a_declared_binary_grid_decodes_at_its_stated_shape_and_dtype(self):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        expected = np.arange(12, dtype="<f4").reshape(3, 4)
+        path = directory / "grid.bin"
+        path.write_bytes(expected.tobytes())
+        loaded = adapter._load_grid({"path": str(path), "dtype": "<f4", "shape": [3, 4]})
+        self.assertEqual(loaded.shape, (3, 4))
+        np.testing.assert_allclose(loaded, expected)
+
+    def test_a_gzipped_binary_grid_decodes_the_same_way(self):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        expected = np.arange(6, dtype="<f4").reshape(2, 3)
+        path = directory / "grid.bin.gz"
+        with gzip.open(path, "wb") as handle:
+            handle.write(expected.tobytes())
+        loaded = adapter._load_grid({"path": str(path), "dtype": "<f4", "shape": [2, 3]})
+        np.testing.assert_allclose(loaded, expected)
+
+    def test_a_binary_grid_that_is_not_the_declared_size_is_refused(self):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "grid.bin"
+        path.write_bytes(np.arange(5, dtype="<f4").tobytes())
+        with self.assertRaises(ValueError):
+            adapter._load_grid({"path": str(path), "dtype": "<f4", "shape": [3, 4]})
+
+    def test_cells_off_the_projection_disc_are_dropped_rather_than_binned_somewhere(self):
+        # The corners of the IMS square carry no coordinate at all. Clipping a
+        # NaN would deposit them in a real cell and invent an analysis there.
+        latitudes = np.array([80.0, np.nan, 10.0], dtype=np.float64)
+        longitudes = np.array([-170.0, np.nan, 170.0], dtype=np.float64)
+        values = np.array([4, 4, 2], dtype=np.uint8)
+        result = adapter.resample_scattered(values, latitudes, longitudes, width=4, height=4, aggregate="mode")
+        self.assertEqual(result[0, 0], 4)
+        self.assertEqual(result[1, 3], 2)
+        # Nothing anywhere else, and in particular nothing at the clip corner.
+        self.assertEqual(int((result > 0).sum()), 2)
+
+    def test_a_dropped_coordinate_does_not_disturb_an_averaged_source(self):
+        latitudes = np.array([80.0, np.nan], dtype=np.float64)
+        longitudes = np.array([-170.0, np.nan], dtype=np.float64)
+        values = np.array([0.5, 0.9], dtype=np.float32)
+        result = adapter.resample_scattered(values, latitudes, longitudes, width=4, height=4, aggregate="mean")
+        self.assertAlmostEqual(float(result[0, 0]), 0.5, places=6)
+        self.assertEqual(int((result > 0).sum()), 1)
+
+
+class ForwardBinningGaps(unittest.TestCase):
+    """A source coarser than the target leaves cells that no source cell landed
+    in. Closing them is nearest-neighbour upsampling of the delivered analysis,
+    not new information -- but it must respect the shape of the globe."""
+
+    def test_a_cell_no_source_landed_in_takes_its_nearest_neighbour(self):
+        grid = np.array([[0, 0, 0], [0, 4, 0], [0, 0, 0]], dtype=np.uint8)
+        filled = adapter.close_resampling_gaps(grid, rounds=1)
+        self.assertTrue(np.all(filled == 4))
+
+    def test_an_observed_cell_is_never_overwritten(self):
+        grid = np.array([[2, 0], [0, 4]], dtype=np.uint8)
+        filled = adapter.close_resampling_gaps(grid, rounds=2)
+        self.assertEqual(filled[0, 0], 2)
+        self.assertEqual(filled[1, 1], 4)
+
+    def test_longitude_wraps_around_the_seam_because_the_globe_does(self):
+        grid = np.array([[4, 0, 0, 0]], dtype=np.uint8)
+        filled = adapter.close_resampling_gaps(grid, rounds=1)
+        # The last column touches the first across the antimeridian.
+        self.assertEqual(filled[0, 1], 4)
+        self.assertEqual(filled[0, 3], 4)
+
+    def test_latitude_never_wraps_because_the_poles_are_not_neighbours(self):
+        # Arctic sea ice must never leak onto Antarctica.
+        grid = np.zeros((4, 2), dtype=np.uint8)
+        grid[0, :] = 3
+        filled = adapter.close_resampling_gaps(grid, rounds=1)
+        self.assertTrue(np.all(filled[1, :] == 3))
+        self.assertTrue(np.all(filled[3, :] == 0))
+
+    def test_filling_is_bounded_so_a_hemispheric_source_stays_hemispheric(self):
+        grid = np.zeros((16, 4), dtype=np.uint8)
+        grid[:8, :] = 2
+        filled = adapter.close_resampling_gaps(grid, rounds=2)
+        self.assertTrue(np.all(filled[:10, :] == 2))
+        self.assertTrue(np.all(filled[10:, :] == 0))
+
+    def test_a_grid_with_nothing_in_it_is_left_alone(self):
+        grid = np.zeros((3, 3), dtype=np.uint8)
+        np.testing.assert_array_equal(adapter.close_resampling_gaps(grid, rounds=3), grid)

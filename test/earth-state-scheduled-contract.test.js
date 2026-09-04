@@ -14,9 +14,10 @@ test('scheduled publication polls for clouds every ten minutes and for the cryos
   // so the real cadence comes from the Cloudflare Worker and this is a backstop.
   assert.deepEqual(clouds.on.schedule, [{ cron: '5 * * * *' }]);
   assert.ok('workflow_dispatch' in clouds.on, 'the Worker drives the feed through workflow_dispatch');
-  // The daily producer stays manual until a cryosphere source endpoint exists;
-  // a schedule would fail every run against sources that serve no values.
-  assert.equal(cryosphere.on.schedule, undefined);
+  // The daily producer now has a source that serves values: NSIDC posts the IMS
+  // analysis for a day during the following afternoon UTC, so it runs after that
+  // and asks for three candidate days to absorb a late posting.
+  assert.deepEqual(cryosphere.on.schedule, [{ cron: '20 15 * * *' }]);
   assert.ok('workflow_dispatch' in cryosphere.on);
   // One publication group: the hourly and daily producers must never race for latest.json.
   assert.equal(clouds.concurrency.group, 'earth-state-publication');

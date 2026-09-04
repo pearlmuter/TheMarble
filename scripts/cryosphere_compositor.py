@@ -104,9 +104,25 @@ def _texture(fraction, source):
 
 
 def compose_files(arguments):
+    # No global analysis has a public endpoint that serves values. When none is
+    # supplied the globe outside IMS is not observed rather than filled, which is
+    # what a NaN fallback means to compose_cryosphere: SOURCE_NONE, no
+    # confidence, and nothing drawn.
+    if arguments.fallback_snow is None or arguments.fallback_sea_ice is None:
+        if arguments.ims is None:
+            raise ValueError("Without a global fallback the IMS analysis is the only possible source")
+        ims = _load_array(arguments.ims, "IMS classes")
+        unobserved = np.full(ims.shape, np.nan, dtype=np.float32)
+        fallback_snow = unobserved if arguments.fallback_snow is None else _load_array(arguments.fallback_snow, "global fallback snow")
+        fallback_sea_ice = unobserved if arguments.fallback_sea_ice is None else _load_array(arguments.fallback_sea_ice, "global fallback sea ice")
+        return _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice)
     fallback_snow = _load_array(arguments.fallback_snow, "global fallback snow")
     fallback_sea_ice = _load_array(arguments.fallback_sea_ice, "global fallback sea ice")
     ims = np.zeros(fallback_snow.shape, dtype=np.uint8) if arguments.ims is None else _load_array(arguments.ims, "IMS classes")
+    return _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice)
+
+
+def _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice):
     viirs = None if arguments.viirs_snow is None else _load_array(arguments.viirs_snow, "VIIRS snow")
     quality = None if arguments.viirs_quality is None else _load_array(arguments.viirs_quality, "VIIRS quality")
     snow, sea_ice, snow_source, sea_ice_source = compose_cryosphere(
@@ -120,9 +136,18 @@ def compose_files(arguments):
 
     def coverage(fallback):
         available = np.isfinite(fallback)
+        observed = (ims != 0) | available
+        # The extent genuinely covered, not the extent of the grid: an IMS-only
+        # analysis is a hemisphere and must not claim to be a globe.
+        rows = np.flatnonzero(observed.any(axis=1))
+        height = ims.shape[0]
+        extent = [-90.0, 90.0] if rows.size == 0 else [
+            round(90.0 - float(rows[-1] + 1) * (180.0 / height), 6),
+            round(90.0 - float(rows[0]) * (180.0 / height), 6),
+        ]
         return {
-            "observedFraction": weighted_fraction((ims != 0) | available),
-            "latitudeRange": [-90, 90],
+            "observedFraction": weighted_fraction(observed),
+            "latitudeRange": extent,
             "fallbackFraction": weighted_fraction((ims == 0) & available),
         }
 
@@ -144,8 +169,8 @@ def compose_files(arguments):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ims")
-    parser.add_argument("--fallback-snow", required=True)
-    parser.add_argument("--fallback-sea-ice", required=True)
+    parser.add_argument("--fallback-snow")
+    parser.add_argument("--fallback-sea-ice")
     parser.add_argument("--viirs-snow")
     parser.add_argument("--viirs-quality")
     parser.add_argument("--snow", required=True)

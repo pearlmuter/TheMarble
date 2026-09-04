@@ -4,10 +4,12 @@ name: Earth state daily cryosphere
 # providers a few hours later and advances the published state at most once per
 # validated UTC analysis day. It shares one concurrency group with the hourly
 # cloud producer so the two never race for `latest.json`.
-# No daily cryosphere source has a working public endpoint yet, so a schedule
-# would fail every run. Re-enable the cron once GMASI or an Earthdata-backed
-# product is configured; the pipeline below is otherwise ready.
+# NSIDC posts the IMS analysis for a day during the following afternoon UTC --
+# the 2026-09-03 file carried Last-Modified 13:10Z -- so this runs after that and
+# asks for three candidate days, which absorbs a late or missing posting.
 on:
+  schedule:
+    - cron: '20 15 * * *'
   workflow_dispatch:
 
 permissions:

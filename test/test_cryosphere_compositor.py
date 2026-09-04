@@ -84,3 +84,31 @@ class DailyCryosphereFixtures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NorthernOnlyAnalysis(unittest.TestCase):
+    """No global analysis has a public endpoint that serves values, so IMS may be
+    the only source. The globe outside it is unobserved, not bare ground."""
+
+    def test_without_a_global_fallback_only_ims_is_claimed_as_observed(self):
+        ims = np.zeros((8, 4), dtype=np.uint8)
+        ims[:4, :] = 2
+        ims[0, :] = 4
+        unobserved = np.full(ims.shape, np.nan, dtype=np.float32)
+        snow, sea_ice, snow_source, sea_ice_source = cryosphere.compose_cryosphere(ims, unobserved, unobserved)
+
+        self.assertTrue(np.all(snow[0, :] == 1.0))
+        self.assertTrue(np.all(snow[4:, :] == 0.0))
+        self.assertTrue(np.all(snow_source[:4, :] == cryosphere.SOURCE_IMS))
+        # Nothing is claimed south of the analysis.
+        self.assertTrue(np.all(snow_source[4:, :] == cryosphere.SOURCE_NONE))
+        self.assertTrue(np.all(sea_ice_source[4:, :] == cryosphere.SOURCE_NONE))
+
+    def test_unobserved_cells_carry_no_confidence(self):
+        ims = np.zeros((4, 2), dtype=np.uint8)
+        ims[:2, :] = 2
+        unobserved = np.full(ims.shape, np.nan, dtype=np.float32)
+        _, _, snow_source, _ = cryosphere.compose_cryosphere(ims, unobserved, unobserved)
+        texture = cryosphere._texture(np.zeros(ims.shape, dtype=np.float32), snow_source)
+        self.assertTrue(np.all(texture[2:, :, 1] == 0.0))
+        self.assertTrue(np.all(texture[:2, :, 1] == 1.0))

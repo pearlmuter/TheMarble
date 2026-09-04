@@ -8,20 +8,35 @@
   "sources": [
     {
       "product": "ims-snow-ice",
-      "version": "usnic-ims-1km-v1.3",
-      "attribution": "U.S. National Ice Center IMS",
+      "version": "usnic-ims-24km-v1.3",
+      "attribution": "U.S. National Ice Center IMS, distributed by NSIDC (G02156)",
       "required": false,
-      "urlTemplate": null,
+      "urlTemplate": "https://noaadata.apps.nsidc.org/NOAA/G02156/24km/{YYYY}/ims{YYYY}{DDD}_00UTC_24km_v1.3.asc.gz",
       "urlTemplateEnv": "THEMARBLE_IMS_URL_TEMPLATE",
-      "extension": ".tif",
+      "extension": ".asc.gz",
       "input": {
-        "kind": "regular",
-        "bounds": {
-          "latitude_from": 90.0,
-          "latitude_to": 0.0,
-          "longitude_from": -180.0,
-          "longitude_to": 180.0,
-          "north_up": true
+        "kind": "scattered",
+        "aggregate": "mode",
+        "closeGapRounds": 4,
+        "grids": {
+          "latitudes": {
+            "url": "https://noaadata.apps.nsidc.org/NOAA/G02156/metadata/imslat_24km.bin.gz",
+            "extension": ".bin.gz",
+            "dtype": "<f4",
+            "shape": [
+              1024,
+              1024
+            ]
+          },
+          "longitudes": {
+            "url": "https://noaadata.apps.nsidc.org/NOAA/G02156/metadata/imslon_24km.bin.gz",
+            "extension": ".bin.gz",
+            "dtype": "<f4",
+            "shape": [
+              1024,
+              1024
+            ]
+          }
         }
       },
       "semantics": {
@@ -34,7 +49,7 @@
           4
         ]
       },
-      "reason": "The NOAA usnic_ims_snow_ice_1km ImageServer returns rendered symbology, not the documented 0-4 class grid: a 2026-08-30 export gave 117 distinct values in 0-242, and renderingRule={\"rasterFunction\":\"None\"} did not change that. Raw classes come from the NSIDC G02156 ASCII archive, which this adapter reads but which needs the polar-stereographic grid files."
+      "reason": "The NOAA usnic_ims_snow_ice_1km ImageServer returns rendered symbology, not the documented 0-4 class grid, and is not used. The NSIDC G02156 archive serves the analysis itself over public HTTPS with no authentication: verified 2026-09-04 against ims2026246, which decodes to exactly the documented classes. It is a polar stereographic square whose corners fall off the projection disc, so it is reprojected through the separately published latitude and longitude grids. IMS covers the Northern Hemisphere only."
     },
     {
       "product": "gmasi-snow",

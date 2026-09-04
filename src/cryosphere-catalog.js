@@ -78,7 +78,7 @@ export function buildCryosphereCatalog({ products, retrievedAt }) {
   });
 
   const selection = selectDailyCryosphere({ candidates: retained, retrievedAt });
-  const contingency = CONTINGENCY_PRODUCTS.has(selection.analysis.globalFallback.snow.product) ? 'amsr2' : undefined;
+  const contingency = CONTINGENCY_PRODUCTS.has(selection.analysis.globalFallback?.snow?.product) ? 'amsr2' : undefined;
   return {
     schemaVersion: 1,
     retrievedAt,

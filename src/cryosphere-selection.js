@@ -80,18 +80,24 @@ export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedVa
     byDay.set(day, products);
   }
 
-  const completeDays = [...byDay.entries()]
-    .filter(([, products]) => findGlobalPair(products) !== undefined)
+  // A whole globe outranks a newer half of one, so a day carrying a global pair
+  // always wins. Failing that, IMS alone still publishes the Northern
+  // Hemisphere: no global analysis has a public endpoint that serves values, and
+  // requiring one meant nothing was ever published at all.
+  const hasNorthern = products => (products.get('ims-snow-ice') ?? []).some(isNorthernCoverage);
+  const usableDays = [...byDay.entries()]
+    .filter(([, products]) => findGlobalPair(products) !== undefined || hasNorthern(products))
     .sort(([left], [right]) => left.localeCompare(right));
-  const selected = completeDays.at(-1);
-  if (!selected) throw new Error('Cryosphere discovery did not find a complete global cryosphere day');
+  const selected = usableDays.filter(([, products]) => findGlobalPair(products) !== undefined).at(-1)
+    ?? usableDays.at(-1);
+  if (!selected) throw new Error('Cryosphere discovery did not find a usable cryosphere day');
 
   const [day, products] = selected;
   const validAt = `${day}T00:00:00Z`;
   const northernPrimary = newest((products.get('ims-snow-ice') ?? []).filter(isNorthernCoverage));
-  const [globalSnowProduct, globalSeaIceProduct] = findGlobalPair(products);
-  const globalSnow = newest(products.get(globalSnowProduct).filter(isGlobalCoverage));
-  const globalSeaIce = newest(products.get(globalSeaIceProduct).filter(isGlobalCoverage));
+  const globalPair = findGlobalPair(products);
+  const globalSnow = globalPair && newest(products.get(globalPair[0]).filter(isGlobalCoverage));
+  const globalSeaIce = globalPair && newest(products.get(globalPair[1]).filter(isGlobalCoverage));
   const viirs = newest(usable.filter(candidate => candidate.product === 'viirs-snow'
     && typeof candidate.qualityHref === 'string' && candidate.qualityHref.trim() !== ''
     && retrievedMs - Date.parse(candidate.validAt) <= MAX_VIIRS_AGE_MS
@@ -102,12 +108,14 @@ export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedVa
     retrievedAt: new Date(retrievedMs).toISOString().replace('.000Z', 'Z'),
     analysis: {
       ...(northernPrimary ? { northernPrimary } : {}),
-      globalFallback: { snow: globalSnow, seaIce: globalSeaIce },
+      ...(globalSnow ? { globalFallback: { snow: globalSnow, seaIce: globalSeaIce } } : {}),
     },
     ...(viirs ? { refinement: viirs } : {}),
-    fallback: northernPrimary
-      ? { ims: false }
-      : { ims: true, reason: `IMS unavailable for the selected day; global ${globalSnow.product.split('-', 1)[0].toUpperCase()} analysis covers the Northern Hemisphere.` },
+    fallback: globalSnow
+      ? (northernPrimary
+        ? { ims: false }
+        : { ims: true, reason: `IMS unavailable for the selected day; global ${globalSnow.product.split('-', 1)[0].toUpperCase()} analysis covers the Northern Hemisphere.` })
+      : { ims: false, reason: 'No global analysis is configured, so IMS covers the Northern Hemisphere and the Southern Hemisphere is not observed.' },
     publish: !lastPublishedValidAt || Date.parse(validAt) > requireTimestamp(lastPublishedValidAt, 'last published validAt'),
   };
 }

@@ -96,6 +96,16 @@ def resample_scattered(values, latitudes, longitudes, width, height, aggregate):
     longitudes = np.asarray(longitudes, dtype=np.float64).reshape(-1)
     if not (values.shape == latitudes.shape == longitudes.shape):
         raise ValueError("Scattered provider values, latitudes, and longitudes must share one shape")
+    # The IMS grid is a square laid over a polar projection, so its corners fall
+    # off the disc entirely and carry no coordinate. Clipping a NaN would deposit
+    # those cells in a real target cell and invent an analysis there, so they are
+    # dropped before any binning.
+    located = np.isfinite(latitudes) & np.isfinite(longitudes)
+    values = values[located]
+    latitudes = latitudes[located]
+    longitudes = longitudes[located]
+    if values.size == 0:
+        raise ValueError("Scattered provider delivered no located cells")
     if np.any(np.abs(latitudes) > 90.0) or np.any(np.abs(longitudes) > 180.0):
         raise ValueError("Scattered provider coordinates fall outside the globe")
 
@@ -229,7 +239,26 @@ def read_raster(path):
     return array
 
 
+def read_binary_grid(path, dtype, shape):
+    """Read a raw binary coordinate grid, such as the IMS latitude and longitude
+    files, which ship as flat little-endian floats with no header of any kind."""
+    path = Path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rb") as handle:
+        values = np.frombuffer(handle.read(), dtype=np.dtype(dtype))
+    expected = int(np.prod(shape))
+    if values.size != expected:
+        raise ValueError(f"{path} holds {values.size} values, not the declared {expected}")
+    return values.reshape(tuple(int(extent) for extent in shape))
+
+
 def _load_grid(path):
+    # A declared binary grid states its own dtype and shape, because a headerless
+    # file cannot be asked for either.
+    if isinstance(path, dict):
+        if "dtype" in path or "shape" in path:
+            return read_binary_grid(path["path"], path.get("dtype", "<f4"), path["shape"])
+        return _load_grid(path["path"])
     path = Path(path)
     suffixes = [suffix.lower() for suffix in path.suffixes]
     if ".npy" in suffixes:
@@ -241,11 +270,50 @@ def _load_grid(path):
     raise ValueError(f"Unsupported provider input format: {path}")
 
 
+def close_resampling_gaps(values, rounds):
+    """Fill target cells that forward binning left empty, from their nearest
+    binned neighbour.
+
+    A 24 km analysis binned onto a ~10 km grid lands in roughly one target cell
+    in five, so the result is speckled even where the provider covered
+    everything. Closing those holes is nearest-neighbour upsampling of the
+    delivered analysis rather than new information, and it is bounded: after
+    `rounds` steps nothing has travelled more than that many cells, so a
+    hemispheric source stays hemispheric.
+
+    Longitude wraps, because the grid meets itself at the antimeridian.
+    Latitude does not, because the poles are not neighbours and Arctic ice must
+    never leak onto Antarctica.
+    """
+    grid = np.asarray(values).copy()
+    for _ in range(max(0, int(rounds))):
+        empty = grid == 0
+        if not empty.any():
+            break
+        candidate = np.zeros_like(grid)
+        for vertical in (-1, 0, 1):
+            for horizontal in (-1, 0, 1):
+                if vertical == 0 and horizontal == 0:
+                    continue
+                shifted = np.roll(grid, horizontal, axis=1)
+                if vertical != 0:
+                    rolled = np.roll(shifted, vertical, axis=0)
+                    # A row shifted in from beyond a pole is not a neighbour.
+                    if vertical > 0:
+                        rolled[:vertical, :] = 0
+                    else:
+                        rolled[vertical:, :] = 0
+                    shifted = rolled
+                candidate = np.where((candidate == 0) & (shifted > 0), shifted, candidate)
+        grid = np.where(empty, candidate, grid)
+    return grid
+
+
 def _resample(source, plan, width, height):
     if plan["kind"] == "regular":
         return resample_regular(source, plan.get("bounds"), width, height, fill=plan.get("fill", 0))
     if plan["kind"] == "scattered":
-        return resample_scattered(
+        binned = resample_scattered(
             source,
             _load_grid(plan["latitudes"]),
             _load_grid(plan["longitudes"]),
@@ -253,6 +321,7 @@ def _resample(source, plan, width, height):
             height,
             plan.get("aggregate", "mode"),
         )
+        return close_resampling_gaps(binned, plan.get("closeGapRounds", 0))
     raise ValueError(f"Unsupported provider input kind: {plan['kind']}")
 
 

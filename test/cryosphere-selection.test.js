@@ -122,7 +122,7 @@ test('a nominal global pair must actually cover both hemispheres at useful compl
       candidate('gmasi-sea-ice', '2026-08-25T00:00:00Z', { coverage: { latitudeRange: [-90, 90], observedFraction: .89 } }),
     ],
     retrievedAt: '2026-08-26T03:00:00Z',
-  }), /complete global cryosphere day/i);
+  }), /did not find a usable cryosphere day/i);
 });
 
 test('daily products are grouped by their UTC date rather than a source timezone spelling', () => {
@@ -161,7 +161,7 @@ test('selection rejects stale or future-dated source products', () => {
       ],
       retrievedAt: '2026-08-26T03:00:00Z',
     }),
-    /complete global cryosphere day/i,
+    /did not find a usable cryosphere day/i,
   );
 });
 
@@ -178,4 +178,63 @@ test('the operational 2 km GMASI global analysis is preferred when both document
 
   assert.equal(selected.analysis.globalFallback.snow.product, 'gmasi-snow');
   assert.equal(selected.analysis.globalFallback.seaIce.product, 'gmasi-sea-ice');
+});
+
+const NORTHERN = { latitudeRange: [-0.4, 90], observedFraction: .5 };
+
+test('IMS alone publishes the Northern Hemisphere rather than nothing at all', () => {
+  // No global analysis has a public endpoint that serves values, so requiring a
+  // global pair meant no cryosphere was ever published. A hemisphere honestly
+  // labelled beats an empty globe.
+  const selection = selectDailyCryosphere({
+    candidates: [candidate('ims-snow-ice', '2026-09-03T00:00:00Z', { coverage: NORTHERN })],
+    retrievedAt: '2026-09-04T06:00:00Z',
+  });
+
+  assert.equal(selection.validAt, '2026-09-03T00:00:00Z');
+  assert.equal(selection.analysis.northernPrimary.product, 'ims-snow-ice');
+  assert.equal(selection.analysis.globalFallback, undefined);
+  assert.equal(selection.fallback.ims, false);
+  assert.match(selection.fallback.reason, /Southern Hemisphere is not observed/i);
+  assert.equal(selection.publish, true);
+});
+
+test('a global pair is still preferred over IMS alone when one exists', () => {
+  const selection = selectDailyCryosphere({
+    candidates: [
+      candidate('ims-snow-ice', '2026-09-03T00:00:00Z', { coverage: NORTHERN }),
+      candidate('gmasi-snow', '2026-09-03T00:00:00Z'),
+      candidate('gmasi-sea-ice', '2026-09-03T00:00:00Z'),
+    ],
+    retrievedAt: '2026-09-04T06:00:00Z',
+  });
+
+  assert.equal(selection.analysis.globalFallback.snow.product, 'gmasi-snow');
+  assert.equal(selection.analysis.northernPrimary.product, 'ims-snow-ice');
+  assert.doesNotMatch(selection.fallback.reason ?? '', /not observed/i);
+});
+
+test('a day with a global pair outranks a later day that has only IMS', () => {
+  // Completeness beats recency: a whole globe one day older is the better state.
+  const selection = selectDailyCryosphere({
+    candidates: [
+      candidate('ims-snow-ice', '2026-09-03T00:00:00Z', { coverage: NORTHERN }),
+      candidate('gmasi-snow', '2026-09-02T00:00:00Z'),
+      candidate('gmasi-sea-ice', '2026-09-02T00:00:00Z'),
+      candidate('ims-snow-ice', '2026-09-02T00:00:00Z', { coverage: NORTHERN }),
+    ],
+    retrievedAt: '2026-09-04T06:00:00Z',
+  });
+
+  assert.equal(selection.validAt, '2026-09-02T00:00:00Z');
+  assert.equal(selection.analysis.globalFallback.snow.product, 'gmasi-snow');
+});
+
+test('an IMS delivery that does not cover the Northern Hemisphere publishes nothing', () => {
+  assert.throws(() => selectDailyCryosphere({
+    candidates: [candidate('ims-snow-ice', '2026-09-03T00:00:00Z', {
+      coverage: { latitudeRange: [40, 90], observedFraction: .2 },
+    })],
+    retrievedAt: '2026-09-04T06:00:00Z',
+  }), /did not find/i);
 });

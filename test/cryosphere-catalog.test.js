@@ -78,11 +78,17 @@ test('AMSR2 is accepted as a disclosed contingency when no current GMASI deliver
   assert.match(catalog.contingencyReason, /GMASI/);
 });
 
-test('an incomplete day refuses to become a catalog rather than publishing half an analysis', () => {
-  assert.throws(
-    () => build([product('ims-snow-ice', { coverage: northern }), product('gmasi-snow')]),
-    /complete global cryosphere day/,
-  );
+test('half a global pair is ignored rather than published as a global analysis', () => {
+  // Global snow without global sea ice is not a cryosphere. IMS still covers
+  // the Northern Hemisphere, and that is what gets published, disclosed as such.
+  const catalog = build([product('ims-snow-ice', { coverage: northern }), product('gmasi-snow')]);
+  assert.equal(catalog.selection.analysis.globalFallback, undefined);
+  assert.equal(catalog.selection.analysis.northernPrimary.product, 'ims-snow-ice');
+  assert.match(catalog.selection.fallback.reason, /Southern Hemisphere is not observed/i);
+});
+
+test('a day with neither a global pair nor northern IMS is refused', () => {
+  assert.throws(() => build([product('gmasi-snow')]), /did not find a usable cryosphere day/);
 });
 
 test('a missing IMS day is a disclosed fallback, not a failed catalog', () => {
@@ -147,4 +153,24 @@ test('sources that resolve to different days keep the archival contingency guard
   assert.deepEqual(catalog.candidates.map(candidate => candidate.product), ['gmasi-snow', 'gmasi-sea-ice']);
   assert.equal(catalog.excluded.length, 2);
   assert.match(catalog.excluded[0].reason, /older than the current 2026-08-30/);
+});
+
+test('the configured IMS endpoint is the archive that serves values, not the one that serves pictures', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const configuration = JSON.parse(await readFile(new URL('../config/cryosphere-sources.json', import.meta.url), 'utf8'));
+  const ims = configuration.sources.find(source => source.product === 'ims-snow-ice');
+
+  assert.ok(ims.urlTemplate, 'IMS has no configured endpoint');
+  // #17 withdrew the ImageServer because it returns rendered symbology. The
+  // NSIDC archive serves the documented class grid itself.
+  assert.doesNotMatch(ims.urlTemplate, /ImageServer|arcgis|WMS|GetMap/i);
+  assert.match(ims.urlTemplate, /noaadata\.apps\.nsidc\.org\/NOAA\/G02156\//);
+  // A polar square needs its coordinates, and a headerless grid needs its shape.
+  assert.equal(ims.input.kind, 'scattered');
+  for (const axis of ['latitudes', 'longitudes']) {
+    assert.ok(ims.input.grids[axis].url);
+    assert.ok(Array.isArray(ims.input.grids[axis].shape));
+    assert.ok(ims.input.grids[axis].dtype);
+  }
+  assert.deepEqual(ims.semantics.allowed, [0, 1, 2, 3, 4]);
 });

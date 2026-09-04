@@ -79,7 +79,25 @@ async function run(command, args) {
   });
 }
 
-async function retrieveCandidate(descriptor, day, values, stage, retrievedAt) {
+/**
+ * A scattered source states where each of its cells is in separately published
+ * coordinate grids. They never change -- the IMS pair has not moved since 2015 --
+ * so they are fetched once and shared by every candidate day.
+ */
+async function resolveScatteredGrids(grids, stage, cache) {
+  const resolved = {};
+  for (const [axis, grid] of Object.entries(grids)) {
+    if (!cache.has(grid.url)) {
+      const path = join(stage, `${axis}${grid.extension ?? '.bin.gz'}`);
+      await download(grid.url, {}, path);
+      cache.set(grid.url, path);
+    }
+    resolved[axis] = { path: cache.get(grid.url), dtype: grid.dtype, shape: grid.shape };
+  }
+  return resolved;
+}
+
+async function retrieveCandidate(descriptor, day, values, stage, retrievedAt, gridCache) {
   const url = resolveUrl(descriptor, values);
   if (!url) return { skipped: `${descriptor.product} has no configured endpoint (${descriptor.urlTemplateEnv}): ${descriptor.reason ?? 'no public default exists'}` };
   const headers = authorizationHeader(descriptor);
@@ -95,6 +113,15 @@ async function retrieveCandidate(descriptor, day, values, stage, retrievedAt) {
   const producedAt = lastModified && !Number.isNaN(Date.parse(lastModified))
     ? new Date(lastModified).toISOString().replace('.000Z', 'Z')
     : retrievedAt;
+  let input = { ...descriptor.input, path };
+  if (input.kind === 'scattered' && input.grids) {
+    const { grids, ...rest } = input;
+    try {
+      input = { ...rest, ...await resolveScatteredGrids(grids, stage, gridCache) };
+    } catch (error) {
+      return { skipped: `${key} coordinate grids failed: ${error.message ?? String(error)}` };
+    }
+  }
   const source = {
     product: descriptor.product,
     key,
@@ -104,7 +131,7 @@ async function retrieveCandidate(descriptor, day, values, stage, retrievedAt) {
     producedAt: Date.parse(producedAt) < Date.parse(`${day}T00:00:00Z`) ? retrievedAt : producedAt,
     version: descriptor.version,
     attribution: descriptor.attribution,
-    input: { ...descriptor.input, path },
+    input,
     semantics: structuredClone(descriptor.semantics),
   };
 
@@ -140,9 +167,10 @@ async function main() {
   // delivered is decided from its adapted pixels, never from the day requested.
   const sources = [];
   const skipped = [];
+  const gridCache = new Map();
   for (const descriptor of configuration.sources) {
     for (const day of days) {
-      const result = await retrieveCandidate(descriptor, day, { ...templateValues(day, grid) }, stage, retrievedAt);
+      const result = await retrieveCandidate(descriptor, day, { ...templateValues(day, grid) }, stage, retrievedAt, gridCache);
       if (result.source) sources.push(result.source);
       else skipped.push(result.skipped);
     }

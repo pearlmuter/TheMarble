@@ -120,9 +120,14 @@ async function main() {
 
   const stage = await mkdtemp(join(tmpdir(), 'themarble-cryosphere-'));
   try {
+    // A global analysis is optional: when none is configured the compositor
+    // treats the globe outside IMS as unobserved rather than as bare ground.
+    const globalFallback = selection.analysis.globalFallback;
     const paths = {
-      fallbackSnow: await materialize(selection.analysis.globalFallback.snow, join(stage, 'global-snow.npy')),
-      fallbackSeaIce: await materialize(selection.analysis.globalFallback.seaIce, join(stage, 'global-sea-ice.npy')),
+      ...(globalFallback ? {
+        fallbackSnow: await materialize(globalFallback.snow, join(stage, 'global-snow.npy')),
+        fallbackSeaIce: await materialize(globalFallback.seaIce, join(stage, 'global-sea-ice.npy')),
+      } : {}),
       snow: join(stage, 'snow-cover.png'),
       seaIce: join(stage, 'sea-ice.png'),
       metadata: join(stage, 'cryosphere-metadata.json'),
@@ -136,20 +141,19 @@ async function main() {
     }
     const snowSources = [
       selection.analysis.northernPrimary,
-      selection.analysis.globalFallback.snow,
+      globalFallback?.snow,
       selection.refinement,
     ].filter(Boolean);
-    const seaIceSources = [selection.analysis.northernPrimary, selection.analysis.globalFallback.seaIce].filter(Boolean);
+    const seaIceSources = [selection.analysis.northernPrimary, globalFallback?.seaIce].filter(Boolean);
     const sources = [...new Set([...snowSources, ...seaIceSources])];
     const producedAt = sources.reduce((latest, source) => Date.parse(source.producedAt) > Date.parse(latest) ? source.producedAt : latest, sources[0].producedAt);
-    const fallback = selection.fallback.ims
-      ? selection.fallback.reason
-      : 'Global multisensor analysis fills the Southern Hemisphere and any IMS coverage gap.';
+    const fallback = selection.fallback.reason
+      ?? 'Global multisensor analysis fills the Southern Hemisphere and any IMS coverage gap.';
     const combinedIdentity = sourceIdentity(sources);
     const compositorArgs = [
       join(scriptDirectory, 'cryosphere_compositor.py'),
-      '--fallback-snow', paths.fallbackSnow,
-      '--fallback-sea-ice', paths.fallbackSeaIce,
+      ...(paths.fallbackSnow ? ['--fallback-snow', paths.fallbackSnow] : []),
+      ...(paths.fallbackSeaIce ? ['--fallback-sea-ice', paths.fallbackSeaIce] : []),
       '--snow', paths.snow,
       '--sea-ice', paths.seaIce,
       '--metadata', paths.metadata,
