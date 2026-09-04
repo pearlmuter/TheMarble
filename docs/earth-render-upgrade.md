@@ -20,23 +20,35 @@ as a *sticker on black* rather than a body with air on it. Specifically:
 - Flat, decal-like clouds with no relief.
 
 The root cause is not missing physics. The physics is present and its constants are right
-(Bruneton values, per `docs/atmospheric-lighting-research.md`). The problem is that the
-atmosphere integral is **under-resolved** and then only **half-applied**:
+(Bruneton values, per `docs/atmospheric-lighting-research.md`). What is wrong is how the
+integral is evaluated and how little of it reaches the surface.
 
-1. `src/main.ts` marched the atmosphere in **10 uniform steps** against a Rayleigh scale
-   height of `0.001258`. At the limb the chord is ~0.28, so each step spanned ~22 scale
-   heights. The bottom of the atmosphere — which holds nearly all the optical mass — fell
-   between samples.
-2. The surface shader received **extinction only** (`sunlight=exp(-vec3(.04,.07,.15)*airMass)`).
-   Extinction darkens and reddens. Aerial perspective is extinction **plus** in-scattered
-   airlight, and airlight dominates at high airmass. Half the equation was present.
-3. The magenta limb was a sampling artefact, not physics: ozone (`BETA_O3`, green-absorbing
-   Chappuis band) sits in a *broad* 33 km triangular profile that 10 samples resolve fine,
-   while the *sharp* Rayleigh exponential that would put the blue back was missed. Green
-   killed, blue not replenished → magenta.
-4. The two hand-tuned fudges — `radiance*vec3(13.0,13.0,10.0)` and the synthetic
-   `exposedLimb` envelope — existed to compensate for #1. They must be removed **as** #1 is
-   fixed, not before and not after.
+**Corrected during stage 1.** The first diagnosis blamed the ten-step uniform outer march for
+starving the limb. Measurement says otherwise: on a tangent chord that march is accurate to
+within 0.1%, because tangent geometry stretches the density profile along the ray to a width of
+`sqrt(R*H)` ≈ 0.035 rather than the 0.00126 scale height, and ten samples resolve that fine.
+The real defects, measured, are:
+
+1. **The inner Sun march undercounted by a third.** Five uniform samples over the whole path to
+   the top of the atmosphere put the first sample 1.6 scale heights up, recovering only 68% of
+   the vertical column. Too little optical depth means too much transmittance.
+2. **The visible halo was not the physics at all.** It was `exposedLimb`, a synthetic envelope
+   with a 33.6 km e-fold. At this disc size 33.6 km is under two pixels, which is exactly the
+   3-pixel hard ring the harness measures. The real scattering underneath it was being scaled
+   by a hand-tuned `vec3(13.0,13.0,10.0)` that also reddens.
+3. **No multiple scattering.** Single scattering alone leaves a limb too dim to look right,
+   which is why the two fudges above had to exist. Removing them without adding multiple
+   scattering would just make it dim.
+4. **The surface receives extinction but no airlight.** `sunlight=exp(-vec3(.04,.07,.15)*airMass)`
+   only darkens and reddens. Aerial perspective is extinction **plus** in-scattered airlight,
+   and airlight dominates at high airmass. This is the biggest one for the ocean.
+5. **Ozone is resolved while the blue that should balance it is not.** Ozone (`BETA_OZONE`,
+   green-absorbing Chappuis) sits in a broad 30 km tent that any march resolves; combined with
+   the transmittance error above, green is removed more reliably than blue is replaced, which
+   is the magenta cast on the limb.
+
+A ground-hitting ray is the case where marching matters, and there the old uniform march
+undercounts by about 10%. The importance-sampled march lands within 2%.
 
 Also, independently of the atmosphere:
 
