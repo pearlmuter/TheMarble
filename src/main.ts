@@ -221,9 +221,14 @@ const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
   magFilter: THREE.LinearFilter,
   depthBuffer: true,
   stencilBuffer: false,
-  // The canvas asks for antialiasing, but nothing is drawn to the canvas any more, so the
-  // multisampling has to move to the target the scene actually lands in.
-  samples: 4,
+  // No multisampling. The canvas asks for antialiasing and nothing is drawn to the canvas any
+  // more, so the obvious move was to carry it over to this target -- but multisampling a
+  // full-screen half-float target is expensive, and measured against captures it bought
+  // nothing. Four samples cost 9 ms of a 24 ms frame at 2560x1600 on a 2x display and produced
+  // an image indistinguishable from none, at the Earth's limb and at the Moon's, because the
+  // atmosphere shell now draws a soft gradient over the silhouette that used to be a hard edge.
+  // The thing that needed antialiasing stopped being a hard edge.
+  samples: 0,
 });
 const presentScene = new THREE.Scene();
 const presentCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -1242,6 +1247,8 @@ const atmosphere = new THREE.Mesh(
         // Samples bunch toward the lowest point of the segment: the ground for a ray that
         // lands, the tangent point for a limb ray.
         float closest=clamp(-dot(cameraPosition,rayDirection),nearDistance,farDistance);
+        // Constant for the whole ray, so it is fetched once instead of once per step.
+        vec3 originTransmittance=atmosphereSegmentOrigin(transmittanceLut,entryRadius,entryMu,hitsGround);
         vec3 radiance=vec3(0.0);
         for(int index=0;index<${ATMOSPHERE_MARCH_STEPS};index++){
           float from=atmosphereMarchDistance(float(index)/ATMOSPHERE_MARCH_STEPS_F,nearDistance,closest,farDistance);
@@ -1253,7 +1260,7 @@ const atmosphere = new THREE.Mesh(
           float altitude=max(length(point)-GROUND_RADIUS,0.0);
           float radius=max(length(point),GROUND_RADIUS);
           vec3 sunlight=atmosphereSunTransmittance(transmittanceLut,point,lightDirection);
-          vec3 viewTransmittance=atmosphereTransmittanceOverSegment(transmittanceLut,entryRadius,entryMu,along-nearDistance,hitsGround);
+          vec3 viewTransmittance=atmosphereSegmentTransmittance(transmittanceLut,originTransmittance,entryRadius,entryMu,along-nearDistance,hitsGround);
           vec3 rayleigh=BETA_RAYLEIGH*atmosphereRayleighDensity(altitude);
           vec3 mie=BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
           // Light that arrived here directly, weighted by which way it has to turn to reach

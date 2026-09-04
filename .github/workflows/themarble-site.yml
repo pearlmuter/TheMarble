@@ -98,3 +98,15 @@ jobs:
             echo "$path -> $code"
             test "$code" = "200"
           done
+
+          # The check above appends the filename, so it has never exercised the address a
+          # visitor actually types. R2 serves no index document for a directory request, so the
+          # bare origin returns the CDN's 404 page and every first-time visitor sees that
+          # instead of the Earth. The repair is a Cloudflare rule rewriting / to /index.html,
+          # not anything in this bucket, so this warns rather than failing a deploy it cannot
+          # fix. Make it fatal once the origin serves the root.
+          root=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${{ vars.THEMARBLE_CDN_ORIGIN }}")
+          echo "/ -> $root"
+          if [ "$root" != "200" ]; then
+            echo "::warning title=Site root does not serve::${{ vars.THEMARBLE_CDN_ORIGIN }} returns $root. Only /index.html serves, so anyone typing the bare address gets the CDN 404 page."
+          fi
