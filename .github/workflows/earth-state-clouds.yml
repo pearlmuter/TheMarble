@@ -55,13 +55,23 @@ jobs:
           key: earth-state-store-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             earth-state-store-
-      - name: Fill an empty working store from the origin
+      - name: Reconcile the working store with the origin
         run: |
+          # The cache is a warm start, not the truth. Every producer inherits the current bundle
+          # and republishes it, so a producer that inherits a stale store silently reverts
+          # whatever another producer published in the meantime.
+          #
+          # That is what was happening. The daily cryosphere job syncs from the origin, publishes
+          # snowCover and seaIce, and never writes this cache. This step used to seed only when
+          # the store was empty, so every ten minutes the cloud job rebuilt from a store that
+          # predated the cryosphere run and uploaded it over the top. Snow and sea ice survived
+          # about ten minutes a day, and the feed verifier had been reporting the missing
+          # provenance the whole time under a waiver.
+          #
+          # Syncing unconditionally is cheap on a warm cache: --size-only lists the bucket and
+          # transfers only what is new.
           mkdir -p artifacts/earth-state
-          if [ ! -f artifacts/earth-state/latest.json ]; then
-            echo "No cached store; seeding from the origin."
-            aws s3 sync "$BUCKET" artifacts/earth-state --size-only --no-progress
-          fi
+          aws s3 sync "$BUCKET" artifacts/earth-state --size-only --no-progress
       - name: Publish the newest validated cloud hour
         id: publish
         run: >-
