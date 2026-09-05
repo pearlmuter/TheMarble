@@ -352,3 +352,20 @@ test('every atmosphere function a bake shader calls is one the shared GLSL defin
     }
   }
 });
+
+test('sunrise illumination changes continuously across the finite solar disc', async () => {
+  const { solarHorizonVisibility } = await import('../src/atmosphere-model.js');
+  for (const radius of [1, 1.001, 1.01, 1.02]) {
+    const horizon = -Math.sqrt(1 - 1 / (radius * radius));
+    assert.ok(Math.abs(solarHorizonVisibility(radius, horizon) - .5) < 1e-10);
+    assert.equal(solarHorizonVisibility(radius, horizon - .006), 0);
+    assert.equal(solarHorizonVisibility(radius, horizon + .006), 1);
+    let previous = 0;
+    for (let offset = -.006; offset <= .006; offset += .0001) {
+      const value = solarHorizonVisibility(radius, horizon + offset);
+      assert.ok(value >= previous);
+      assert.ok(value - previous < .025, 'no point-source flash at the horizon');
+      previous = value;
+    }
+  }
+});

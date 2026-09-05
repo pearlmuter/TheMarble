@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
+import { createEarthFixedCamera } from './earth-fixed-camera.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import {
@@ -16,6 +19,7 @@ import { createCloudObservationController } from './cloud-observation-controller
 import { CLOUD_RELIEF_SAMPLE_UV, CLOUD_RENDER_GLSL } from './cloud-render-model.js';
 import {
   ATMOSPHERE_MARCH_STEPS,
+  ATMOSPHERE_LIMB_MARCH_STEPS,
   ATMOSPHERE_RADIUS,
   ATMOSPHERE_MODEL_GLSL,
   ATMOSPHERE_TRANSMITTANCE_GLSL,
@@ -111,6 +115,14 @@ const provenanceSections = document.querySelector<HTMLElement>('#provenance-sect
 const earthStateSummary = document.querySelector<HTMLElement>('#earth-state-summary')!;
 const loading = document.querySelector<HTMLElement>('#loading')!;
 createProvenanceDisclosure({ root: provenanceDisclosureRoot, trigger: provenanceTrigger, panel: provenancePanel, ownerDocument: document });
+const followPlaceToggle = document.querySelector<HTMLInputElement>('#follow-place')!;
+const followPlaceDescription = document.querySelector<HTMLElement>('#follow-place-description')!;
+followPlaceToggle.addEventListener('change', () => {
+  followPlaceDescription.textContent = followPlaceToggle.checked
+    ? 'Following the place at the center of your view. Drag to choose another place.'
+    : 'Your viewpoint stays in space while Earth turns beneath you.';
+});
+const followEarthRotation = createEarthFixedCamera();
 const sceneParameters = new URLSearchParams(window.location.search);
 const goldenScene = orbitalGoldenScene(sceneParameters.get('golden'));
 const fixedSceneTime = goldenScene?.time ?? sceneParameters.get('time');
@@ -230,6 +242,17 @@ const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
   // The thing that needed antialiasing stopped being a hard edge.
   samples: 0,
 });
+// Glare comes from the visible HDR source AFTER occultation and atmospheric extinction.
+// The threshold excludes ordinary land/cloud brightness. No painted halo or flare ghosts.
+const solarBloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .18, .25, 2.0);
+// Keep three standard deviations inside each separable kernel. The default
+// one-sigma truncation leaves a visibly square glow around a saturated Sun.
+for (const material of solarBloom.separableBlurMaterials) {
+  const radius = material.defines.KERNEL_RADIUS as number;
+  const sigma = radius / 3;
+  material.uniforms.gaussianCoefficients.value = Array.from({ length: radius }, (_, i) => Math.exp(-.5 * (i / sigma) ** 2));
+}
+solarBloom.enabled = false;
 const presentScene = new THREE.Scene();
 const presentCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const presentQuad = new THREE.Mesh(
@@ -256,12 +279,14 @@ presentScene.add(presentQuad);
 function sizeSceneTarget() {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   sceneTarget.setSize(Math.max(size.x, 1), Math.max(size.y, 1));
+  solarBloom.setSize(Math.max(size.x, 32), Math.max(size.y, 32));
 }
 sizeSceneTarget();
 
 function presentFrame() {
   renderer.setRenderTarget(sceneTarget);
   renderer.render(scene, camera);
+  if (solarBloom.enabled) solarBloom.render(renderer, sceneTarget, sceneTarget, 0, false);
   renderer.setRenderTarget(null);
   renderer.render(presentScene, presentCamera);
 }
@@ -1230,7 +1255,9 @@ const atmosphere = new THREE.Mesh(
         vec2 atmosphereHit=sphereInterval(cameraPosition,rayDirection,ATMOSPHERE_RADIUS);
         float nearDistance=max(atmosphereHit.x,0.0); float farDistance=atmosphereHit.y;
         vec2 groundHit=sphereInterval(cameraPosition,rayDirection,GROUND_RADIUS);
-        bool hitsGround=groundHit.x>0.0;
+        // A miss uses the reversed interval (1e5, -1e5); a positive start alone
+        // incorrectly classified every grazing ray as a surface ray.
+        bool hitsGround=groundHit.x>0.0&&groundHit.y>=groundHit.x;
         if(hitsGround) farDistance=min(farDistance,groundHit.x);
         if(farDistance<=nearDistance) discard;
 
@@ -1238,21 +1265,17 @@ const atmosphere = new THREE.Mesh(
         float phaseRayleigh=atmosphereRayleighPhase(mu);
         float phaseMie=atmosphereMiePhase(mu);
 
-        // Every transmittance below is measured from this one entry point, so the ratios of
-        // outward lookups compose along the ray instead of each guessing its own origin.
-        vec3 entry=cameraPosition+rayDirection*nearDistance;
-        float entryRadius=max(length(entry),GROUND_RADIUS);
-        float entryMu=clamp(dot(entry/entryRadius,rayDirection),-1.0,1.0);
-
-        // Samples bunch toward the lowest point of the segment: the ground for a ray that
-        // lands, the tangent point for a limb ray.
+        // The observer stays outside the atmosphere. By reciprocity, transmission
+        // from the entry point to each sample equals the sample's outward column
+        // toward the observer. A direct lookup avoids dividing two nearly zero
+        // transmissions on dense grazing paths (half-float underflow killed blue).
         float closest=clamp(-dot(cameraPosition,rayDirection),nearDistance,farDistance);
-        // Constant for the whole ray, so it is fetched once instead of once per step.
-        vec3 originTransmittance=atmosphereSegmentOrigin(transmittanceLut,entryRadius,entryMu,hitsGround);
         vec3 radiance=vec3(0.0);
-        for(int index=0;index<${ATMOSPHERE_MARCH_STEPS};index++){
-          float from=atmosphereMarchDistance(float(index)/ATMOSPHERE_MARCH_STEPS_F,nearDistance,closest,farDistance);
-          float to=atmosphereMarchDistance(float(index+1)/ATMOSPHERE_MARCH_STEPS_F,nearDistance,closest,farDistance);
+        float viewMarchSteps=hitsGround?${ATMOSPHERE_MARCH_STEPS.toFixed(1)}:${ATMOSPHERE_LIMB_MARCH_STEPS.toFixed(1)};
+        for(int index=0;index<${ATMOSPHERE_LIMB_MARCH_STEPS};index++){
+          if(float(index)>=viewMarchSteps) break;
+          float from=atmosphereMarchDistance(float(index)/viewMarchSteps,nearDistance,closest,farDistance);
+          float to=atmosphereMarchDistance(float(index+1)/viewMarchSteps,nearDistance,closest,farDistance);
           float span=to-from;
           if(span<=0.0) continue;
           float along=(from+to)*.5;
@@ -1260,15 +1283,14 @@ const atmosphere = new THREE.Mesh(
           float altitude=max(length(point)-GROUND_RADIUS,0.0);
           float radius=max(length(point),GROUND_RADIUS);
           vec3 sunlight=atmosphereSunTransmittance(transmittanceLut,point,lightDirection);
-          vec3 viewTransmittance=atmosphereSegmentTransmittance(transmittanceLut,originTransmittance,entryRadius,entryMu,along-nearDistance,hitsGround);
+          vec3 viewTransmittance=atmosphereTransmittanceToTop(transmittanceLut,radius,dot(point/radius,-rayDirection));
           vec3 rayleigh=BETA_RAYLEIGH*atmosphereRayleighDensity(altitude);
           vec3 mie=BETA_MIE_SCATTERING*atmosphereMieDensity(altitude);
           // Light that arrived here directly, weighted by which way it has to turn to reach
           // the camera.
           radiance+=viewTransmittance*sunlight*(rayleigh*phaseRayleigh+mie*phaseMie)*span;
-          // Light that arrived after bouncing, which has forgotten its direction. At the limb
-          // this is most of what there is: the Sun is already below the horizon of the air
-          // being looked at, so the direct term above has been extinguished.
+          // Approximate light arriving after further scattering. Its share varies
+          // with height and illumination; it need not dominate the sunrise arc.
           radiance+=viewTransmittance*(rayleigh+mie)
             *atmosphereMultipleScattering(multipleScatteringLut,radius,dot(point/radius,lightDirection))*span;
         }
@@ -1293,107 +1315,19 @@ const sun = new THREE.Mesh(
   new THREE.SphereGeometry(sunRadius, 48, 48),
   new THREE.ShaderMaterial({
     // The physical HDR sphere preserves the true solar angular size, atmospheric
-    // transmission, and tone mapping. The transparent layers below add only optics.
+    // transmission, and tone mapping. The post-process derives glare from visible light.
     depthWrite: false,
     vertexShader: `varying vec3 vWorldPosition; varying vec3 vWorldNormal; void main(){ vWorldPosition=(modelMatrix*vec4(position,1.0)).xyz; vWorldNormal=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `
-      varying vec3 vWorldPosition; varying vec3 vWorldNormal;
-      const float PI=3.14159265359; const float RAYLEIGH_HEIGHT=.001258; const float MIE_HEIGHT=.000189;
-      const vec3 BETA_R=vec3(36.96,86.38,210.88); const vec3 BETA_M=vec3(28.3);
-      void main(){
-        vec3 ray=normalize(vWorldPosition-cameraPosition); float nearestTime=max(-dot(cameraPosition,ray),0.0); float impact=length(cameraPosition+ray*nearestTime);
-        if(nearestTime>0.0&&impact<1.0) discard;
-        float altitude=max(impact-1.0,0.0); float slantR=exp(-altitude/RAYLEIGH_HEIGHT)*sqrt(2.0*PI*RAYLEIGH_HEIGHT); float slantM=exp(-altitude/MIE_HEIGHT)*sqrt(2.0*PI*MIE_HEIGHT);
-        vec3 transmission=impact<1.00943?exp(-(BETA_R*slantR+BETA_M*slantM)):vec3(1.0);
-        vec3 viewDirection=normalize(cameraPosition-vWorldPosition); float limb=max(dot(normalize(vWorldNormal),viewDirection),0.0); float limbDarkening=.88+.12*pow(limb,.42);
-        float granulation=.99+.01*sin(vWorldNormal.x*173.0+sin(vWorldNormal.y*211.0))*sin(vWorldNormal.z*197.0);
-        gl_FragColor=vec4(vec3(18.0,16.8,15.2)*transmission*limbDarkening*granulation,1.0);
-      }`
+    uniforms: {
+      transmittanceLut: { value: transmittanceLookup },
+      moonPosition: { value: moon.position },
+      moonRadius: { value: MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM },
+    },
+    fragmentShader: SOLAR_DISC_FRAGMENT_SHADER,
   })
 );
 scene.add(sun);
-const coronaCanvas = document.createElement('canvas');
-coronaCanvas.width = 256; coronaCanvas.height = 256;
-const coronaContext = coronaCanvas.getContext('2d')!;
-const coronaGradient = coronaContext.createRadialGradient(128, 128, 0, 128, 128, 128);
-coronaGradient.addColorStop(0, 'rgba(255,255,252,1)');
-coronaGradient.addColorStop(.35, 'rgba(255,255,250,.92)');
-coronaGradient.addColorStop(.52, 'rgba(255,248,229,.4)');
-coronaGradient.addColorStop(.76, 'rgba(255,220,170,.05)');
-coronaGradient.addColorStop(.88, 'rgba(168,190,220,.012)');
-coronaGradient.addColorStop(1, 'rgba(0,0,0,0)');
-coronaContext.fillStyle = coronaGradient;
-coronaContext.fillRect(0, 0, 256, 256);
-const coronaTexture = new THREE.CanvasTexture(coronaCanvas);
-const sunCorona = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: coronaTexture, transparent: true, opacity: .72, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
-);
-sunCorona.scale.set(sunRadius * 5, sunRadius * 5, 1);
-scene.add(sunCorona);
-
-// A restrained camera starburst: the physical solar disc above stays unchanged while this
-// additive optical layer approximates diffraction and sensor bloom in orbital photography.
-const starburstCanvas = document.createElement('canvas');
-starburstCanvas.width = 512; starburstCanvas.height = 512;
-const starburstContext = starburstCanvas.getContext('2d')!;
-starburstContext.translate(256, 256);
-for (let rayIndex = 0; rayIndex < 16; rayIndex += 1) {
-  const isPrimary = rayIndex % 4 === 0;
-  const isSecondary = rayIndex % 2 === 0;
-  const rayLength = isPrimary ? 238 : isSecondary ? 154 : 92;
-  const rayWidth = isPrimary ? 5.2 : isSecondary ? 2.7 : 1.25;
-  const rayGradient = starburstContext.createLinearGradient(5, 0, rayLength, 0);
-  rayGradient.addColorStop(0, `rgba(255,252,241,${isPrimary ? .55 : .3})`);
-  rayGradient.addColorStop(.12, `rgba(255,247,224,${isPrimary ? .2 : .1})`);
-  rayGradient.addColorStop(1, 'rgba(255,210,150,0)');
-  starburstContext.save();
-  starburstContext.rotate(rayIndex * Math.PI / 8);
-  starburstContext.fillStyle = rayGradient;
-  starburstContext.beginPath();
-  starburstContext.moveTo(4, -rayWidth);
-  starburstContext.lineTo(rayLength, 0);
-  starburstContext.lineTo(4, rayWidth);
-  starburstContext.closePath();
-  starburstContext.fill();
-  starburstContext.restore();
-}
-const starburstCore = starburstContext.createRadialGradient(0, 0, 0, 0, 0, 58);
-starburstCore.addColorStop(0, 'rgba(255,255,248,.95)');
-starburstCore.addColorStop(.22, 'rgba(255,252,235,.82)');
-starburstCore.addColorStop(.48, 'rgba(255,208,132,.16)');
-starburstCore.addColorStop(1, 'rgba(0,0,0,0)');
-starburstContext.fillStyle = starburstCore;
-starburstContext.beginPath(); starburstContext.arc(0, 0, 104, 0, Math.PI * 2); starburstContext.fill();
-const starburstTexture = new THREE.CanvasTexture(starburstCanvas);
-const sunStarburst = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: starburstTexture, transparent: true, opacity: .68, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })
-);
-sunStarburst.scale.set(sunRadius * 10, sunRadius * 10, 1);
-scene.add(sunStarburst);
-const sunOpticsPosition = new THREE.Vector3();
-
-function flareTexture(kind: 'soft' | 'ring', color: [number, number, number]) {
-  const flareCanvas = document.createElement('canvas'); flareCanvas.width = 256; flareCanvas.height = 256;
-  const context = flareCanvas.getContext('2d')!; const [red, green, blue] = color;
-  const gradient = context.createRadialGradient(128, 128, kind === 'ring' ? 63 : 0, 128, 128, 128);
-  if (kind === 'ring') {
-    gradient.addColorStop(0, `rgba(${red},${green},${blue},0)`); gradient.addColorStop(.38, `rgba(${red},${green},${blue},.03)`);
-    gradient.addColorStop(.55, `rgba(${red},${green},${blue},.15)`); gradient.addColorStop(.69, `rgba(${red},${green},${blue},.025)`);
-  } else {
-    gradient.addColorStop(0, `rgba(${red},${green},${blue},.22)`); gradient.addColorStop(.28, `rgba(${red},${green},${blue},.06)`);
-  }
-  gradient.addColorStop(1, `rgba(${red},${green},${blue},0)`); context.fillStyle = gradient; context.fillRect(0, 0, 256, 256);
-  return new THREE.CanvasTexture(flareCanvas);
-}
-
-const lensFlareGhosts = [
-  { factor: -.3, scale: .32, opacity: .045, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [166, 207, 255]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: -.66, scale: .22, opacity: .035, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('ring', [255, 198, 132]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-  { factor: .22, scale: .14, opacity: .025, sprite: new THREE.Sprite(new THREE.SpriteMaterial({ map: flareTexture('soft', [180, 232, 226]), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, toneMapped: false })) },
-];
-lensFlareGhosts.forEach(({ sprite }) => { sprite.renderOrder = 20; scene.add(sprite); });
 const sunScreenPosition = new THREE.Vector3();
-const flareDirection = new THREE.Vector3();
 // The sky was authored against a pipeline that wrote linear radiance straight to the display,
 // which crushed it. Now that the transfer function is applied once at the end, the same numbers
 // read about seven times brighter and the Milky Way's core clipped toward white. This returns
@@ -1443,6 +1377,8 @@ function updateCelestialScene(now: Date) {
     camera.lookAt(...cameraTarget);
     controls.target.fromArray(cameraTarget);
   }
+  followEarthRotation(camera, controls.target, planet.quaternion, followPlaceToggle.checked);
+  camera.updateMatrixWorld();
   earthMaterial.uniforms.sunDirection.value.copy(sunDirection);
   earthMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
   cloudMaterial.uniforms.sunLocalDirection.value.set(...frame.sun.earthFixedDirection);
@@ -1456,13 +1392,6 @@ function updateCelestialScene(now: Date) {
   moon.position.copy(moonDirection).multiplyScalar(frame.moon.distanceEarthRadii);
   applyCelestialRotation(moon, frame.moon.bodyToSceneMatrix);
   moonMaterial.uniforms.sunDirection.value.copy(sunDirection);
-  // Put camera optics just in front of the solar sphere so the sphere cannot depth-mask them;
-  // Earth remains vastly nearer and therefore still occludes the complete optical effect.
-  // A generous camera-space separation avoids far-plane depth quantization masking the
-  // translucent glare sprites; Earth is still thousands of radii nearer and occludes them.
-  sunOpticsPosition.copy(camera.position).sub(sun.position).normalize().multiplyScalar(sunRadius * 20).add(sun.position);
-  sunCorona.position.copy(sunOpticsPosition);
-  sunStarburst.position.copy(sunOpticsPosition);
   sunScreenPosition.copy(sun.position).project(camera);
   const photograph = orbitalPhotographyState({
     cameraPosition: [camera.position.x, camera.position.y, camera.position.z],
@@ -1472,19 +1401,7 @@ function updateCelestialScene(now: Date) {
     moonRadius: MOON_EQUATORIAL_RADIUS_KM / EARTH_EQUATORIAL_RADIUS_KM,
     sunNdc: [sunScreenPosition.x, sunScreenPosition.y, sunScreenPosition.z],
   });
-  const coronaMaterial = sunCorona.material as THREE.SpriteMaterial;
-  const starburstMaterial = sunStarburst.material as THREE.SpriteMaterial;
-  coronaMaterial.opacity = photograph.optics.bloomStrength * .84;
-  starburstMaterial.opacity = photograph.optics.diffractionStrength * .58;
-  sunCorona.visible = photograph.optics.bloomStrength > .001;
-  sunStarburst.visible = photograph.optics.diffractionStrength > .001;
-  lensFlareGhosts.forEach(({ factor, scale, opacity, sprite }) => {
-    const ndc = new THREE.Vector3(sunScreenPosition.x * factor, sunScreenPosition.y * factor, .2).unproject(camera);
-    flareDirection.copy(ndc).sub(camera.position).normalize();
-    sprite.position.copy(camera.position).addScaledVector(flareDirection, 30); sprite.scale.setScalar(scale);
-    (sprite.material as THREE.SpriteMaterial).opacity = opacity * photograph.optics.flareStrength;
-    sprite.visible = photograph.optics.flareStrength > .001;
-  });
+  solarBloom.enabled = photograph.sun.inFrame && photograph.sun.visibleFraction > 0;
   // Human eyes and ordinary cameras cannot expose a direct Sun and a rich Milky Way at once.
   skyExposure = THREE.MathUtils.lerp(skyExposure, photograph.exposure.milkyWay, photograph.sun.inFrame ? .045 : .012);
   milkyWayMaterial.uniforms.exposure.value = skyExposure * MILKY_WAY_LINEAR_EXPOSURE_CORRECTION;
