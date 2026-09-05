@@ -2,6 +2,18 @@
 
 A small, live, interactive Earth view for use as a Tauri window or as a standalone page in a web desktop.
 
+## Start here
+
+New to the repository? Read these two first — the rest of this README describes
+what the system does, but not where it currently stands or how it is delivered.
+
+- [`docs/project-state.md`](docs/project-state.md) — what is done, what is not,
+  what is failing, and what will bite you. A dated snapshot with the commands to
+  re-derive every claim in it.
+- [`docs/web-integration.md`](docs/web-integration.md) — how one `dist/` becomes
+  the website, the framed window on `emildanielsen.no`, and the desktop app, and
+  the invariants that keep the site and the feed from deleting each other.
+
 ## Run it
 
 ```sh
