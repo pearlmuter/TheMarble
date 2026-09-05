@@ -50,10 +50,11 @@ export function addCryosphereAnalysis(manifest, { selection, metadata, snowAsset
   });
   manifest.layers.seaIce = layerDescriptor({
     datasetId,
-    units: 'sea-ice concentration fraction',
+    units: metadata.layers.seaIce.interpretation === 'categorical-extent' ? 'categorical ice presence (not concentration)' : metadata.layers.seaIce.interpretation ? 'sea-ice concentration with categorical extent fallback' : 'sea-ice concentration fraction',
     dimensions: metadata.dimensions,
     asset: seaIceAsset,
     provenance: provenance('seaIce'),
   });
+  manifest.layers.seaIce.channels.b = 'source code: 0 unknown, 1/3 global analysis, 2/3 IMS extent, 1 OSI SAF concentration';
   return manifest;
 }

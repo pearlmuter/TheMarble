@@ -23,8 +23,8 @@ test('cloud color, opacity, quality, and surface shadow crossfade as two complet
   assert.match(mainSource, /cloudDensityFrom: \{ value:/);
   assert.match(mainSource, /cloudDensityTo: \{ value:/);
   assert.match(mainSource, /cloudMix: \{ value: 0 \}/);
-  assert.match(mainSource, /mix\(texture2D\(cloudMapFrom,vUv\),texture2D\(cloudMapTo,vUv\),cloudMix\)/);
-  assert.match(mainSource, /mix\(texture2D\(cloudDensityFrom,vUv\),texture2D\(cloudDensityTo,vUv\),cloudMix\)/);
+  assert.match(mainSource, /mix\(smoothCloudSample\(cloudMapFrom,vUv\),smoothCloudSample\(cloudMapTo,vUv\),cloudMix\)/);
+  assert.match(mainSource, /mix\(smoothCloudSample\(cloudDensityFrom,vUv\),smoothCloudSample\(cloudDensityTo,vUv\),cloudMix\)/);
 });
 
 test('SatCORPS physical cloud fields drive height, spherical shadows, phase, and night attenuation', () => {
@@ -38,7 +38,7 @@ test('SatCORPS physical cloud fields drive height, spherical shadows, phase, and
   assert.match(cloudModelSource, /float cloudTransmission\(/);
   assert.match(mainSource, /vec4 casterPhysics=mix\(texture2D\(cloudPhysicsFrom,shadowUv1\),texture2D\(cloudPhysicsTo,shadowUv1\),cloudMix\)/);
   assert.match(mainSource, /vec4 casterWeather=mix\(texture2D\(cloudDensityFrom,shadowUv1\),texture2D\(cloudDensityTo,shadowUv1\),cloudMix\)/);
-  assert.match(mainSource, /night\*=cloudTransmission\(opticalDepth,cloudQuality\)/);
+  assert.match(mainSource, /night\*=cloudTransmission\(opticalDepth,cloudQuality\*mix\(cloudCoverageWeight/);
   assert.match(mainSource, /float icePhase=physics\.g/);
   assert.doesNotMatch(mainSource, /mix\(vec3\(\.018,\.03,\.052\),litCloud/);
 });

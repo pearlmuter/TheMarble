@@ -165,13 +165,9 @@ test('the configured IMS endpoint is the archive that serves values, not the one
   // NSIDC archive serves the documented class grid itself.
   assert.doesNotMatch(ims.urlTemplate, /ImageServer|arcgis|WMS|GetMap/i);
   assert.match(ims.urlTemplate, /noaadata\.apps\.nsidc\.org\/NOAA\/G02156\//);
-  // A polar square needs its coordinates, and a headerless grid needs its shape.
-  assert.equal(ims.input.kind, 'scattered');
-  for (const axis of ['latitudes', 'longitudes']) {
-    assert.ok(ims.input.grids[axis].url);
-    assert.ok(Array.isArray(ims.input.grids[axis].shape));
-    assert.ok(ims.input.grids[axis].dtype);
-  }
+  // The native numerical product carries its own projection and metre axes.
+  assert.equal(ims.input.kind, 'ims-netcdf');
+  assert.match(ims.urlTemplate, /netcdf\/4km\/.*_4km_v1\.3\.nc\.gz$/);
   assert.deepEqual(ims.semantics.allowed, [0, 1, 2, 3, 4]);
 });
 

@@ -8,36 +8,14 @@
   "sources": [
     {
       "product": "ims-snow-ice",
-      "version": "usnic-ims-24km-v1.3",
+      "version": "usnic-ims-4km-v1.3",
       "attribution": "U.S. National Ice Center IMS, distributed by NSIDC (G02156)",
       "required": false,
-      "urlTemplate": "https://noaadata.apps.nsidc.org/NOAA/G02156/24km/{YYYY}/ims{YYYY}{DDD}_00UTC_24km_v1.3.asc.gz",
+      "urlTemplate": "https://noaadata.apps.nsidc.org/NOAA/G02156/netcdf/4km/{YYYY}/ims{YYYY}{DDD}_4km_v1.3.nc.gz",
       "urlTemplateEnv": "THEMARBLE_IMS_URL_TEMPLATE",
-      "extension": ".asc.gz",
+      "extension": ".nc.gz",
       "input": {
-        "kind": "scattered",
-        "aggregate": "mode",
-        "closeGapRounds": 4,
-        "grids": {
-          "latitudes": {
-            "url": "https://noaadata.apps.nsidc.org/NOAA/G02156/metadata/imslat_24km.bin.gz",
-            "extension": ".bin.gz",
-            "dtype": "<f4",
-            "shape": [
-              1024,
-              1024
-            ]
-          },
-          "longitudes": {
-            "url": "https://noaadata.apps.nsidc.org/NOAA/G02156/metadata/imslon_24km.bin.gz",
-            "extension": ".bin.gz",
-            "dtype": "<f4",
-            "shape": [
-              1024,
-              1024
-            ]
-          }
-        }
+        "kind": "ims-netcdf"
       },
       "semantics": {
         "type": "classes",
@@ -49,7 +27,7 @@
           4
         ]
       },
-      "reason": "The NOAA usnic_ims_snow_ice_1km ImageServer returns rendered symbology, not the documented 0-4 class grid, and is not used. The NSIDC G02156 archive serves the analysis itself over public HTTPS with no authentication: verified 2026-09-04 against ims2026246, which decodes to exactly the documented classes. It is a polar stereographic square whose corners fall off the projection disc, so it is reprojected through the separately published latitude and longitude grids. IMS covers the Northern Hemisphere only."
+      "reason": "Native 6144 \u00d7 6144 numerical categories with self-describing polar projection, checked against the matching ASCII analysis. Filename supplies the daily nowcast date; the encoded reference time is retained separately."
     },
     {
       "product": "gmasi-snow",
@@ -158,6 +136,38 @@
         }
       },
       "reason": "VNP10_NRT carries the NDSI and Basic_QA bands this adapter screens; the public GIBS visualisation is a rendered palette and cannot substitute. Requires an Earthdata token."
+    },
+    {
+      "product": "osisaf-concentration-nh",
+      "version": "osisaf-401-d-v4.1-10km",
+      "attribution": "EUMETSAT OSI SAF / MET Norway, sea ice concentration (OSI-401-d)",
+      "required": false,
+      "urlTemplate": "https://thredds.met.no/thredds/fileServer/osisaf/met.no/ice/conc/{YYYY}/{MM}/ice_conc_nh_polstere-100_multi_{YYYY}{MM}{DD}1200.nc",
+      "extension": ".nc",
+      "input": {
+        "kind": "osisaf-concentration"
+      },
+      "semantics": {
+        "type": "concentration"
+      },
+      "reason": "Public numerical L3 daily concentration with uncertainty and status flags; coastal, lake, land and missing retrievals are excluded.",
+      "urlTemplateEnv": "THEMARBLE_OSISAF_NH_URL_TEMPLATE"
+    },
+    {
+      "product": "osisaf-concentration-sh",
+      "version": "osisaf-401-d-v4.1-10km",
+      "attribution": "EUMETSAT OSI SAF / MET Norway, sea ice concentration (OSI-401-d)",
+      "required": false,
+      "urlTemplate": "https://thredds.met.no/thredds/fileServer/osisaf/met.no/ice/conc/{YYYY}/{MM}/ice_conc_sh_polstere-100_multi_{YYYY}{MM}{DD}1200.nc",
+      "extension": ".nc",
+      "input": {
+        "kind": "osisaf-concentration"
+      },
+      "semantics": {
+        "type": "concentration"
+      },
+      "reason": "Public numerical L3 daily concentration with uncertainty and status flags; coastal, lake, land and missing retrievals are excluded.",
+      "urlTemplateEnv": "THEMARBLE_OSISAF_SH_URL_TEMPLATE"
     }
   ]
 }

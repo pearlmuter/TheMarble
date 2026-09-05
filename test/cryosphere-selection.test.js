@@ -238,3 +238,14 @@ test('an IMS delivery that does not cover the Northern Hemisphere publishes noth
     retrievedAt: '2026-09-04T06:00:00Z',
   }), /did not find/i);
 });
+
+test('concentration keeps its own day and rejects future, stale, and unscreened candidates', () => {
+  const ims = candidate('ims-snow-ice','2026-09-05T00:00:00Z');
+  const concentration = (day, qualityHref='quality.npy') => candidate('osisaf-concentration-nh',day,{qualityHref});
+  const select = extra => selectDailyCryosphere({candidates:[ims,...extra],retrievedAt:'2026-09-06T20:00:00Z'});
+  const current = concentration('2026-09-04T00:00:00Z');
+  assert.equal(select([current]).analysis.seaIceConcentration[0].validAt,current.validAt);
+  assert.equal(select([concentration('2026-09-06T00:00:00Z')]).analysis.seaIceConcentration,undefined);
+  assert.equal(select([concentration('2026-09-03T00:00:00Z')]).analysis.seaIceConcentration,undefined);
+  assert.equal(select([concentration('2026-09-05T00:00:00Z','')]).analysis.seaIceConcentration,undefined);
+});

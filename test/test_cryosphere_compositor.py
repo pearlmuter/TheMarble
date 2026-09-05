@@ -112,3 +112,22 @@ class NorthernOnlyAnalysis(unittest.TestCase):
         texture = cryosphere._texture(np.zeros(ims.shape, dtype=np.float32), snow_source)
         self.assertTrue(np.all(texture[2:, :, 1] == 0.0))
         self.assertTrue(np.all(texture[:2, :, 1] == 1.0))
+
+class MeasuredConcentration(unittest.TestCase):
+    def test_fraction_and_valid_zero_replace_extent_but_missing_and_land_do_not(self):
+        ims = np.array([[3,3,3,4,2,0]], dtype=np.uint8)
+        ice = np.array([[1,1,1,0,0,0]], dtype=np.float32)
+        source = np.array([[2,2,2,2,2,0]], dtype=np.uint8)
+        values = np.array([[.35,0,np.nan,.8,.9,.6]], dtype=np.float32)
+        quality = np.array([[.92,.9,0,.9,.9,.95]], dtype=np.float32)
+        confidence = cryosphere.apply_concentration(ims, ice, source, [(values,quality)])
+        np.testing.assert_allclose(ice, [[.35,0,1,0,0,.6]])
+        np.testing.assert_array_equal(source, [[3,3,2,2,2,3]])
+        self.assertAlmostEqual(float(confidence[0,0]), .92, places=6)
+
+    def test_low_quality_cannot_erase_extent(self):
+        ims = np.array([[3]], dtype=np.uint8)
+        ice = np.ones((1,1), dtype=np.float32)
+        source = np.full((1,1),2,dtype=np.uint8)
+        cryosphere.apply_concentration(ims,ice,source,[(np.zeros((1,1)),np.full((1,1),.79))])
+        self.assertEqual(ice[0,0],1)

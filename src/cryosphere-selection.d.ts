@@ -1,9 +1,10 @@
-export type CryosphereProduct = 'ims-snow-ice' | 'gmasi-snow' | 'gmasi-sea-ice' | 'amsr2-snow' | 'amsr2-sea-ice' | 'viirs-snow';
+export type CryosphereProduct = 'ims-snow-ice' | 'gmasi-snow' | 'gmasi-sea-ice' | 'amsr2-snow' | 'amsr2-sea-ice' | 'viirs-snow' | 'osisaf-concentration-nh' | 'osisaf-concentration-sh';
 
 export interface CryosphereCandidate {
   product: CryosphereProduct;
   validAt: string;
   producedAt: string;
+  referenceTime?: string;
   version: string;
   href: string;
   coverage: { latitudeRange: [number, number]; observedFraction: number };
@@ -15,6 +16,7 @@ export interface DailyCryosphereSelection {
   validAt: string;
   retrievedAt: string;
   analysis: {
+    seaIceConcentration?: CryosphereCandidate[];
     northernPrimary?: CryosphereCandidate;
     globalFallback: { snow: CryosphereCandidate; seaIce: CryosphereCandidate };
   };

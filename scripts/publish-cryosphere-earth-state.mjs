@@ -49,14 +49,16 @@ async function readCatalog(catalogUrl) {
   };
 }
 
-async function existingValidAt(outputDirectory) {
+const CRYOSPHERE_PROCESSING_VERSION = "polar-concentration-v3";
+
+async function existingAnalysis(outputDirectory) {
   try {
     const latest = JSON.parse(await readFile(join(outputDirectory, 'latest.json'), 'utf8'));
     const manifestPath = resolve(outputDirectory, latest.manifest.href.replace(/^\.\//, ''));
     const prefix = `${resolve(outputDirectory)}${sep}`;
     if (!manifestPath.startsWith(prefix)) throw new Error('Published manifest escapes output directory');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    return manifest.layers.snowCover?.provenance?.validAt;
+    return { validAt: manifest.layers.snowCover?.provenance?.validAt, processingVersion: manifest.layers.seaIce?.provenance?.processingVersion };
   } catch (error) {
     if (error?.code === 'ENOENT') return undefined;
     throw error;
@@ -108,12 +110,14 @@ async function main() {
   await access(baseManifestPath);
   const catalog = await readCatalog(catalogUrl);
   const retrievedAt = new Date(options.now ?? catalog.retrievedAt ?? Date.now()).toISOString().replace('.000Z', 'Z');
+  const previousAnalysis = await existingAnalysis(outputDirectory);
   const selection = selectDailyCryosphere({
     candidates: catalog.candidates,
     retrievedAt,
-    lastPublishedValidAt: await existingValidAt(outputDirectory),
+    lastPublishedValidAt: previousAnalysis?.validAt,
   });
-  if (!selection.publish) {
+  const reprocess = previousAnalysis?.validAt === selection.validAt && previousAnalysis?.processingVersion !== CRYOSPHERE_PROCESSING_VERSION;
+  if (!selection.publish && !reprocess) {
     process.stdout.write(`${JSON.stringify({ status: 'unchanged', validAt: selection.validAt }, null, 2)}\n`);
     return;
   }
@@ -139,12 +143,20 @@ async function main() {
       paths.viirsQuality = join(stage, 'viirs-quality.npy');
       await writeFile(paths.viirsQuality, await bytesFromUrl(selection.refinement.qualityHref));
     }
+    const concentrationSources = selection.analysis.seaIceConcentration ?? [];
+    const concentrationArgs = [];
+    for (const [index, source] of concentrationSources.entries()) {
+      const values = await materialize(source, join(stage, `concentration-${index}.npy`));
+      const quality = join(stage, `concentration-quality-${index}.npy`);
+      await writeFile(quality, await bytesFromUrl(source.qualityHref));
+      concentrationArgs.push('--concentration', values, '--concentration-quality', quality);
+    }
     const snowSources = [
       selection.analysis.northernPrimary,
       globalFallback?.snow,
       selection.refinement,
     ].filter(Boolean);
-    const seaIceSources = [selection.analysis.northernPrimary, globalFallback?.seaIce].filter(Boolean);
+    const seaIceSources = [selection.analysis.northernPrimary, globalFallback?.seaIce, ...concentrationSources].filter(Boolean);
     const sources = [...new Set([...snowSources, ...seaIceSources])];
     const producedAt = sources.reduce((latest, source) => Date.parse(source.producedAt) > Date.parse(latest) ? source.producedAt : latest, sources[0].producedAt);
     const fallback = selection.fallback.reason
@@ -163,6 +175,7 @@ async function main() {
       '--source-version', combinedIdentity.sourceVersion,
       '--fallback', fallback,
       '--attribution', combinedIdentity.attribution,
+      ...concentrationArgs,
       ...(paths.ims ? ['--ims', paths.ims] : []),
       ...(paths.viirsSnow ? ['--viirs-snow', paths.viirsSnow, '--viirs-quality', paths.viirsQuality] : []),
     ];
@@ -180,8 +193,15 @@ async function main() {
     const metadata = {
       ...compositorMetadata,
       layers: {
-        snowCover: { ...sourceIdentity(snowSources), coverage: compositorMetadata.layers.snowCover.coverage, fallback },
-        seaIce: { ...sourceIdentity(seaIceSources), coverage: compositorMetadata.layers.seaIce.coverage, fallback },
+        snowCover: { referenceTime: selection.analysis.northernPrimary?.referenceTime, ...sourceIdentity(snowSources), coverage: compositorMetadata.layers.snowCover.coverage, fallback },
+        seaIce: {
+          ...sourceIdentity(seaIceSources), coverage: compositorMetadata.layers.seaIce.coverage,
+          processingVersion: CRYOSPHERE_PROCESSING_VERSION,
+          referenceTime: selection.analysis.northernPrimary?.referenceTime,
+          interpretation: concentrationSources.length ? 'concentration-with-extent-fallback' : 'categorical-extent',
+          concentrationSources: concentrationSources.map(({ product, version, validAt, attribution }) => ({ product, version, validAt, attribution })),
+          fallback: 'Where measured concentration is unavailable, IMS marks ice presence only; it does not measure complete ice cover. Areas without either source remain unobserved.',
+        },
       },
     };
     const manifest = addCryosphereAnalysis(baseManifest, { selection, metadata, snowAsset, seaIceAsset });

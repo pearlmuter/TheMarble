@@ -49,6 +49,7 @@ function candidateFrom(entry) {
     version: entry.version,
     href: `./${entry.arrayPath.replace(/^\.?\//, '')}`,
     coverage: entry.coverage,
+    ...(entry.referenceTime ? { referenceTime: entry.referenceTime } : {}),
     ...(entry.qualityArrayPath ? { qualityHref: `./${entry.qualityArrayPath.replace(/^\.?\//, '')}` } : {}),
     attribution: entry.attribution ?? CRYOSPHERE_ATTRIBUTION[entry.product],
   };

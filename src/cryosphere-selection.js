@@ -1,7 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_VIIRS_AGE_MS = 36 * 60 * 60 * 1000;
 const SUPPORTED_PRODUCTS = new Set([
-  'ims-snow-ice', 'gmasi-snow', 'gmasi-sea-ice', 'amsr2-snow', 'amsr2-sea-ice', 'viirs-snow',
+  'ims-snow-ice', 'gmasi-snow', 'gmasi-sea-ice', 'amsr2-snow', 'amsr2-sea-ice', 'viirs-snow', 'osisaf-concentration-nh', 'osisaf-concentration-sh',
 ]);
 const GLOBAL_PAIRS = [
   ['gmasi-snow', 'gmasi-sea-ice'],
@@ -103,10 +103,18 @@ export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedVa
     && retrievedMs - Date.parse(candidate.validAt) <= MAX_VIIRS_AGE_MS
     && Math.abs(Date.parse(candidate.validAt) - Date.parse(validAt)) <= MAX_VIIRS_AGE_MS));
 
+  // Concentration retains its own analysis day. Never use a future daily field
+  // or one more than a day older than the selected IMS/global analysis.
+  const seaIceConcentration = ['nh', 'sh'].map(hemisphere => newest(usable.filter(candidate =>
+    candidate.product === `osisaf-concentration-${hemisphere}`
+    && candidate.qualityHref && Date.parse(candidate.validAt) <= Date.parse(validAt)
+    && Date.parse(validAt) - Date.parse(candidate.validAt) <= DAY_MS
+  ))).filter(Boolean);
   return {
     validAt,
     retrievedAt: new Date(retrievedMs).toISOString().replace('.000Z', 'Z'),
     analysis: {
+      ...(seaIceConcentration.length ? { seaIceConcentration } : {}),
       ...(northernPrimary ? { northernPrimary } : {}),
       ...(globalSnow ? { globalFallback: { snow: globalSnow, seaIce: globalSeaIce } } : {}),
     },

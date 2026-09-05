@@ -22,6 +22,13 @@ Deployment is tracked by the **TheMarble site** workflow after merge to `main`.
 
 ## Where the work stands
 
+The cloud/polar follow-up is recorded in [polar-cloud-plan.md](polar-cloud-plan.md):
+gentler cloud reconstruction and relief, a one-sided coverage fade, native 4 km
+IMS reprojection, and dated OSI SAF concentration with categorical extent fallback.
+Both the site and daily cryosphere workflow must run after its merge; site
+deployment alone cannot replace the existing ice textures. Processing revision
+`polar-concentration-v3` permits one corrected publication for an unchanged day.
+
 `main` is the whole story. Twenty-two branches exist locally — `issue-2` through
 `issue-17`, and seven `feat/`, `fix/`, `perf/` branches — and **all of them are
 fully merged** (`0` commits ahead of `main`). They are stale local refs, not work
