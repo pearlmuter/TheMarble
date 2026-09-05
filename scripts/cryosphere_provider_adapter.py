@@ -388,11 +388,22 @@ def _observed_mask(product, grid):
 
 def adapt_source(source, width, height, output_directory):
     """Reproject one delivered product and describe it for the daily catalog."""
-    grid = _resample(_load_grid(source["input"]["path"]), source["input"], width, height)
+    reference_time = None
+    observation_window = {}
+    if source["input"]["kind"] == "ims-netcdf":
+        from ims_analysis import read_ims_analysis
+        grid, reference_time = read_ims_analysis(source["input"]["path"], source["validAt"][:10], width, height)
+    elif source["input"]["kind"] == "osisaf-concentration":
+        from osisaf_concentration import read_concentration
+        grid, concentration_quality, observation_window = read_concentration(source["input"]["path"], source["validAt"][:10], width, height)
+    else:
+        grid = _resample(_load_grid(source["input"]["path"]), source["input"], width, height)
     semantics = source["semantics"]
     quality = None
 
-    if semantics["type"] == "classes":
+    if semantics["type"] == "concentration":
+        values, quality = grid, concentration_quality
+    elif semantics["type"] == "classes":
         values = require_classes(grid, semantics.get("allowed", IMS_CLASSES), source["product"])
     elif semantics["type"] == "class-map":
         values = map_classes(grid, semantics["map"], f"{source['product']} classes")
@@ -423,6 +434,9 @@ def adapt_source(source, width, height, output_directory):
             "observedFraction": round(observed_fraction(observed), 6),
         },
     }
+    if reference_time:
+        product["referenceTime"] = reference_time
+    product.update(observation_window)
     if quality is not None:
         quality_path = output_directory / f"{key}-quality.npy"
         np.save(quality_path, quality)

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CLOUD_SAMPLING_GLSL, cloudRenderCoverage } from './cloud-sampling.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
 import { createEarthFixedCamera } from './earth-fixed-camera.js';
@@ -748,6 +749,10 @@ function commitActivatedEarthState({ active: activeEarthState, seasonalSurface }
   for (const name of EARTH_STATE_REQUIRED_RESOURCES) applyVerifiedResource(name, activeEarthState.resources[name]);
   seasonalSurfaceController.activate(seasonalSurface);
   if (activeEarthState.cloudSequence) {
+    for (const frame of activeEarthState.cloudSequence.frames) {
+      requireLoadedTexture(frame.layers.cloudOpacity, 'cloud coverage').userData.cloudCoverage =
+        cloudRenderCoverage(frame.coverage);
+    }
     const sequence = {
       transitionSeconds: activeEarthState.cloudSequence.transitionSeconds,
       frames: activeEarthState.cloudSequence.frames.map(frame => ({
@@ -991,6 +996,7 @@ const earthMaterial = new THREE.ShaderMaterial({
     nightMap: { value: nightMap },
     snowCoverMap: { value: snowCoverMap }, seaIceMap: { value: seaIceMap },
     cloudMapFrom: { value: cloudMap }, cloudMapTo: { value: cloudMap },
+    cloudCoverageFrom: { value: new THREE.Vector2(-90,90) }, cloudCoverageTo: { value: new THREE.Vector2(-90,90) },
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
     cloudPhysicsFrom: { value: cloudPhysicsMap }, cloudPhysicsTo: { value: cloudPhysicsMap },
     cloudAgeFrom: { value: cloudAgeMap }, cloudAgeTo: { value: cloudAgeMap },
@@ -1009,6 +1015,7 @@ const earthMaterial = new THREE.ShaderMaterial({
     ${ATMOSPHERE_MODEL_GLSL}
     ${ATMOSPHERE_TRANSMITTANCE_GLSL}
     ${CLOUD_RENDER_GLSL}
+    ${CLOUD_SAMPLING_GLSL}
     void main() {
       vec3 normal=normalize(vViewNormal); vec3 viewDirection=normalize(-vViewPosition); vec3 sunView=normalize((viewMatrix*vec4(sunDirection,0.0)).xyz);
       float solar=dot(normal,sunView); float nDotL=max(solar,0.0); float nDotV=max(dot(normal,viewDirection),.001);
@@ -1051,11 +1058,16 @@ const earthMaterial = new THREE.ShaderMaterial({
       float glintResponse=1.0-exp(-specular*.22);
       vec3 sunGlint=sunTransmittance*glintResponse*nDotL*.62;
       vec3 oceanLight=waterDiffuse+atmosphericReflection+sunGlint;
-      vec3 seaIceLight=vec3(.68,.76,.82)*surfaceIrradiance+atmosphericReflection*.28;
+      // Snow-covered pack is rough and diffusely reflective. Keep observed
+      // concentration as an area mixture with open water; do not invent floes.
+      vec3 iceAlbedo=vec3(.72,.755,.77);
+      float iceFresnel=.018+(.982)*pow(1.0-vDotH,5.0);
+      vec3 iceGlint=sunTransmittance*iceFresnel*pow(nDotH,24.0)*nDotL*.22;
+      vec3 seaIceLight=iceAlbedo*surfaceIrradiance+atmosphericReflection*.12+iceGlint;
       vec3 day=mix(land,oceanLight,ocean);
       day=mix(day,snowAlbedo,landSnow*.94);
       day=mix(day,seaIceLight,oceanIce);
-      vec4 weather=mix(texture2D(cloudDensityFrom,vUv),texture2D(cloudDensityTo,vUv),cloudMix);
+      vec4 weather=mix(smoothCloudSample(cloudDensityFrom,vUv),smoothCloudSample(cloudDensityTo,vUv),cloudMix);
       vec4 physics=mix(texture2D(cloudPhysicsFrom,vUv),texture2D(cloudPhysicsTo,vUv),cloudMix);
       float cloudQuality=physics.a; float physicalWeight=step(.001,cloudQuality);
       float opticalDepth=decodeCloudOpticalDepth(physics.r);
@@ -1089,11 +1101,12 @@ const earthMaterial = new THREE.ShaderMaterial({
       casterOpticalDepth=mix(assumedCloudOpticalDepth(cloudShadow1),casterOpticalDepth,casterPhysicalWeight);
       casterQuality=mix(casterWeather.g,casterQuality,casterPhysicalWeight);
       float casterDensity=mix(.72,1.18,casterWeather.r)*casterWeather.g;
-      float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity;
+      float casterCoverage=mix(cloudCoverageWeight(shadowUv1,cloudCoverageFrom),cloudCoverageWeight(shadowUv1,cloudCoverageTo),cloudMix);
+      float cloudShadow=(cloudShadow0+2.0*cloudShadow1+cloudShadow2)*.25*casterDensity*casterCoverage;
       day*=1.0-cloudShadow*daylight*cloudShadowOpticalWeight(casterOpticalDepth)*casterQuality;
       float nightFalloff=1.0-smoothstep(-.035,.008,solar);
       vec3 night=emittedNightLight(texture2D(nightMap,vUv).rgb)*nightFalloff*1.8;
-      night*=cloudTransmission(opticalDepth,cloudQuality);
+      night*=cloudTransmission(opticalDepth,cloudQuality*mix(cloudCoverageWeight(vUv,cloudCoverageFrom),cloudCoverageWeight(vUv,cloudCoverageTo),cloudMix));
       // Everything leaving the surface still has to climb out through the air above it. The
       // shell adds the light scattered into that same path.
       vec3 viewTransmittance=atmosphereTransmittanceToTop(transmittanceLut,GROUND_RADIUS,nDotV);
@@ -1108,6 +1121,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
   uniforms: {
     cloudMapFrom: { value: cloudMap }, cloudMapTo: { value: cloudMap },
+    cloudCoverageFrom: { value: new THREE.Vector2(-90,90) }, cloudCoverageTo: { value: new THREE.Vector2(-90,90) },
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
     cloudPhysicsFrom: { value: cloudPhysicsMap }, cloudPhysicsTo: { value: cloudPhysicsMap },
     cloudAgeFrom: { value: cloudAgeMap }, cloudAgeTo: { value: cloudAgeMap },
@@ -1139,6 +1153,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
     ${ATMOSPHERE_MODEL_GLSL}
     ${ATMOSPHERE_TRANSMITTANCE_GLSL}
     ${CLOUD_RENDER_GLSL}
+    ${CLOUD_SAMPLING_GLSL}
     // Cloud-top height at a neighbouring texel, for the slope of the deck.
     float neighbourCloudTopKm(sampler2D opacityFrom,sampler2D opacityTo,sampler2D physicsFrom,sampler2D physicsTo,float mixAmount,vec2 uv){
       float opacity=mix(texture2D(opacityFrom,uv).a,texture2D(opacityTo,uv).a,mixAmount);
@@ -1148,8 +1163,9 @@ const cloudMaterial = new THREE.ShaderMaterial({
       return cloudTopHeightKm(depth,physics.b*20.0,retrieved);
     }
     void main(){
-      vec4 cloud=mix(texture2D(cloudMapFrom,vUv),texture2D(cloudMapTo,vUv),cloudMix);
-      vec4 weather=mix(texture2D(cloudDensityFrom,vUv),texture2D(cloudDensityTo,vUv),cloudMix);
+      vec4 cloud=mix(smoothCloudSample(cloudMapFrom,vUv),smoothCloudSample(cloudMapTo,vUv),cloudMix);
+      float coverageWeight=mix(cloudCoverageWeight(vUv,cloudCoverageFrom),cloudCoverageWeight(vUv,cloudCoverageTo),cloudMix);
+      vec4 weather=mix(smoothCloudSample(cloudDensityFrom,vUv),smoothCloudSample(cloudDensityTo,vUv),cloudMix);
       float observationAge=mix(texture2D(cloudAgeFrom,vUv).r,texture2D(cloudAgeTo,vUv).r,cloudMix);
       vec4 physics=vPhysics; float cloudQuality=physics.a; float physicalWeight=step(.001,cloudQuality);
       float opticalDepth=decodeCloudOpticalDepth(physics.r);
@@ -1178,7 +1194,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       // below a screen pixel, so the slope it recovers is sampling noise rather than cloud
       // structure -- visible as a moire of parallel dashes. Let the deck settle back onto the
       // shell where the sampling can no longer support relief.
-      float reliefConfidence=smoothstep(.14,.46,dot(normalize(vViewNormal),viewDirection))*cloudReliefPolarConfidence(latitude);
+      float reliefConfidence=smoothstep(.14,.46,dot(normalize(vViewNormal),viewDirection))*cloudReliefPolarConfidence(latitude)*coverageWeight;
       float reliefShade=mix(cloudReliefShading(dot(surfaceDirection,localSun)),
                             cloudReliefShading(dot(reliefNormal,localSun)),reliefConfidence);
       float forward=max(-dot(viewDirection,sunView),0.0);
@@ -1200,7 +1216,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       }
       vec3 cloudLight=litCloud*reliefShade*solar+vec3(1.0,.56,.2)*silver*.48*solar+nightCloud*(1.0-solar);
       float ageTrust=1.0-observationAge*.18;
-      gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.9*ageTrust);
+      gl_FragColor=vec4(cloud.rgb*cloudLight,cloud.a*density*.9*ageTrust*coverageWeight);
     }`
 });
 const clouds = new THREE.Mesh(new THREE.SphereGeometry(1, 192, 192), cloudMaterial);
@@ -1216,6 +1232,8 @@ function installCloudUniforms(material: THREE.ShaderMaterial, from: { cloudOpaci
   material.uniforms.cloudAgeFrom.value = from.cloudAge ?? cloudAgeMap;
   material.uniforms.cloudAgeTo.value = to.cloudAge ?? cloudAgeMap;
   material.uniforms.cloudMix.value = mix;
+  material.uniforms.cloudCoverageFrom.value.fromArray(from.cloudOpacity.userData.cloudCoverage ?? [-90,90]);
+  material.uniforms.cloudCoverageTo.value.fromArray(to.cloudOpacity.userData.cloudCoverage ?? [-90,90]);
 }
 
 cloudObservationController = createCloudObservationController<THREE.Texture>({
@@ -1510,6 +1528,9 @@ qualifyPreparedEarthStateRendering = async (prepared, tier) => {
     assign(material, 'cloudAgeFrom', texture(cloudFrom.cloudAge, previewLayers.cloudAge, 'cloudAge from-frame'));
     assign(material, 'cloudAgeTo', texture(cloudTo.cloudAge, previewLayers.cloudAge, 'cloudAge to-frame'));
     assign(material, 'cloudMix', cloudFrames ? .5 : 0);
+    for (const [suffix, frame] of [['From', cloudFrames?.[0]], ['To', cloudFrames?.[1]]] as const) {
+      assign(material, `cloudCoverage${suffix}`, new THREE.Vector2(...cloudRenderCoverage(frame?.coverage)));
+    }
   }
   assign(moonMaterial, 'moonMap', texture(active.resources.moonAlbedo, previewResources.moonAlbedo, 'moonAlbedo'));
   assign(milkyWayMaterial, 'map', texture(active.resources.milkyWay, previewResources.milkyWay, 'milkyWay'));

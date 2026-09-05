@@ -28,12 +28,17 @@ export function addCryosphereAnalysis(manifest, { selection, metadata, snowAsset
     manifest.layers.seaIce?.datasetId,
   ].filter(Boolean));
   manifest.datasets = manifest.datasets.filter(dataset => !replacedIds.has(dataset.id));
+  const contributors = [selection.analysis?.northernPrimary, selection.analysis?.globalFallback?.snow,
+    selection.analysis?.globalFallback?.seaIce, selection.refinement,
+    ...(selection.analysis?.seaIceConcentration ?? [])].filter(Boolean);
+  const starts = [metadata.validAt, ...contributors.map(source => source.observedFrom ?? source.validAt).filter(Boolean)].sort();
+  const ends = [metadata.validAt, ...contributors.map(source => source.observedTo ?? source.validAt).filter(Boolean)].sort();
   manifest.datasets.push({
     id: datasetId,
     version: [...new Set(Object.values(metadata.layers).map(layer => layer.sourceVersion))].join(' | '),
     attribution: [...new Set(Object.values(metadata.layers).map(layer => layer.attribution))].join(' | '),
-    observedFrom: metadata.validAt,
-    observedTo: metadata.validAt,
+    observedFrom: starts[0],
+    observedTo: ends.at(-1),
   });
   const provenance = name => ({
     validAt: metadata.validAt,
@@ -50,10 +55,11 @@ export function addCryosphereAnalysis(manifest, { selection, metadata, snowAsset
   });
   manifest.layers.seaIce = layerDescriptor({
     datasetId,
-    units: 'sea-ice concentration fraction',
+    units: metadata.layers.seaIce.interpretation === 'categorical-extent' ? 'categorical ice presence (not concentration)' : metadata.layers.seaIce.interpretation ? 'sea-ice concentration with categorical extent fallback' : 'sea-ice concentration fraction',
     dimensions: metadata.dimensions,
     asset: seaIceAsset,
     provenance: provenance('seaIce'),
   });
+  manifest.layers.seaIce.channels.b = 'source code: 0 unknown, 1/3 global analysis, 2/3 IMS extent, 1 OSI SAF concentration';
   return manifest;
 }

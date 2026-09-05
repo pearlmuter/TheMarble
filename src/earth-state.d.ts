@@ -102,6 +102,10 @@ export interface EarthStateSurfaceLayer extends EarthStateLayer {
 
 export interface EarthStateCryosphereLayer extends EarthStateLayer {
   provenance: {
+    processingVersion?: string;
+    referenceTime?: string;
+    interpretation?: 'categorical-extent' | 'concentration-with-extent-fallback';
+    concentrationSources?: Array<{ product: string; version: string; validAt: string; observedFrom?: string; observedTo?: string; attribution: string }>;
     validAt: string;
     producedAt: string;
     retrievedAt: string;

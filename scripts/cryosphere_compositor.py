@@ -19,6 +19,8 @@ SOURCE_NONE = np.uint8(0)
 SOURCE_GLOBAL_FALLBACK = np.uint8(1)
 SOURCE_IMS = np.uint8(2)
 SOURCE_VIIRS = np.uint8(3)
+# Per-layer source codes: VIIRS never contributes to sea ice.
+SOURCE_CONCENTRATION = np.uint8(3)
 QUALITY_DARK = np.float32(0)
 MIN_VIIRS_QUALITY = np.float32(0.9)
 
@@ -87,6 +89,24 @@ def compose_cryosphere(
     return snow, sea_ice, snow_source, sea_ice_source
 
 
+def apply_concentration(ims, sea_ice, source, concentrations):
+    """Measured ocean fraction supersedes categorical extent, never IMS land/lakes.
+
+    A valid zero is open water. A NaN leaves the original classification intact.
+    IMS class 3 includes lakes; OSI SAF's lake/land/coastal flags remain excluded.
+    """
+    confidence = _texture(sea_ice, source)[..., 1]
+    for values, quality in concentrations:
+        _require_same_shape(ims, values, "sea ice concentration")
+        _require_same_shape(ims, quality, "concentration quality")
+        accepted = np.isfinite(values) & (values >= 0) & (values <= 1) & (quality >= .8)
+        accepted &= ~np.isin(ims, [2, 4])
+        sea_ice[accepted] = values[accepted]
+        source[accepted] = SOURCE_CONCENTRATION
+        confidence[accepted] = quality[accepted]
+    return confidence
+
+
 def _load_array(path, name):
     values = np.load(path, allow_pickle=False)
     if values.ndim != 2:
@@ -128,8 +148,15 @@ def _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice):
     snow, sea_ice, snow_source, sea_ice_source = compose_cryosphere(
         ims, fallback_snow, fallback_sea_ice, viirs, quality
     )
+    concentration_inputs = [
+        (_load_array(path, "concentration"), _load_array(quality, "concentration quality"))
+        for path, quality in zip(getattr(arguments, "concentration", []) or [], getattr(arguments, "concentration_quality", []) or [])
+    ]
+    sea_confidence = apply_concentration(ims, sea_ice, sea_ice_source, concentration_inputs)
+    sea_texture = _texture(sea_ice, sea_ice_source)
+    sea_texture[..., 1] = sea_confidence
     Image.fromarray(np.clip(_texture(snow, snow_source) * 255, 0, 255).astype(np.uint8), mode="RGB").save(arguments.snow, optimize=True)
-    Image.fromarray(np.clip(_texture(sea_ice, sea_ice_source) * 255, 0, 255).astype(np.uint8), mode="RGB").save(arguments.sea_ice, optimize=True)
+    Image.fromarray(np.clip(sea_texture * 255, 0, 255).astype(np.uint8), mode="RGB").save(arguments.sea_ice, optimize=True)
     latitudes = 90.0 - (np.arange(ims.shape[0], dtype=np.float64) + .5) * (180.0 / ims.shape[0])
     weights = np.broadcast_to(np.cos(np.deg2rad(latitudes))[:, None], ims.shape)
     weighted_fraction = lambda mask: float(np.sum(mask * weights) / np.sum(weights))
@@ -159,7 +186,13 @@ def _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice):
         "dimensions": {"width": int(snow.shape[1]), "height": int(snow.shape[0])},
         "layers": {
             "snowCover": {"coverage": coverage(fallback_snow)},
-            "seaIce": {"coverage": coverage(fallback_sea_ice)},
+            "seaIce": {"coverage": {
+                **coverage(np.where(sea_ice_source == SOURCE_CONCENTRATION, sea_ice, fallback_sea_ice)),
+                "observedFraction": weighted_fraction((sea_ice_source == SOURCE_IMS) | (sea_ice_source == SOURCE_CONCENTRATION)),
+                "fallbackFraction": weighted_fraction(sea_ice_source == SOURCE_GLOBAL_FALLBACK),
+                "concentrationFraction": weighted_fraction(sea_ice_source == SOURCE_CONCENTRATION),
+                "extentFraction": weighted_fraction(sea_ice_source == SOURCE_IMS),
+            }},
         },
         "fallback": arguments.fallback,
         "attribution": arguments.attribution,
@@ -169,6 +202,8 @@ def _compose_loaded(arguments, ims, fallback_snow, fallback_sea_ice):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ims")
+    parser.add_argument("--concentration", action="append")
+    parser.add_argument("--concentration-quality", action="append")
     parser.add_argument("--fallback-snow")
     parser.add_argument("--fallback-sea-ice")
     parser.add_argument("--viirs-snow")
@@ -185,6 +220,8 @@ def main():
     arguments = parser.parse_args()
     if (arguments.viirs_snow is None) != (arguments.viirs_quality is None):
         parser.error("--viirs-snow and --viirs-quality must be supplied together")
+    if len(arguments.concentration or []) != len(arguments.concentration_quality or []):
+        parser.error("each concentration needs its paired quality array")
     compose_files(arguments)
 
 

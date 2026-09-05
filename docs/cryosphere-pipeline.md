@@ -2,9 +2,23 @@
 
 TheMarble treats snow-covered land and sea ice as two physical surface states, never as cloud imagery. The daily producer creates two EPSG:4326 equirectangular RGB textures. Red is fractional coverage, green is analysis confidence, and blue identifies the contributing analysis (global fallback, IMS, or VIIRS refinement).
 
+## Production update — 2026-09-05
+
+Production uses the public IMS 4 km numerical NetCDF, inverse-projected through
+its own CF metadata. OSI SAF OSI-401-d v4.1 supplies quality-screened daily 10 km
+sea-ice concentration in both hemispheres. Measured concentration supersedes IMS
+ice extent over accepted ocean pixels; excluded coastal, lake, land or uncertain
+pixels retain the extent fallback. Unobserved stays distinct from open water.
+Each source retains its own analysis date. The source catalog and menu explicitly
+distinguish categorical extent from concentration. See [validation and plan](polar-cloud-plan.md).
+
+The hierarchy below describes other supported inputs; GMASI and VIIRS endpoints
+are still not configured in production. Native 4 km is delivered to the existing
+4096 × 2048 globe grid, whose latitude resolution remains about 9.8 km.
+
 ## Source hierarchy
 
-1. **U.S. National Ice Center Interactive Multisensor Snow and Ice Mapping System (IMS), 1 km** is authoritative over its Northern Hemisphere coverage. Its fixed categories are outside coverage, open water, snow-free land, sea/lake ice, and snow-covered land.
+1. **U.S. National Ice Center Interactive Multisensor Snow and Ice Mapping System (IMS), 4 km in production** is authoritative over its Northern Hemisphere coverage. Its fixed categories are outside coverage, open water, snow-free land, sea/lake ice, and snow-covered land.
 2. **NOAA GMASI, approximately 2 km daily global snow/ice** is the preferred documented fill for the Southern Hemisphere and any missing IMS pixel. The selector also accepts the NASA/JAXA AMSR2 unified daily snow-water-equivalent and 12.5 km sea-ice products as a lower-resolution contingency when a current GMASI delivery is unavailable.
 3. **NASA VIIRS VNP10_NRT V2, 375 m** may refine recent snow edges only where its quality input says the retrieval is recent, sunlit, clear, and high-confidence. It cannot repaint stable analysis interiors.
 
@@ -21,13 +35,13 @@ AMSR2’s public GIBS layers are a supported contingency, not the preferred oper
 
 ## Conservative fusion rules
 
-- IMS overrides the global analysis wherever IMS supplies a valid class.
+- IMS overrides the global categorical analysis wherever it supplies a valid class. Accepted OSI SAF concentration then supersedes that ice-presence classification over ocean.
 - The global analysis fills the Southern Hemisphere and IMS class `0` (outside coverage).
 - VIIRS can add or remove snow only on a one-pixel analysis boundary and only at quality `>= 0.9`.
 - Cloud, darkness, staleness, missing retrievals, or low quality leave the trusted analysis unchanged.
 - VIIRS never changes sea ice in this stage.
-- A daily state is publishable only when both global snow and global sea-ice grids exist for one UTC day. A missing IMS day is explicit fallback, not a failed or falsely complete publication.
-- The publisher never republishes or regresses an already-published UTC analysis day.
+- A daily state needs either the global snow/ice pair or an accepted Northern Hemisphere IMS analysis. Optional concentration retains its own day, no later than the selected analysis and at most one day older.
+- The publisher never regresses an analysis day. A changed processing version may replace the same day once to correct processing without falsifying observation time.
 
 ## Producer input and publication
 

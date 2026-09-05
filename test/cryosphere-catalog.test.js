@@ -84,7 +84,7 @@ test('half a global pair is ignored rather than published as a global analysis',
   const catalog = build([product('ims-snow-ice', { coverage: northern }), product('gmasi-snow')]);
   assert.equal(catalog.selection.analysis.globalFallback, undefined);
   assert.equal(catalog.selection.analysis.northernPrimary.product, 'ims-snow-ice');
-  assert.match(catalog.selection.fallback.reason, /Southern Hemisphere is not observed/i);
+  assert.match(catalog.selection.fallback.reason, /Southern Hemisphere snow is not observed/i);
 });
 
 test('a day with neither a global pair nor northern IMS is refused', () => {
@@ -165,13 +165,9 @@ test('the configured IMS endpoint is the archive that serves values, not the one
   // NSIDC archive serves the documented class grid itself.
   assert.doesNotMatch(ims.urlTemplate, /ImageServer|arcgis|WMS|GetMap/i);
   assert.match(ims.urlTemplate, /noaadata\.apps\.nsidc\.org\/NOAA\/G02156\//);
-  // A polar square needs its coordinates, and a headerless grid needs its shape.
-  assert.equal(ims.input.kind, 'scattered');
-  for (const axis of ['latitudes', 'longitudes']) {
-    assert.ok(ims.input.grids[axis].url);
-    assert.ok(Array.isArray(ims.input.grids[axis].shape));
-    assert.ok(ims.input.grids[axis].dtype);
-  }
+  // The native numerical product carries its own projection and metre axes.
+  assert.equal(ims.input.kind, 'ims-netcdf');
+  assert.match(ims.urlTemplate, /netcdf\/4km\/.*_4km_v1\.3\.nc\.gz$/);
   assert.deepEqual(ims.semantics.allowed, [0, 1, 2, 3, 4]);
 });
 
@@ -191,4 +187,15 @@ test('a real environment override still wins over the configured endpoint', () =
 test('a source with neither an override nor a configured endpoint has none', () => {
   assert.equal(configuredEndpoint('', null), undefined);
   assert.equal(configuredEndpoint(undefined, undefined), undefined);
+});
+
+test('a newer concentration day does not discard the observation matching delayed IMS', () => {
+  const { products } = newestObservedCryosphereDays([
+    product('ims-snow-ice', { validAt: '2026-08-29T00:00:00Z', coverage: northern }),
+    ...['29', '30'].map(day => product('osisaf-concentration-nh', {
+      validAt: `2026-08-${day}T00:00:00Z`, qualityArrayPath: `quality-${day}.npy`,
+    })),
+  ]);
+  const catalog = build(products);
+  assert.equal(catalog.selection.analysis.seaIceConcentration[0].validAt, '2026-08-29T00:00:00Z');
 });

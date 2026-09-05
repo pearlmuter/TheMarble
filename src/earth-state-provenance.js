@@ -67,8 +67,12 @@ function cryospherePresentation(label, layer) {
     ? ` · observed ${Math.abs(south).toFixed(1)}°${south < 0 ? 'S' : 'N'}–${north.toFixed(1)}°N`
     : '';
   const gap = unobserved > 0 ? ` · ${unobserved}% not observed` : '';
+  const interpretation = provenance.interpretation === 'categorical-extent'
+    ? ' · ice presence only; concentration not measured'
+    : provenance.interpretation === 'concentration-with-extent-fallback'
+      ? ` · measured concentration with IMS extent fallback · concentration analyses ${[...new Set((provenance.concentrationSources ?? []).map(source => utcDate(source.validAt)))].join(', ')}` : '';
   return {
-    detail: `${label} · valid ${utcDate(provenance.validAt)} · ${observed}% observed · ${fallback}% seasonal fallback${gap}${band} · source ${provenance.sourceVersion} · ${provenance.attribution}`,
+    detail: `${label}${interpretation} · valid ${utcDate(provenance.validAt)} · ${observed}% observed · ${fallback}% seasonal fallback${gap}${band} · source ${provenance.sourceVersion} · ${provenance.attribution}`,
     summary: `${label} is valid ${utcDate(provenance.validAt)}, ${observed}% observed and ${fallback}% seasonal fallback${unobserved > 0 ? `, with ${unobserved}% not observed` : ''}.`,
   };
 }

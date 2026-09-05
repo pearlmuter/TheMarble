@@ -79,10 +79,10 @@ export const CLOUD_RELIEF_SAMPLE_UV = .001;
 // latitude where that binds -- roughly 87 -- the slope cannot be recovered at all and the deck
 // settles back onto the shell.
 export const CLOUD_RELIEF_MAX_STEP_UV = .02;
-// Slopes recovered this way are shallower than real convective walls, because the height comes
-// from a smoothed opacity field rather than from lidar. Exaggerating the slope restores the
-// relief the data implies without inventing structure that is not in it.
-export const CLOUD_RELIEF_EXAGGERATION = 34;
+// The opacity-derived height is illustrative, not a retrieved topography. A modest
+// slope scale preserves large decks without amplifying source pixels into spiky walls.
+// The former 34x scale produced granular ridges in close views.
+export const CLOUD_RELIEF_EXAGGERATION = 4;
 export const EARTH_RADIUS_KM = 6371;
 
 // How dark a cast cloud shadow gets. The previous ceiling of .34 was far too gentle: a deep

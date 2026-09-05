@@ -38,7 +38,7 @@ test('the daily source configuration names its endpoints without embedding a sec
   const sources = await readJson('config/cryosphere-sources.json');
   const products = sources.sources.map(source => source.product);
   assert.deepEqual(products, [
-    'ims-snow-ice', 'gmasi-snow', 'gmasi-sea-ice', 'amsr2-snow', 'amsr2-sea-ice', 'viirs-snow',
+    'ims-snow-ice', 'gmasi-snow', 'gmasi-sea-ice', 'amsr2-snow', 'amsr2-sea-ice', 'viirs-snow', 'osisaf-concentration-nh', 'osisaf-concentration-sh',
   ]);
   for (const source of sources.sources) {
     assert.ok(source.urlTemplateEnv, `${source.product} must be overridable without editing the repository`);

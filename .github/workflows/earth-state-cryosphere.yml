@@ -48,6 +48,8 @@ jobs:
           aws s3 sync "${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}" artifacts/earth-state --size-only --no-progress
       - name: Build the daily source catalog from the provider adapters
         env:
+          THEMARBLE_OSISAF_NH_URL_TEMPLATE: ${{ vars.THEMARBLE_OSISAF_NH_URL_TEMPLATE }}
+          THEMARBLE_OSISAF_SH_URL_TEMPLATE: ${{ vars.THEMARBLE_OSISAF_SH_URL_TEMPLATE }}
           THEMARBLE_IMS_URL_TEMPLATE: ${{ vars.THEMARBLE_IMS_URL_TEMPLATE }}
           THEMARBLE_GMASI_SNOW_URL_TEMPLATE: ${{ vars.THEMARBLE_GMASI_SNOW_URL_TEMPLATE }}
           THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE: ${{ vars.THEMARBLE_GMASI_SEA_ICE_URL_TEMPLATE }}
