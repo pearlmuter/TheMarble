@@ -28,12 +28,17 @@ export function addCryosphereAnalysis(manifest, { selection, metadata, snowAsset
     manifest.layers.seaIce?.datasetId,
   ].filter(Boolean));
   manifest.datasets = manifest.datasets.filter(dataset => !replacedIds.has(dataset.id));
+  const contributors = [selection.analysis?.northernPrimary, selection.analysis?.globalFallback?.snow,
+    selection.analysis?.globalFallback?.seaIce, selection.refinement,
+    ...(selection.analysis?.seaIceConcentration ?? [])].filter(Boolean);
+  const starts = [metadata.validAt, ...contributors.map(source => source.observedFrom ?? source.validAt).filter(Boolean)].sort();
+  const ends = [metadata.validAt, ...contributors.map(source => source.observedTo ?? source.validAt).filter(Boolean)].sort();
   manifest.datasets.push({
     id: datasetId,
     version: [...new Set(Object.values(metadata.layers).map(layer => layer.sourceVersion))].join(' | '),
     attribution: [...new Set(Object.values(metadata.layers).map(layer => layer.attribution))].join(' | '),
-    observedFrom: metadata.validAt,
-    observedTo: metadata.validAt,
+    observedFrom: starts[0],
+    observedTo: ends.at(-1),
   });
   const provenance = name => ({
     validAt: metadata.validAt,

@@ -199,7 +199,7 @@ async function main() {
           processingVersion: CRYOSPHERE_PROCESSING_VERSION,
           referenceTime: selection.analysis.northernPrimary?.referenceTime,
           interpretation: concentrationSources.length ? 'concentration-with-extent-fallback' : 'categorical-extent',
-          concentrationSources: concentrationSources.map(({ product, version, validAt, attribution }) => ({ product, version, validAt, attribution })),
+          concentrationSources: concentrationSources.map(({ product, version, validAt, observedFrom, observedTo, attribution }) => ({ product, version, validAt, observedFrom, observedTo, attribution })),
           fallback: 'Where measured concentration is unavailable, IMS marks ice presence only; it does not measure complete ice cover. Areas without either source remain unobserved.',
         },
       },

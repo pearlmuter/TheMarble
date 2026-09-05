@@ -16,6 +16,7 @@ export const CRYOSPHERE_ATTRIBUTION = {
 export function newestObservedCryosphereDays(products) {
   const excluded = [];
   const byProduct = new Map();
+  const concentrationDays = [];
   for (const product of [...products].sort((left, right) => right.validAt.localeCompare(left.validAt))) {
     if (!(product.coverage?.observedFraction > 0)) {
       excluded.push({
@@ -25,9 +26,12 @@ export function newestObservedCryosphereDays(products) {
       });
       continue;
     }
-    if (!byProduct.has(product.product)) byProduct.set(product.product, product);
+    // The newest IMS day may lag OSI SAF. Keep concentration dates until the
+    // daily selector can match them to the selected analysis day.
+    if (product.product.startsWith('osisaf-concentration-')) concentrationDays.push(product);
+    else if (!byProduct.has(product.product)) byProduct.set(product.product, product);
   }
-  return { products: [...byProduct.values()], excluded };
+  return { products: [...byProduct.values(), ...concentrationDays], excluded };
 }
 
 const CONTINGENCY_PRODUCTS = new Set(['amsr2-snow', 'amsr2-sea-ice']);
@@ -50,6 +54,7 @@ function candidateFrom(entry) {
     href: `./${entry.arrayPath.replace(/^\.?\//, '')}`,
     coverage: entry.coverage,
     ...(entry.referenceTime ? { referenceTime: entry.referenceTime } : {}),
+    ...(entry.observedFrom ? { observedFrom: entry.observedFrom, observedTo: entry.observedTo } : {}),
     ...(entry.qualityArrayPath ? { qualityHref: `./${entry.qualityArrayPath.replace(/^\.?\//, '')}` } : {}),
     attribution: entry.attribution ?? CRYOSPHERE_ATTRIBUTION[entry.product],
   };

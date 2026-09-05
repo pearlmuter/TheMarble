@@ -31,6 +31,11 @@ export const CLOUD_SAMPLING_GLSL = `
   }
 `;
 
+export function cloudRenderCoverage(coverage) {
+  return coverage && !(coverage.modelAssistedFraction || coverage.fallbackFraction)
+    ? coverage.latitudeRange ?? [-90, 90] : [-90, 90];
+}
+
 export function cloudCoverageWeight(latitude, [south, north]) {
   const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x-a)/(b-a))); return t*t*(3-2*t); };
   return (south <= -89.9 ? 1 : smooth(south,south+1.5,latitude))

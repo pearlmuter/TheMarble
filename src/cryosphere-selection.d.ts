@@ -5,6 +5,8 @@ export interface CryosphereCandidate {
   validAt: string;
   producedAt: string;
   referenceTime?: string;
+  observedFrom?: string;
+  observedTo?: string;
   version: string;
   href: string;
   coverage: { latitudeRange: [number, number]; observedFraction: number };

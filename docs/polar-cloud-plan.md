@@ -37,9 +37,20 @@ The native 4 km NetCDF was checked byte-for-byte against its matching ASCII cate
 
 ## Validation results
 
-- All 387 JavaScript tests and 56 relevant Python tests passed; TypeScript and the production build passed.
+- All 389 JavaScript tests and 56 relevant Python tests passed; TypeScript and the production build passed.
 - Fixed-camera browser captures for Europe, Arctic, Svalbard and the globe completed with no runtime or shader errors. These are appearance checks, not a performance benchmark.
 - Missing pixels in the northernmost five texture rows fell from 96.27% in the frozen production texture to zero. Unknown cells elsewhere retain their missing-data semantics.
 - The independent coordinate comparisons had maximum sampled errors of 0.000014° for IMS and 0.000006° for OSI SAF. Axis reversal, valid zero versus missing, hemisphere limits, and malformed axes have regression coverage.
 - In the September 4 sample, 81°N 18°E is accepted open water; 82°N 18°E is about 54% concentration. This is a dated observation, not a permanent rule for Svalbard.
 - The delivered 4096 × 2048 texture still resolves about 9.8 km per latitude step; the native 4 km source does not imply uniform 4 km display detail. Polar cloud coverage remains incomplete and the feather is an illustrative presentation adjustment.
+
+
+## Review — Standards
+
+No documented integration violations. The review found a misleading Southern Hemisphere fallback explanation and duplicated coverage-band decisions. The explanation now specifies missing southern **snow**, and rendering/qualification share one coverage helper. Both findings are addressed.
+
+## Review — Spec
+
+The review found that catalog reduction could discard concentration matching a delayed IMS day, and that composite observation bounds omitted contributing dates. Concentration dates now survive until daily selection, with a catalog-to-selection regression. Dataset bounds include all contributing dates and the actual OSI SAF daily observation interval, retained through adapter, catalog and provenance. Both findings are addressed and the full suite passes.
+
+Review totals: Standards 2 judgment calls resolved; Spec 2 correctness findings resolved. Publication remains subject to live deployment verification.

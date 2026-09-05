@@ -6,6 +6,7 @@ Land, lakes, coastal contamination, missing values, and uncertainty >20 percenta
 points remain NaN. Zero is reserved for an accepted open-water retrieval.
 """
 import numpy as np
+from datetime import datetime, timedelta
 from netCDF4 import Dataset
 from polar_grid import sample_polar_grid
 
@@ -25,6 +26,10 @@ def read_concentration(path, expected_day, width, height):
         start = str(data.start_date)[:10]
         if start != expected_day:
             raise ValueError('OSI SAF observation date does not match the requested day')
+        observed_from = datetime.fromisoformat(str(data.start_date))
+        observed_to = datetime.fromisoformat(str(data.stop_date))
+        if observed_to - observed_from != timedelta(days=1):
+            raise ValueError('Unexpected OSI SAF daily observation interval')
         if str(data.product_version) != '4.1':
             raise ValueError('Unreviewed OSI SAF concentration product version')
         variable = data['ice_conc']
@@ -39,4 +44,4 @@ def read_concentration(path, expected_day, width, height):
         x, y = np.asarray(data['xc'][:])*1000, np.asarray(data['yc'][:])*1000
         result = sample_polar_grid(values, attributes, x, y, width, height, np.nan)
         confidence = sample_polar_grid(quality, attributes, x, y, width, height, 0)
-        return result, confidence
+        return result, confidence, {'observedFrom': observed_from.isoformat()+'Z', 'observedTo': observed_to.isoformat()+'Z'}

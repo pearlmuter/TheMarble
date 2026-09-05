@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CLOUD_SAMPLING_GLSL } from './cloud-sampling.js';
+import { CLOUD_SAMPLING_GLSL, cloudRenderCoverage } from './cloud-sampling.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
 import { createEarthFixedCamera } from './earth-fixed-camera.js';
@@ -751,8 +751,7 @@ function commitActivatedEarthState({ active: activeEarthState, seasonalSurface }
   if (activeEarthState.cloudSequence) {
     for (const frame of activeEarthState.cloudSequence.frames) {
       requireLoadedTexture(frame.layers.cloudOpacity, 'cloud coverage').userData.cloudCoverage =
-        frame.coverage.modelAssistedFraction || frame.coverage.fallbackFraction
-          ? [-90,90] : frame.coverage.latitudeRange ?? [-90,90];
+        cloudRenderCoverage(frame.coverage);
     }
     const sequence = {
       transitionSeconds: activeEarthState.cloudSequence.transitionSeconds,
@@ -1530,9 +1529,7 @@ qualifyPreparedEarthStateRendering = async (prepared, tier) => {
     assign(material, 'cloudAgeTo', texture(cloudTo.cloudAge, previewLayers.cloudAge, 'cloudAge to-frame'));
     assign(material, 'cloudMix', cloudFrames ? .5 : 0);
     for (const [suffix, frame] of [['From', cloudFrames?.[0]], ['To', cloudFrames?.[1]]] as const) {
-      const band = frame && !(frame.coverage.modelAssistedFraction || frame.coverage.fallbackFraction)
-        ? frame.coverage.latitudeRange ?? [-90,90] : [-90,90];
-      assign(material, `cloudCoverage${suffix}`, new THREE.Vector2(...band as [number,number]));
+      assign(material, `cloudCoverage${suffix}`, new THREE.Vector2(...cloudRenderCoverage(frame?.coverage)));
     }
   }
   assign(moonMaterial, 'moonMap', texture(active.resources.moonAlbedo, previewResources.moonAlbedo, 'moonAlbedo'));

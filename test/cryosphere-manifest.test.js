@@ -76,3 +76,17 @@ test('manifest construction rejects compositor metadata that disagrees with dail
     seaIceAsset: asset('./sea-ice.png'),
   }), /validAt/);
 });
+
+test('composite observation bounds include the actual concentration interval and other source days', () => {
+  const result = addCryosphereAnalysis(baseManifest(), {
+    selection: { validAt: '2026-09-05T00:00:00Z', retrievedAt: '2026-09-06T04:00:00Z', analysis: {
+      northernPrimary: { validAt: '2026-09-05T00:00:00Z' },
+      seaIceConcentration: [{ validAt: '2026-09-04T00:00:00Z', observedFrom: '2026-09-04T00:00:00Z', observedTo: '2026-09-05T00:00:00Z' }],
+    }, refinement: { validAt: '2026-09-05T06:00:00Z' } },
+    metadata: { validAt: '2026-09-05T00:00:00Z', retrievedAt: '2026-09-06T04:00:00Z',
+      layers: { snowCover: {}, seaIce: {} }, dimensions: { width: 360, height: 180 } },
+    snowAsset: asset('./snow.png'), seaIceAsset: asset('./ice.png'),
+  });
+  assert.equal(result.datasets.at(-1).observedFrom, '2026-09-04T00:00:00Z');
+  assert.equal(result.datasets.at(-1).observedTo, '2026-09-05T06:00:00Z');
+});

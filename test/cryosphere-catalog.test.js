@@ -84,7 +84,7 @@ test('half a global pair is ignored rather than published as a global analysis',
   const catalog = build([product('ims-snow-ice', { coverage: northern }), product('gmasi-snow')]);
   assert.equal(catalog.selection.analysis.globalFallback, undefined);
   assert.equal(catalog.selection.analysis.northernPrimary.product, 'ims-snow-ice');
-  assert.match(catalog.selection.fallback.reason, /Southern Hemisphere is not observed/i);
+  assert.match(catalog.selection.fallback.reason, /Southern Hemisphere snow is not observed/i);
 });
 
 test('a day with neither a global pair nor northern IMS is refused', () => {
@@ -187,4 +187,15 @@ test('a real environment override still wins over the configured endpoint', () =
 test('a source with neither an override nor a configured endpoint has none', () => {
   assert.equal(configuredEndpoint('', null), undefined);
   assert.equal(configuredEndpoint(undefined, undefined), undefined);
+});
+
+test('a newer concentration day does not discard the observation matching delayed IMS', () => {
+  const { products } = newestObservedCryosphereDays([
+    product('ims-snow-ice', { validAt: '2026-08-29T00:00:00Z', coverage: northern }),
+    ...['29', '30'].map(day => product('osisaf-concentration-nh', {
+      validAt: `2026-08-${day}T00:00:00Z`, qualityArrayPath: `quality-${day}.npy`,
+    })),
+  ]);
+  const catalog = build(products);
+  assert.equal(catalog.selection.analysis.seaIceConcentration[0].validAt, '2026-08-29T00:00:00Z');
 });

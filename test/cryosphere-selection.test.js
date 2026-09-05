@@ -195,7 +195,7 @@ test('IMS alone publishes the Northern Hemisphere rather than nothing at all', (
   assert.equal(selection.analysis.northernPrimary.product, 'ims-snow-ice');
   assert.equal(selection.analysis.globalFallback, undefined);
   assert.equal(selection.fallback.ims, false);
-  assert.match(selection.fallback.reason, /Southern Hemisphere is not observed/i);
+  assert.match(selection.fallback.reason, /Southern Hemisphere snow is not observed/i);
   assert.equal(selection.publish, true);
 });
 

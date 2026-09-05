@@ -123,7 +123,7 @@ export function selectDailyCryosphere({ candidates, retrievedAt, lastPublishedVa
       ? (northernPrimary
         ? { ims: false }
         : { ims: true, reason: `IMS unavailable for the selected day; global ${globalSnow.product.split('-', 1)[0].toUpperCase()} analysis covers the Northern Hemisphere.` })
-      : { ims: false, reason: 'No global analysis is configured, so IMS covers the Northern Hemisphere and the Southern Hemisphere is not observed.' },
+      : { ims: false, reason: 'No global snow analysis is configured, so IMS covers the Northern Hemisphere and Southern Hemisphere snow is not observed.' },
     publish: !lastPublishedValidAt || Date.parse(validAt) > requireTimestamp(lastPublishedValidAt, 'last published validAt'),
   };
 }

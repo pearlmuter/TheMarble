@@ -105,7 +105,7 @@ export interface EarthStateCryosphereLayer extends EarthStateLayer {
     processingVersion?: string;
     referenceTime?: string;
     interpretation?: 'categorical-extent' | 'concentration-with-extent-fallback';
-    concentrationSources?: Array<{ product: string; version: string; validAt: string; attribution: string }>;
+    concentrationSources?: Array<{ product: string; version: string; validAt: string; observedFrom?: string; observedTo?: string; attribution: string }>;
     validAt: string;
     producedAt: string;
     retrievedAt: string;
