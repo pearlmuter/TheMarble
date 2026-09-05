@@ -10,6 +10,16 @@ Read [`../README.md`](../README.md) for what the system *does*, and
 [`web-integration.md`](web-integration.md) for how it is delivered. This file
 covers only what is done, what is not, and what will bite you.
 
+## Sun and camera update
+
+The 2026-09-05 update replaces the solar glare sprites, shares the
+atmospheric transmission model with the Sun, and adds the menu's “Follow this
+place” switch. See [the review and validation notes](solar-camera-review.md).
+The classroom follow-up adds independent atmospheric integration checks, corrects
+grazing-ray classification and optical-depth precision, and increases sampling
+on the outer rim. See [the scientific validation](sunrise-validation.md).
+Deployment is tracked by the **TheMarble site** workflow after merge to `main`.
+
 ## Where the work stands
 
 `main` is the whole story. Twenty-two branches exist locally — `issue-2` through
@@ -137,7 +147,7 @@ minutes are free; this is a noise decision, not a cost one.
 ## Verifying this yourself
 
 ```sh
-npm test                      # 377 tests, all passing
+npm test                      # 385 tests, all passing
 npx tsc --noEmit              # clean
 gh run list --status failure --limit 20
 gh issue list --state open

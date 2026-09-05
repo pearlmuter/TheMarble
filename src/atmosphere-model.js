@@ -55,6 +55,9 @@ export const SOLAR_IRRADIANCE = Math.PI;
  * for no visible return, and the render is what people leave open on a laptop.
  */
 export const ATMOSPHERE_MARCH_STEPS = 12;
+// Limb-only comparison against independent quadrature found up to 5.4% error at
+// twelve steps, versus 1.5% at twenty-four. Spend extra samples on the narrow arc.
+export const ATMOSPHERE_LIMB_MARCH_STEPS = 24;
 export const ATMOSPHERE_MARCH_CURVATURE = 3;
 
 /**
@@ -62,11 +65,11 @@ export const ATMOSPHERE_MARCH_CURVATURE = 3;
  * arrives at a point after bouncing around the atmosphere more than once, assuming that after
  * the first bounce the distribution is isotropic.
  *
- * This is not polish. Single scattering alone leaves the limb far too dim, because at a tangent
- * the optical depth is several units and the Sun sits on the horizon of the point being looked
- * at — direct sunlight has already been extinguished, and essentially everything visible got
- * there by scattering more than once. That is why the superseded shell needed a synthetic limb
- * envelope: it was standing in for this term.
+ * Its importance depends on wavelength and geometry. The sunrise validation finds single
+ * scattering dominates the blue upper limb in the sampled near-forward views; multiple
+ * scattering contributes fill, particularly where direct light is strongly attenuated.
+ * This approximation has not been independently validated against a full multiple-scattering
+ * reference; see docs/sunrise-validation.md.
  */
 export const MULTIPLE_SCATTERING_LUT_SIZE = 32;
 /** 8 x 8 = 64 directions over the sphere, Hillaire's default. One-time cost. */
@@ -354,6 +357,17 @@ export const ATMOSPHERE_MODEL_GLSL = `
   }
 `;
 
+// The Sun subtends about 0.53 degrees. A point source makes sunrise illumination
+// switch abruptly as its center crosses the horizon; a finite disc gives a penumbra.
+const SOLAR_ANGULAR_RADIUS = 0.00465;
+export function solarHorizonVisibility(radius, sunZenithCosine) {
+  const sinHorizon = GROUND_RADIUS / Math.max(radius, GROUND_RADIUS);
+  const cosHorizon = -Math.sqrt(Math.max(0, 1 - sinHorizon * sinHorizon));
+  const width = sinHorizon * SOLAR_ANGULAR_RADIUS;
+  const t = Math.max(0, Math.min(1, (sunZenithCosine - cosHorizon + width) / (2 * width)));
+  return t * t * (3 - 2 * t);
+}
+
 /** Lookups against the baked transmittance texture. Requires ATMOSPHERE_MODEL_GLSL first. */
 export const ATMOSPHERE_TRANSMITTANCE_GLSL = `
   vec3 atmosphereTransmittanceToTop(sampler2D lut,float r,float mu){
@@ -374,8 +388,13 @@ export const ATMOSPHERE_TRANSMITTANCE_GLSL = `
   vec3 atmosphereSunTransmittance(sampler2D lut,vec3 position,vec3 sunDirection){
     float r=max(length(position),GROUND_RADIUS);
     float muSun=dot(position/r,sunDirection);
-    if(atmosphereRayHitsGround(r,muSun)) return vec3(0.0);
-    return atmosphereTransmittanceToTop(lut,r,muSun);
+    float sinHorizon=GROUND_RADIUS/r;
+    float cosHorizon=-sqrt(max(0.0,1.0-sinHorizon*sinHorizon));
+    float width=sinHorizon*${SOLAR_ANGULAR_RADIUS};
+    float visible=smoothstep(-width,width,muSun-cosHorizon);
+    // Never query the LUT below the ground horizon: use the grazing column for
+    // the last sliver, following Bruneton's finite-disc horizon approximation.
+    return visible*atmosphereTransmittanceToTop(lut,r,max(muSun,cosHorizon));
   }
   // Bunches samples toward the lowest point of the segment. See ATMOSPHERE_MARCH_STEPS.
   float atmosphereMarchDistance(float u,float t0,float tc,float t1){

@@ -73,3 +73,17 @@ h1 { margin: 0; font-family: "Playfair Display", Georgia, serif; font-size: clam
   .provenance-sections { grid-template-columns: 1fr; }
   .provenance-section-wide { grid-column: auto; }
 }
+
+.camera-setting { padding: 1rem 0; border-bottom: 1px solid rgba(164, 202, 222, .13); }
+.camera-toggle { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 2.75rem; font-size: .75rem; cursor: pointer; }
+.camera-toggle input { appearance: none; flex-shrink: 0; width: 2.6rem; height: 1.5rem; margin: 0; border: 1px solid #688292; border-radius: 1rem; background: #243442; cursor: pointer; }
+.camera-toggle input::before { content: ""; display: block; width: 1rem; height: 1rem; margin: .18rem; border-radius: 50%; background: #d7e5eb; transition: transform .18s ease; }
+.camera-toggle input:checked { background: #367b93; border-color: #94d1e5; }
+.camera-toggle input:checked::before { transform: translateX(1.08rem); background: #fff; }
+.camera-toggle input:focus-visible { outline: 2px solid #b5e8f7; outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) { .camera-toggle input::before { transition: none; } }
+
+.view-model { margin-top: .85rem; color: #aebfca; font-size: .65rem; line-height: 1.65; }
+.view-model summary { min-height: 2rem; cursor: pointer; color: #d8edf7; }
+.view-model summary:focus-visible { outline: 1px solid #b5e8f7; outline-offset: 3px; }
+.view-model p { margin: .4rem 0 .7rem; }

@@ -61,3 +61,8 @@ export const TRANSMITTANCE_LUT_FRAGMENT_SHADER: string;
 export const MULTIPLE_SCATTERING_LUT_FRAGMENT_SHADER: string;
 export const ATMOSPHERE_SKY_RADIANCE_GLSL: string;
 export const SKY_IRRADIANCE_LUT_FRAGMENT_SHADER: string;
+
+/** Fraction of the finite solar disc above a spherical horizon. */
+export function solarHorizonVisibility(radius: number, sunZenithCosine: number): number;
+
+export const ATMOSPHERE_LIMB_MARCH_STEPS: number;
