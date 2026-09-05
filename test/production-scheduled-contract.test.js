@@ -30,6 +30,14 @@ test('the production smoke adapter uses a real browser and retains its report', 
   const [, readyTimeout] = source.match(/const READY_TIMEOUT_MS = EARTH_STATE_ACTIVATION_TIMEOUT_MS \+ ([0-9_]+)/);
   assert.ok(Number(readyTimeout.replaceAll('_', '')) > 0);
   assert.ok(EARTH_STATE_ACTIVATION_TIMEOUT_MS >= 300_000);
+  // Defining the budget is not spending it. Both readiness waits observe the same
+  // activation, so each must draw on one shared deadline built from READY_TIMEOUT_MS.
+  // A literal timeout on either -- an overlay wait capped below the app's deadline
+  // was reporting healthy production as a stale client -- is the regression here.
+  assert.match(source, /const readyBy = Date\.now\(\) \+ READY_TIMEOUT_MS/);
+  assert.match(source, /waitForSelector\('#loading\[aria-hidden="true"\]', \{ timeout: remaining\(\) \}\)/);
+  assert.match(source, /\}, undefined, \{ timeout: remaining\(\) \}\)/);
+  assert.doesNotMatch(source, /timeout: [0-9_]+ \}\);\s*await page\.waitForFunction/);
 });
 
 test('scheduled production health retains diagnostics and the cross-run soak history even on failure', async () => {

@@ -44,11 +44,18 @@ async function main() {
         try {
           try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-            await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: 120_000 });
+            // Both waits watch one activation -- the overlay lifts when it resolves
+            // and the refresh marker settles just after -- so they share one budget
+            // instead of each holding a full one. A per-wait timeout would let a
+            // single view outlast the job, and a timeout shorter than the app's own
+            // deadline would report a harness timeout instead of the app's answer.
+            const readyBy = Date.now() + READY_TIMEOUT_MS;
+            const remaining = () => Math.max(1, readyBy - Date.now());
+            await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: remaining() });
             await page.waitForFunction(() => {
               const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
               return refresh === 'current' || refresh === 'failed';
-            }, undefined, { timeout: READY_TIMEOUT_MS });
+            }, undefined, { timeout: remaining() });
             await page.waitForTimeout(1_000);
           } catch (error) {
             pageErrors.push(`Production view did not become ready: ${error.message ?? String(error)}`);
