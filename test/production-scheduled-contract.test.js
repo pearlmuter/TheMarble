@@ -38,6 +38,13 @@ test('the production smoke adapter uses a real browser and retains its report', 
   assert.match(source, /waitForSelector\('#loading\[aria-hidden="true"\]', \{ timeout: remaining\(\) \}\)/);
   assert.match(source, /\}, undefined, \{ timeout: remaining\(\) \}\)/);
   assert.doesNotMatch(source, /timeout: [0-9_]+ \}\);\s*await page\.waitForFunction/);
+  // A readiness wait that gave up is not a page error. A publish landing mid-run
+  // makes the client activate a second bundle, and the view arrives after the
+  // wait stopped watching -- reporting that as the app's fault fails a healthy
+  // view. The currentness read decides; the timeout is kept only when it didn't.
+  assert.doesNotMatch(source, /pageErrors\.push\(`Production view did not become ready/);
+  assert.match(source, /readyError = `Production view did not become ready/);
+  assert.match(source, /if \(readyError && !\(currentness\.runtimeSource === 'remote' && currentness\.refresh === 'current'\)\) \{\s*\n\s*pageErrors\.push\(readyError\);/);
 });
 
 test('scheduled production health retains diagnostics and the cross-run soak history even on failure', async () => {

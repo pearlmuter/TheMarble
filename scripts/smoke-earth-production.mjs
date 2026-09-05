@@ -42,6 +42,7 @@ async function main() {
         });
         page.on('pageerror', error => pageErrors.push(error.message));
         try {
+          let readyError;
           try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
             // Both waits watch one activation -- the overlay lifts when it resolves
@@ -58,7 +59,7 @@ async function main() {
             }, undefined, { timeout: remaining() });
             await page.waitForTimeout(1_000);
           } catch (error) {
-            pageErrors.push(`Production view did not become ready: ${error.message ?? String(error)}`);
+            readyError = `Production view did not become ready: ${error.message ?? String(error)}`;
           }
           const currentness = await page.locator('#earth-state-summary').evaluate(element => ({
             bundleId: element.getAttribute('data-bundle-id') ?? '',
@@ -69,6 +70,16 @@ async function main() {
             pageErrors.push(`Production currentness marker unavailable: ${error.message ?? String(error)}`);
             return { bundleId: '', runtimeSource: '', refresh: '' };
           });
+          // The read above is the authority, not the wait. A view that reached
+          // production data was ready; the wait merely stopped watching first,
+          // which happens when a publish lands mid-run and the client activates a
+          // second bundle. Reporting that as a page error is the same mistake as
+          // timing out before the app's own deadline -- it fails a healthy view
+          // for the harness's impatience. When the view genuinely did not arrive,
+          // the timeout is the only account of why, so it is kept.
+          if (readyError && !(currentness.runtimeSource === 'remote' && currentness.refresh === 'current')) {
+            pageErrors.push(readyError);
+          }
           return {
             ...currentness,
             consoleErrors,
