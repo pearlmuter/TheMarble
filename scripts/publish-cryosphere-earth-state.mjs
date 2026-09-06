@@ -193,7 +193,7 @@ async function main() {
     const metadata = {
       ...compositorMetadata,
       layers: {
-        snowCover: { referenceTime: selection.analysis.northernPrimary?.referenceTime, ...sourceIdentity(snowSources), coverage: compositorMetadata.layers.snowCover.coverage, fallback },
+        snowCover: { processingVersion: CRYOSPHERE_PROCESSING_VERSION, referenceTime: selection.analysis.northernPrimary?.referenceTime, ...sourceIdentity(snowSources), coverage: compositorMetadata.layers.snowCover.coverage, fallback },
         seaIce: {
           ...sourceIdentity(seaIceSources), coverage: compositorMetadata.layers.seaIce.coverage,
           processingVersion: CRYOSPHERE_PROCESSING_VERSION,

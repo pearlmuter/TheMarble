@@ -11,8 +11,8 @@ export interface EarthStateFeedCloudLayer {
 export interface EarthStateFeedLayers {
   bundleId: string;
   clouds?: EarthStateFeedCloudLayer;
-  snowCover?: { validAt: string };
-  seaIce?: { validAt: string };
+  snowCover?: { validAt: string; processingVersion?: string };
+  seaIce?: { validAt: string; processingVersion?: string };
 }
 
 export type EarthStateFeedStageName = 'clouds' | 'cryosphere';
@@ -35,6 +35,7 @@ export interface EarthStateFeedRunReport {
   coherent: boolean;
   severity: 'ok' | 'degraded' | 'broken';
   advanced: string[];
+  reprocessed: string[];
   retained: string[];
   stages: EarthStateFeedStage[];
   problems: EarthStateFeedProblem[];
