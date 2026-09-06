@@ -2,8 +2,8 @@ import type { OrbitMapScale } from './map-view-scale.js';
 
 interface ViewReading {
   scale?: OrbitMapScale;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
   viewportWidth: number;
   viewportHeight: number;
   fov: number;
@@ -48,7 +48,8 @@ export function createViewDebug({ root, defaultRelief, onRelief, readView }: {
     zoom.value = view.scale ? `z ${view.scale.zoom.toFixed(2)}` : 'Unavailable';
     scale.value = view.scale ? `${view.scale.metersPerPixel.toFixed(1)} m / px` : 'Unavailable';
     altitude.value = view.scale ? `${view.scale.altitudeKm.toFixed(0)} km` : 'Unavailable';
-    location.value = `${view.latitude.toFixed(3)}°, ${view.longitude.toFixed(3)}°`;
+    location.value = view.latitude !== undefined && view.longitude !== undefined
+      ? `${view.latitude.toFixed(3)}°, ${view.longitude.toFixed(3)}°` : 'Unavailable';
     viewport.value = `${view.viewportWidth} × ${view.viewportHeight} px · ${view.fov.toFixed(1)}° FOV`;
   };
   const update = (now: number) => {
@@ -66,7 +67,7 @@ export function createViewDebug({ root, defaultRelief, onRelief, readView }: {
       `Map zoom: ${view.scale?.zoom.toFixed(3) ?? 'unavailable'} (256 px tiles, equator equivalent)`,
       `Centre ground scale: ${view.scale?.metersPerPixel.toFixed(2) ?? 'unavailable'} metres per CSS pixel`,
       `Altitude: ${view.scale?.altitudeKm.toFixed(2) ?? 'unavailable'} km`,
-      `Centre latitude/longitude: ${view.latitude.toFixed(5)}, ${view.longitude.toFixed(5)}`,
+      `Centre latitude/longitude: ${view.latitude?.toFixed(5) ?? 'unavailable'}, ${view.longitude?.toFixed(5) ?? 'unavailable'}`,
       `Viewport: ${view.viewportWidth} × ${view.viewportHeight} CSS px; vertical FOV: ${view.fov.toFixed(2)}°`,
       `Earth state: ${view.bundleId || 'loading'}`,
     ].join('\n');

@@ -332,10 +332,11 @@ const viewDebug = createViewDebug({
   onRelief: value => { cloudReliefUniform.value = value; },
   readView: () => {
     const local = camera.position.clone().normalize().applyQuaternion(planet.quaternion.clone().invert());
+    const earthCentred = controls.target.lengthSq() < 1e-12;
     return {
-      scale: orbitMapScale({ distanceEarthRadii: camera.position.length(), verticalFovDegrees: camera.getEffectiveFOV(), viewportHeightCssPixels: canvas.clientHeight, earthRadiusMeters: EARTH_EQUATORIAL_RADIUS_KM * 1000 }),
-      latitude: Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)) * 180 / Math.PI,
-      longitude: -Math.atan2(local.z, local.x) * 180 / Math.PI,
+      scale: earthCentred ? orbitMapScale({ distanceEarthRadii: camera.position.length(), verticalFovDegrees: camera.getEffectiveFOV(), viewportHeightCssPixels: canvas.clientHeight, earthRadiusMeters: EARTH_EQUATORIAL_RADIUS_KM * 1000 }) : undefined,
+      latitude: earthCentred ? Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)) * 180 / Math.PI : undefined,
+      longitude: earthCentred ? -Math.atan2(local.z, local.x) * 180 / Math.PI : undefined,
       viewportWidth: canvas.clientWidth, viewportHeight: canvas.clientHeight,
       fov: camera.getEffectiveFOV(), time: sceneNow().toISOString(),
       bundleId: earthStateSummary.dataset.bundleId ?? '',

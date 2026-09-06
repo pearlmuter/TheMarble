@@ -14,7 +14,7 @@ Let the user compare cloud relief interactively and report an objective map-styl
 
 The camera looks at Earth's centre and panning is disabled. For centre-ray altitude `h`, effective vertical field of view `f`, and viewport CSS height `H`, the differential ground scale is `m = 2 h tan(f/2) / H`. The equivalent 256-pixel equatorial tile zoom is `z = log2(2 π R / (256 m))`, using the renderer's Earth radius (6378137 m).
 
-This is an **equator-normalized, centre-scale equivalent**, not a global extent or a latitude-adjusted local Mercator zoom. It stays comparable while orbiting toward the poles. Perspective scale changes toward the limb. Window height and field of view affect the reading; device pixel ratio does not. At a given scale, a 512-pixel tile convention is one zoom level lower. The readout does not imply the source contains that much detail.
+This is an **equator-normalized, centre-scale equivalent**, not a global extent or a latitude-adjusted local Mercator zoom. It stays comparable while orbiting toward the poles. Perspective scale changes toward the limb. Window height and field of view affect the reading; device pixel ratio does not. At a given scale, a 512-pixel tile convention is one zoom level lower. The readout does not imply the source contains that much detail. Scale and location are unavailable in the special Moon-targeted reference scene because its centre ray does not point at Earth.
 
 References: [Mapbox tile size and zoom conventions](https://docs.mapbox.com/help/glossary/zoom-level/), [GDAL's distinction between unit scaling and vertical exaggeration](https://gdal.org/en/stable/programs/gdal_raster_hillshade.html).
 
