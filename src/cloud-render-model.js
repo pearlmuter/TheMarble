@@ -157,11 +157,11 @@ export const CLOUD_RENDER_GLSL = `
     return 1.0-smoothstep(${glslFloat(CLOUD_RELIEF_MAX_STEP_UV)}*0.6,${glslFloat(CLOUD_RELIEF_MAX_STEP_UV)},
       ${glslFloat(CLOUD_RELIEF_SAMPLE_UV)}/max(cos(latitude),1e-3));
   }
-  vec3 cloudReliefNormal(vec3 surfaceNormal,float heightEast,float heightWest,float heightNorth,float heightSouth,float latitude){
+  vec3 cloudReliefNormal(vec3 surfaceNormal,float heightEast,float heightWest,float heightNorth,float heightSouth,float latitude,float exaggeration){
     float eastKm=2.0*PI*${glslFloat(EARTH_RADIUS_KM)}*max(cos(latitude),1e-3)*cloudReliefStepU(latitude);
     float northKm=PI*${glslFloat(EARTH_RADIUS_KM)}*${glslFloat(CLOUD_RELIEF_SAMPLE_UV)};
-    float slopeEast=(heightEast-heightWest)/(2.0*eastKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
-    float slopeNorth=(heightNorth-heightSouth)/(2.0*northKm)*${glslFloat(CLOUD_RELIEF_EXAGGERATION)};
+    float slopeEast=(heightEast-heightWest)/(2.0*eastKm)*exaggeration;
+    float slopeNorth=(heightNorth-heightSouth)/(2.0*northKm)*exaggeration;
     vec3 up=normalize(surfaceNormal);
     vec3 east=normalize(cross(vec3(0.0,1.0,0.0),up));
     vec3 north=cross(up,east);

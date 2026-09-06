@@ -93,10 +93,11 @@ hardcoded `120_000` ms, while the app is allowed
 `EARTH_STATE_ACTIVATION_TIMEOUT_MS` = 300 s to activate. Each of the three smoke
 views independently downloads ~19.7 MB of layer textures, so exceeding 120 s on a
 CI runner is ordinary. Every failing view reported **zero console errors** — the
-only page error was the harness timeout itself. Both readiness waits now share
-one deadline derived from `READY_TIMEOUT_MS`, and
-`test/production-scheduled-contract.test.js` now asserts the constant is *used*,
-not merely defined — the gap that let the literal survive.
+only page error was the harness timeout itself. A follow-up on 2026-09-06 found that sharing one deadline still deducted
+bundled-globe startup from the subsequent live activation. The monitor now gives
+each sequential phase its own application-sized allowance; a reduced timing
+regression test covers a slow fallback followed by a healthy live activation.
+See [debug controls and monitor validation](view-debug.md).
 
 **`latest-content-stale` — one of ten. Genuine, and self-recovered.** At
 2026-09-04T21:41Z the delivered bundle was the 18:00 nominal hour, 221 minutes

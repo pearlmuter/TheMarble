@@ -87,3 +87,15 @@ h1 { margin: 0; font-family: "Playfair Display", Georgia, serif; font-size: clam
 .view-model summary { min-height: 2rem; cursor: pointer; color: #d8edf7; }
 .view-model summary:focus-visible { outline: 1px solid #b5e8f7; outline-offset: 3px; }
 .view-model p { margin: .4rem 0 .7rem; }
+
+.view-debug { padding-bottom: .7rem; border-bottom: 1px solid rgba(164, 202, 222, .13); }
+.debug-slider-label { display: flex; justify-content: space-between; align-items: center; margin: .5rem 0; color: #d8edf7; }
+#debug-relief { width: 100%; margin: .2rem 0 .7rem; accent-color: #a1d5e8; }
+.debug-presets { display: flex; flex-wrap: wrap; gap: .5rem; }
+.view-debug button { padding: .45rem .65rem; border: 1px solid #587584; border-radius: .35rem; color: #d8edf7; background: #132633; font: inherit; cursor: pointer; min-height: 2rem; }
+.view-debug button:hover { background: #234253; }
+.view-debug button:focus-visible, #debug-relief:focus-visible { outline: 2px solid #b5e8f7; outline-offset: 3px; }
+.debug-readings { margin: .8rem 0; font-variant-numeric: tabular-nums; }
+.debug-readings > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; padding: .2rem 0; }
+.debug-readings dd { margin: 0; color: #e0f1f8; }
+#debug-capture { width: 100%; resize: vertical; padding: .6rem; background: #091620; color: #d8edf7; border: 1px solid #587584; border-radius: .35rem; font: inherit; }

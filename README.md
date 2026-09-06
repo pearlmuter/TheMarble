@@ -11,6 +11,12 @@ rotates underneath. Open the upper-left menu and enable **Follow this place** to
 keep the camera above the location currently in view as it moves through day and
 night. The switch stays inside the menu so the globe remains unobstructed.
 
+The same menu contains **Debug view**: compare cloud relief with a slider and
+1× / 4× / 34× presets, and read the current map-equivalent zoom and metres per
+screen pixel. **Copy view readings** captures the settings and location for
+feedback. Zoom is a 256-pixel, equator-equivalent centre scale; +1 halves metres
+per pixel. Debug relief resets on reload. See [the scale convention and limits](docs/view-debug.md).
+
 The September 2026 updates improve the Sun and atmospheric sunrise, cloud
 presentation, and polar ice:
 
