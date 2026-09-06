@@ -2,6 +2,56 @@
 
 A small, live, interactive Earth view for use as a Tauri window or as a standalone page in a web desktop.
 
+**[Open TheMarble](https://themarble.emildanielsen.no/)**
+
+## Viewing Earth
+
+Drag to orbit and scroll to zoom. The default camera stays in space while Earth
+rotates underneath. Open the upper-left menu and enable **Follow this place** to
+keep the camera above the location currently in view as it moves through day and
+night. The switch stays inside the menu so the globe remains unobstructed.
+
+The September 2026 updates improve the Sun and atmospheric sunrise, cloud
+presentation, and polar ice:
+
+- Earth and the Moon occlude the solar disc. Atmospheric transmission affects
+  the Sun and the limb, including the thin illuminated air visible before the
+  solar disc clears the horizon.
+- Magnified clouds use gentle reconstruction, and cloud-top slope exaggeration
+  is reduced from 34× to 4×. This reduces jagged relief and its light/dark contrast.
+  Cast shadows on land and ocean retain their sampling and strength settings;
+  clouds and their shadows fade together at the observed polar coverage edge.
+- Polar snow/ice uses native 4 km IMS categories and the provider's own projection.
+  Quality-screened OSI SAF concentration supplies measured ocean ice fractions
+  in both hemispheres; IMS ice presence remains the fallback where available.
+  This removes the former radial resampling gaps without inventing cracks or floes.
+
+### Scientific scope and limits
+
+TheMarble combines dated observations with a rendering model; it is not a live
+camera or a fully calibrated photograph. The menu exposes observation dates,
+source attribution, coverage and fallback information.
+
+- Current production clouds come from NOAA GMGSI. Cloud-top relief and optical
+  depth are illustrative estimates in this path, not retrieved measurements.
+  Smoothing changes displayed detail without changing the source observations.
+- GMGSI coverage ends near ±72.7° latitude. Polar cloud completion is supported
+  by a separate pipeline but is **not active in production**. The inward edge fade
+  does not create observations, and an empty polar cap does not mean clear skies.
+- Ice presence and ice concentration are different. An IMS ice class does not
+  measure 100% cover. Accepted OSI SAF zero means open water; rejected or missing
+  concentration retains the available extent fallback and remains disclosed.
+- The delivered ice texture is 4096 × 2048 (about 9.8 km per latitude step), so a
+  4 km source does not imply uniform 4 km detail on screen. Ice near Svalbard
+  follows the dated analysis rather than a fixed latitude or permanent boundary.
+- Land still has the seasonal NASA Blue Marble baseline where a contemporary
+  replacement is unavailable. Browser validation does not imply completed native
+  Tauri visual acceptance.
+
+See the [polar/cloud plan and validation](docs/polar-cloud-plan.md),
+[Sun and camera review](docs/solar-camera-review.md), and
+[independent sunrise checks](docs/sunrise-validation.md).
+
 ## Start here
 
 New to the repository? Read these two first — the rest of this README describes
@@ -45,7 +95,7 @@ Publishing the same source set for the same target time produces identical asset
 
 The Tauri app keeps up to the two newest successfully activated remote bundles, within a 384 MiB limit, in its private persistent webview store. On startup it re-verifies cached manifests and every asset checksum before applying anything, tries the newest complete cache first, and falls back to the packaged seasonal Earth if storage is missing, evicted, partial, or corrupt. The website uses the same decoder and atomic activation path without the desktop cache.
 
-For production display, `npm run publish:presentation-tiers` converts one verified scientific state into coherent 8K and, when the source genuinely supports it, 16K KTX2/Basis Universal bundles. The website and Tauri app select the highest complete tier that fits measured texture, memory, transfer, and cache limits; a failed high-tier preparation retries the whole 8K tier without mixing layers. The production endpoint is `/earth-state/latest-presentations.json` (or `VITE_EARTH_STATE_PRESENTATIONS_URL`). See [`docs/presentation-tiers.md`](docs/presentation-tiers.md) for the encoder command, performance budgets, and cache policy.
+For production display, `npm run publish:presentation-tiers` converts one verified scientific state into coherent 8K and, when the source genuinely supports it, 16K KTX2/Basis Universal bundles. The website and Tauri app select the highest complete tier that fits measured texture, memory, transfer, and cache limits; a failed high-tier preparation retries the whole 8K tier without mixing layers. The default endpoint is `/earth-state/latest-presentations.json` (or `VITE_EARTH_STATE_PRESENTATIONS_URL`). These tiers are optional; the current site uses the regular verified bundle when its configured presentation index is unavailable. See [`docs/presentation-tiers.md`](docs/presentation-tiers.md) for the encoder command, performance budgets, and cache policy.
 
 ### Publish hourly NOAA clouds
 
@@ -83,9 +133,9 @@ npm run publish:earth-state-feed -- \
   --cryosphere-catalog artifacts/cryosphere/cryosphere-catalog.json
 ```
 
-It refuses to call a run coherent if any layer's valid time regresses, a layer disappears, or a producer claims a publication the combined state does not bear out; a late provider leaves the previous coherent Earth published with a truthful, increasing age. `npm run build:cryosphere-catalog` is the provider side of the daily contract: it retrieves and reprojects current IMS, the preferred global GMASI (or the disclosed AMSR2 contingency), and quality-screened VIIRS into the catalog the cryosphere publisher consumes. `npm run verify:earth-state-feed -- --origin <https origin>` checks the served CORS and cache behaviour both clients need and proves the served manifest carries two recent observed cloud hours plus paired daily snow and sea ice. Scheduling, credentials ownership, delivery, stale-feed behaviour, and the rollback procedure are in [`docs/live-feed-deployment.md`](docs/live-feed-deployment.md).
+It refuses to call a run coherent if any layer's valid time regresses, a layer disappears, or a producer claims a publication the combined state does not bear out; a late provider leaves the previous coherent Earth published with a truthful, increasing age. `npm run build:cryosphere-catalog` is the provider side of the daily contract: its production configuration retrieves native IMS 4 km categories and OSI SAF numerical concentration for both hemispheres. GMASI, AMSR2 and VIIRS adapters remain available when their required endpoints and credentials are configured. Corrected processing of the same analysis day is recorded separately from newer observations; neither may regress observation dates. `npm run verify:earth-state-feed -- --origin <https origin>` checks the served CORS and cache behaviour both clients need and proves the served manifest carries two recent observed cloud hours plus paired daily snow and sea ice. Scheduling, credentials ownership, delivery, stale-feed behaviour, and the rollback procedure are in [`docs/live-feed-deployment.md`](docs/live-feed-deployment.md).
 
-The feed runs in production at `https://themarble.emildanielsen.no/latest.json`, published to Cloudflare R2 every ten minutes by [`.github/workflows/earth-state-clouds.yml`](.github/workflows/earth-state-clouds.yml). Both clients read that one pointer, so neither needs anything running locally.
+The feed runs in production at `https://themarble.emildanielsen.no/latest.json`, published to Cloudflare R2 every ten minutes by [`.github/workflows/earth-state-clouds.yml`](.github/workflows/earth-state-clouds.yml). The [daily cryosphere workflow](.github/workflows/earth-state-cryosphere.yml) updates snow and ice separately, sharing the publication lock with clouds. Both clients read the same pointer, so neither needs anything running locally.
 
 For local work without the production origin, `npm run feed:serve` publishes on a timer and serves the result with the headers the delivery rules require, and `npm run preview:live` publishes one state and opens TheMarble against it.
 
@@ -93,24 +143,24 @@ Production health is checked separately from publication. The scheduled monitor 
 
 ### Complete polar and observation gaps honestly
 
-After publishing the latest observed pair, `npm run publish:cloud-gaps` completes only its missing, rejected, or stale pixels. Recent quality-accepted VIIRS/MODIS observations have priority at the poles; matching-hour NOAA GFS total-cloud fills the remaining gaps; and the bundled cloud texture is the explicit last resort. Both hourly frames receive a categorical provenance texture. The manifest reports area-weighted observed, model-assisted, and static fractions, selected source versions and times, exact GFS run/hour, fallback explanation, and acceptance thresholds. The three classes must cover the globe and sum to one—there is no silent unknown class. Install `requirements-cloud-gaps.txt`; the catalog and command contract are documented in [`docs/cloud-gap-pipeline.md`](docs/cloud-gap-pipeline.md).
+**This completion stage is not currently scheduled in production.** When configured and run after publishing the latest observed pair, `npm run publish:cloud-gaps` completes only its missing, rejected, or stale pixels. Recent quality-accepted VIIRS/MODIS observations have priority at the poles; matching-hour NOAA GFS total-cloud fills the remaining gaps; and the bundled cloud texture is the explicit last resort. Both hourly frames receive a categorical provenance texture. The manifest reports area-weighted observed, model-assisted, and static fractions, selected source versions and times, exact GFS run/hour, fallback explanation, and acceptance thresholds. The three classes must cover the globe and sum to one—there is no silent unknown class. Install `requirements-cloud-gaps.txt`; the catalog and command contract are documented in [`docs/cloud-gap-pipeline.md`](docs/cloud-gap-pipeline.md).
 
-Daily snow-covered land and sea ice use a separate conservative pipeline. IMS is authoritative in the Northern Hemisphere, GMASI is the preferred global/Southern fill (with archival AMSR2 accepted only as a disclosed contingency), and recent clear, sunlit VIIRS may sharpen snow edges without erasing trusted analysis under cloud or darkness. Install `requirements-cryosphere.txt` and run `npm run publish:cryosphere -- --catalog <catalog.json> --python <venv-python> --output <earth-state-directory>`. Both publishers automatically derive from that output directory's current `latest.json`; `--base-manifest` remains available for an intentional override or first-run fixture. The complete source hierarchy, catalog contract, fusion rules, and primary documentation are in [`docs/cryosphere-pipeline.md`](docs/cryosphere-pipeline.md).
+Daily snow-covered land and sea ice use a separate conservative pipeline. Native IMS numerical categories are inverse-projected using their declared coordinates, preserving genuine unknown cells. OSI SAF OSI-401-d v4.1 concentration (10 km grid) supersedes categorical ice presence over accepted ocean pixels, excluding land, lakes, coastal contamination, missing values and uncertainty over 20 percentage points. Each concentration source retains its own daily observation interval; selection excludes future analysis days and concentration more than one day older than the selected daily analysis. Southern Hemisphere snow remains unobserved without a configured global snow source. Optional GMASI/AMSR2 global analyses and VIIRS snow refinement retain their documented qualification rules. Install `requirements-cryosphere.txt` and run `npm run publish:cryosphere -- --catalog <catalog.json> --python <venv-python> --output <earth-state-directory>`. Both publishers automatically derive from that output directory's current `latest.json`; `--base-manifest` remains available for an intentional override or first-run fixture. The complete source hierarchy, catalog contract, fusion rules, and primary documentation are in [`docs/cryosphere-pipeline.md`](docs/cryosphere-pipeline.md).
 
 An incomplete pair, mismatched observation window, insufficient longwave coverage, invalid grid, failed download, failed compositor, or failed read-back leaves the previous `latest.json` untouched. The globe therefore keeps the newest complete state and reports an age that continues to increase. Serve the output at `/earth-state/`, or set `VITE_EARTH_STATE_LATEST_URL` to its HTTPS `latest.json`. NOAA data is modified by TheMarble's reconstruction; the generated manifest retains NOAA attribution and never describes the result as unaltered NOAA imagery.
 
-## What is live
+## Rendering and supported data paths
 
 - The sunlight position is calculated locally from the current UTC time and date, producing the right seasonal tilt and day/night terminator.
-- The solar disc uses the Sun's real radius and mean astronomical-unit distance. The opening camera is placed just outside the Earth-Sun occultation cone, so the true-sized Sun appears immediately beside the atmospheric limb without being pinned to the screen.
+- The solar disc uses the Sun's physical radius and current astronomical distance. The opening camera is placed just outside the Earth-Sun occultation cone, so the true-sized Sun appears immediately beside the atmospheric limb without being pinned to the screen.
 - The Moon position is calculated from its current approximate orbital coordinates.
 - The star field is generated from 37,619 real Hipparcos-2 catalogue positions, apparent magnitudes, and B−V colours. It is fixed in an inertial celestial frame while Earth turns beneath it.
 - The unresolved Milky Way is a 16K all-sky texture rendered from CDS's progressive Gaia EDR3 colour-flux HiPS survey and registered to the Hipparcos frame. Simulated eye/camera adaptation substantially dims the Milky Way and faint stars whenever the Sun is visible.
-- The Sun keeps its physical angular size, but high dynamic range, sensor bloom, short diffraction rays, and a very restrained, occultation-aware lens flare prevent it from reading as a flat white button.
-- Orbital photography is now calibrated as one exposure: Earth and Moon occult the physical Sun continuously, a bright Earth suppresses the faint sky, and eight deterministic golden scenes cover daylight through Milky Way recovery. See [`docs/orbital-photography.md`](docs/orbital-photography.md).
+- The Sun keeps its physical angular size. Atmospheric extinction and visibility-aware glare model its appearance beside the limb; photographic glare is a presentation effect, not a larger solar disc.
+- The renderer models photographic exposure: Earth and Moon occult the physical Sun continuously, a bright Earth suppresses the faint sky, and eight deterministic golden scenes cover daylight through Milky Way recovery. See [`docs/orbital-photography.md`](docs/orbital-photography.md).
 - Earth, Sun, Moon, Hipparcos stars, and the Gaia Milky Way now share one tested EQJ astronomical state. Earth rotates beneath the inertial sky at the Greenwich apparent sidereal angle; the Sun and Moon use current geocentric ephemerides and physical distances, while the Moon also receives its current phase, apparent size, pole orientation, and libration. Fixed eclipse and solstice instants are checked against USNO and JPL Horizons. See [`docs/astronomical-state.md`](docs/astronomical-state.md).
 - The renderer receives one versioned Earth-state bundle rather than provider-specific imagery. Its manifest records geographic convention, observation and production times, dataset versions, attributions, texture semantics, immutable asset references, and SHA-256 checksums. The same activation path runs in the website and Tauri app, and a replacement cannot become current unless its complete asset set loads and matches its declared byte lengths and checksums.
-- A production Earth state can carry two adjacent NOAA GMGSI observation hours. Visible imagery supplies daylight cloud structure; longwave infrared maintains the weather pattern through darkness. The server rejects bad-quality pixels, reprojects the provider's actual nonuniform latitude grid and longitude seam to EPSG:4326, feathers quality boundaries, and conservatively suppresses cold polar surface ambiguity. The renderer crossfades both complete cloud states together over five minutes while the hidden details retain both genuine observation windows. GMGSI's observed coverage stops near ±72.7°; the gap-completion stage can now fill those caps first with recent VIIRS/MODIS observations, then matching-hour GFS, then explicitly disclosed static fallback.
+- A production Earth state can carry two adjacent NOAA GMGSI observation hours. Visible imagery supplies daylight cloud structure; longwave infrared maintains the weather pattern through darkness. The server rejects bad-quality pixels, reprojects the provider's actual nonuniform latitude grid and longitude seam to EPSG:4326, feathers quality boundaries, and conservatively suppresses cold polar surface ambiguity. The renderer crossfades both complete cloud states together over five minutes while the hidden details retain both genuine observation windows. GMGSI's observed coverage stops near ±72.7°; the optional gap-completion stage is described above and is not active on the live site.
 - When a fresh, global SatCORPS pair passes the same atomic boundary, it becomes the preferred cloud source. Reflectance and optical depth control sunlit radiance and transmission; phase changes liquid/ice scattering; effective height displaces the cloud limb and drives spherical Sun-ray shadow intersections; relative time gently reduces trust in older pixels. Clouds emit no night light, and optical depth attenuates both the surface and city lights beneath dense cloud. GMGSI remains the automatic operational fallback.
 - A production Earth state can also carry one atomic daily snow/sea-ice analysis. Snow modifies land albedo while preserving surface detail; sea ice independently changes ocean albedo and roughness instead of becoming cloud or shiny liquid water. Each layer records its valid/production/retrieval times, source versions, coverage, fallback fraction, fallback explanation, and attribution. Older bundles remain schema-compatible and render with zero contemporary cryosphere correction.
 - Contemporary land can be published as a rolling clear-surface composite with `npm run publish:rolling-surface`. Quality-approved MCD43A4 NBAR and VIIRS surface-reflectance pixels gradually replace the seasonal portrait; cloud, shadow, haze, poor geometry, and rejected pixels retain their previous clean value and continue aging. A lossless paired audit texture maps every rolling pixel to its exact contributing observation window, while baseline pixels retain an explicit non-fresh sentinel. Robust color normalization, a daily change limit, and inward swath-edge feathering suppress seams and abrupt calibration shifts. All twelve Blue Marble monthly surfaces remain in every bundle as the permanent fallback. See [`docs/rolling-surface-pipeline.md`](docs/rolling-surface-pipeline.md).
