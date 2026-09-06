@@ -216,3 +216,41 @@ test('the delivery probe samples an asset the newest cloud frame actually publis
   assert.equal(representativeEarthStateAssetHref({ layers: { surfaceAlbedo: asset('../../assets/surface.ktx2') } }), '../../assets/surface.ktx2');
   assert.equal(representativeEarthStateAssetHref({ layers: {} }), undefined);
 });
+
+test('corrected daily processing is accepted without inventing a newer observation time', () => {
+  const beforeManifest = manifest();
+  const afterManifest = manifest({ bundleId: 'corrected-polar-projection' });
+  for (const layer of ['snowCover', 'seaIce']) afterManifest.layers[layer].provenance.processingVersion = 'polar-concentration-v3';
+  const result = evaluateEarthStateFeedRun({
+    before: readEarthStateFeedLayers(beforeManifest), after: readEarthStateFeedLayers(afterManifest),
+    stages: [stage('cryosphere', 'published', { validAt: '2026-08-30T00:00:00Z' })],
+  });
+  assert.equal(result.coherent, true);
+  assert.equal(result.severity, 'ok');
+  assert.deepEqual(result.advanced, []);
+  assert.deepEqual(result.reprocessed, ['snowCover', 'seaIce']);
+  assert.deepEqual(result.retained, ['clouds']);
+});
+
+test('a correction must reach a new bundle and both daily layers', () => {
+  for (const mode of ['same-bundle', 'same-version', 'only-sea-ice']) {
+    const before = layers({});
+    const after = layers({ bundleId: mode === 'same-bundle' ? before.bundleId : 'corrected' });
+    for (const layer of ['snowCover', 'seaIce']) {
+      if (mode !== 'only-sea-ice' || layer === 'seaIce') after[layer].processingVersion = 'v3';
+      if (mode === 'same-version') before[layer].processingVersion = 'v3';
+    }
+    const result = evaluateEarthStateFeedRun({ before, after, stages: [stage('cryosphere', 'published')] });
+    assert.equal(result.coherent, false, mode);
+  }
+});
+
+test('a processing revision cannot authorize an older analysis day', () => {
+  const before = layers({});
+  const after = layers({ bundleId: 'older-corrected', snowValidAt: '2026-08-29T00:00:00Z' });
+  for (const layer of ['snowCover', 'seaIce']) after[layer].processingVersion = 'v3';
+  const result = evaluateEarthStateFeedRun({ before, after, stages: [stage('cryosphere', 'published')] });
+  assert.equal(result.coherent, false);
+  assert.deepEqual(result.reprocessed, []);
+  assert.equal(result.problems.filter(problem => problem.reason.includes('regress')).length, 2);
+});

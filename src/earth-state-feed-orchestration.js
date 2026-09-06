@@ -82,7 +82,10 @@ export function readEarthStateFeedLayers(manifest) {
     ...Object.fromEntries(CRYOSPHERE_LAYERS
       .map(layer => [layer, manifest.layers?.[layer]?.provenance])
       .filter(([, provenance]) => provenance !== undefined)
-      .map(([layer, provenance]) => [layer, { validAt: provenance.validAt }])),
+      .map(([layer, provenance]) => [layer, {
+        validAt: provenance.validAt,
+        ...(provenance.processingVersion ? { processingVersion: provenance.processingVersion } : {}),
+      }])),
   };
 }
 
@@ -96,6 +99,7 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
 
   const problems = [];
   const advanced = [];
+  const reprocessed = [];
   const retained = [];
   const damaged = new Set();
   const fail = problem => {
@@ -121,6 +125,8 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
         reason: `${layer} would regress from ${previous.validAt} to ${current.validAt}`,
       });
     } else if (currentValidAt > previousValidAt) advanced.push(layer);
+    else if (CRYOSPHERE_LAYERS.includes(layer) && after.bundleId !== before.bundleId
+      && current.processingVersion && current.processingVersion !== previous.processingVersion) reprocessed.push(layer);
     else retained.push(layer);
   }
 
@@ -134,7 +140,7 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
       continue;
     }
     if (stage.status !== 'published') continue;
-    const unmoved = STAGE_LAYERS[stage.name].filter(layer => !advanced.includes(layer) && !damaged.has(layer));
+    const unmoved = STAGE_LAYERS[stage.name].filter(layer => !advanced.includes(layer) && !reprocessed.includes(layer) && !damaged.has(layer));
     if (unmoved.length > 0) {
       broken = true;
       problems.push({
@@ -150,6 +156,7 @@ export function evaluateEarthStateFeedRun({ before, after, stages, checkedAt }) 
     coherent,
     severity: !coherent ? 'broken' : problems.length > 0 ? 'degraded' : 'ok',
     advanced,
+    reprocessed,
     retained,
     stages,
     problems,

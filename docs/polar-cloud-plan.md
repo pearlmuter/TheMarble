@@ -54,3 +54,9 @@ No documented integration violations. The review found a misleading Southern Hem
 The review found that catalog reduction could discard concentration matching a delayed IMS day, and that composite observation bounds omitted contributing dates. Concentration dates now survive until daily selection, with a catalog-to-selection regression. Dataset bounds include all contributing dates and the actual OSI SAF daily observation interval, retained through adapter, catalog and provenance. Both findings are addressed and the full suite passes.
 
 Review totals: Standards 2 judgment calls resolved; Spec 2 correctness findings resolved. Publication remains subject to live deployment verification.
+
+## Publication follow-up — 2026-09-06
+
+PR #33 deployed the website successfully. Daily publication run 33989956576 built the corrected September 5 analysis, but the combined-feed check rejected it because the observation date had not advanced. Upload was skipped, preserving the prior live feed.
+
+The follow-up carries the processing revision on both snow and ice. The combined check records `reprocessed` separately from newer observations, accepting a changed revision only in a new bundle; date regression and incomplete/no-op publication still fail. A full frozen-data orchestration run reproduced same-day replacement successfully, and a repeat left the feed unchanged. All 392 JavaScript tests and the TypeScript/production build pass. No renderer behavior changes in this follow-up.
