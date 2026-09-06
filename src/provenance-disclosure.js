@@ -12,7 +12,7 @@ export function createProvenanceDisclosure({ root, trigger, panel, ownerDocument
     root.dataset.provenanceOpen = String(open);
   };
   const onPointerEnter = () => { hovered = true; dismissed = false; render(); };
-  const onPointerLeave = () => { hovered = false; dismissed = false; render(); };
+  const onPointerLeave = () => { hovered = false; render(); };
   const onFocusIn = () => { focused = true; dismissed = false; render(); };
   const onFocusOut = event => {
     if (root.contains(event.relatedTarget)) return;

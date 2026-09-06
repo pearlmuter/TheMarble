@@ -24,6 +24,28 @@
             </label>
             <p id="follow-place-description" class="detail">Your viewpoint stays in space while Earth turns beneath you.</p>
           </div>
+          <details id="view-debug" class="view-model view-debug">
+            <summary>Debug view</summary>
+            <label class="debug-slider-label" for="debug-relief">Cloud relief <output id="debug-relief-value" for="debug-relief">4×</output></label>
+            <input id="debug-relief" type="range" min="0" max="40" step="0.25" value="4" aria-describedby="debug-relief-help" />
+            <div class="debug-presets">
+              <button type="button" data-relief="1">1× geometry</button>
+              <button type="button" data-relief="4">4× default</button>
+              <button type="button" data-relief="34">34× previous</button>
+            </div>
+            <p id="debug-relief-help">Changes cloud-top shading, not cast shadows or smoothing. GMGSI heights are estimated; 1× means no extra slope exaggeration, not measured accuracy. Resets on reload.</p>
+            <dl class="debug-readings">
+              <div><dt>Map-equivalent zoom</dt><dd><output id="debug-zoom">—</output></dd></div>
+              <div><dt>Ground scale at centre</dt><dd><output id="debug-scale">—</output></dd></div>
+              <div><dt>Camera altitude</dt><dd><output id="debug-altitude">—</output></dd></div>
+              <div><dt>Centre lat / lon</dt><dd><output id="debug-location">—</output></dd></div>
+              <div><dt>Viewport</dt><dd><output id="debug-viewport">—</output></dd></div>
+            </dl>
+            <p>Zoom uses 256-pixel tiles at the equator: +1 means twice the magnification. This is a centre-scale equivalent, not the whole globe's extent. Scale varies toward the limb. Pixels here are CSS pixels.</p>
+            <button id="debug-copy" type="button">Copy view readings</button>
+            <p id="debug-status" role="status"></p>
+            <textarea id="debug-capture" aria-label="Captured view readings" readonly hidden rows="7"></textarea>
+          </details>
           <details class="view-model">
             <summary>About this view</summary>
             <p>This is a scientific illustration, not a live camera image. Sunlight scatters and is absorbed in a simplified Earth atmosphere. Brightness is adjusted so the Sun, stars, and night-side details remain readable together.</p>

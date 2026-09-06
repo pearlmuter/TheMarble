@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { CLOUD_SAMPLING_GLSL, cloudRenderCoverage } from './cloud-sampling.js';
+import { orbitMapScale } from './map-view-scale.js';
+import { createViewDebug } from './view-debug.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
 import { createEarthFixedCamera } from './earth-fixed-camera.js';
@@ -17,7 +19,7 @@ import type { FixedSceneView } from './inertial-camera.js';
 import { createOneTimeOrbitalGoldenCameraPlacement, orbitalGoldenScene } from './orbital-golden-scenes.js';
 import { orbitalPhotographyState } from './orbital-photography-state.js';
 import { createCloudObservationController } from './cloud-observation-controller.js';
-import { CLOUD_RELIEF_SAMPLE_UV, CLOUD_RENDER_GLSL } from './cloud-render-model.js';
+import { CLOUD_RELIEF_EXAGGERATION, CLOUD_RELIEF_SAMPLE_UV, CLOUD_RENDER_GLSL } from './cloud-render-model.js';
 import {
   ATMOSPHERE_MARCH_STEPS,
   ATMOSPHERE_LIMB_MARCH_STEPS,
@@ -323,6 +325,24 @@ updateCameraClipping();
 
 const planet = new THREE.Group();
 scene.add(planet);
+const cloudReliefUniform = { value: CLOUD_RELIEF_EXAGGERATION };
+const viewDebug = createViewDebug({
+  root: document.querySelector<HTMLDetailsElement>('#view-debug')!,
+  defaultRelief: CLOUD_RELIEF_EXAGGERATION,
+  onRelief: value => { cloudReliefUniform.value = value; },
+  readView: () => {
+    const local = camera.position.clone().normalize().applyQuaternion(planet.quaternion.clone().invert());
+    const earthCentred = controls.target.lengthSq() < 1e-12;
+    return {
+      scale: earthCentred ? orbitMapScale({ distanceEarthRadii: camera.position.length(), verticalFovDegrees: camera.getEffectiveFOV(), viewportHeightCssPixels: canvas.clientHeight, earthRadiusMeters: EARTH_EQUATORIAL_RADIUS_KM * 1000 }) : undefined,
+      latitude: earthCentred ? Math.asin(THREE.MathUtils.clamp(local.y, -1, 1)) * 180 / Math.PI : undefined,
+      longitude: earthCentred ? -Math.atan2(local.z, local.x) * 180 / Math.PI : undefined,
+      viewportWidth: canvas.clientWidth, viewportHeight: canvas.clientHeight,
+      fov: camera.getEffectiveFOV(), time: sceneNow().toISOString(),
+      bundleId: earthStateSummary.dataset.bundleId ?? '',
+    };
+  },
+});
 const loader = new THREE.TextureLoader();
 loader.setCrossOrigin('anonymous');
 const ktx2Loader = new KTX2Loader();
@@ -796,6 +816,7 @@ function animate() {
   controls.update();
   updateCameraClipping();
   updateFrame();
+  viewDebug.update(performance.now());
   presentFrame();
 }
 animate();
@@ -1120,6 +1141,7 @@ planet.add(earth);
 const cloudMaterial = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
   uniforms: {
+    cloudReliefExaggeration: cloudReliefUniform,
     cloudMapFrom: { value: cloudMap }, cloudMapTo: { value: cloudMap },
     cloudCoverageFrom: { value: new THREE.Vector2(-90,90) }, cloudCoverageTo: { value: new THREE.Vector2(-90,90) },
     cloudDensityFrom: { value: liveWeatherMap }, cloudDensityTo: { value: liveWeatherMap }, cloudMix: { value: 0 },
@@ -1148,6 +1170,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
     uniform sampler2D cloudAgeFrom; uniform sampler2D cloudAgeTo; uniform float cloudMix; uniform vec3 sunDirection; uniform vec3 sunLocalDirection;
     uniform sampler2D transmittanceLut;
     uniform sampler2D nightMap; uniform vec3 moonDirection; uniform float moonIllumination;
+    uniform float cloudReliefExaggeration;
     varying vec2 vUv; varying vec3 vViewNormal; varying vec3 vObjectNormal; varying vec3 vViewPosition; varying vec4 vPhysics; varying float vCloudRadius;
     const float PI=3.14159265359;
     ${ATMOSPHERE_MODEL_GLSL}
@@ -1189,7 +1212,7 @@ const cloudMaterial = new THREE.ShaderMaterial({
       float heightWest=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv-vec2(reliefStep.x,0.0));
       float heightNorth=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv+vec2(0.0,reliefStep.y));
       float heightSouth=neighbourCloudTopKm(cloudMapFrom,cloudMapTo,cloudPhysicsFrom,cloudPhysicsTo,cloudMix,vUv-vec2(0.0,reliefStep.y));
-      vec3 reliefNormal=cloudReliefNormal(surfaceDirection,heightEast,heightWest,heightNorth,heightSouth,latitude);
+      vec3 reliefNormal=cloudReliefNormal(surfaceDirection,heightEast,heightWest,heightNorth,heightSouth,latitude,cloudReliefExaggeration);
       // The height taps are a fixed step in map coordinates. Toward the limb that step falls
       // below a screen pixel, so the slope it recovers is sampling noise rather than cloud
       // structure -- visible as a moire of parallel dashes. Let the deck settle back onto the

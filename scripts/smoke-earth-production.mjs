@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { EARTH_STATE_ACTIVATION_TIMEOUT_MS } from '../src/earth-state.js';
 import { runEarthProductionVisualSmoke } from '../src/production-visual-smoke.js';
+import { waitForProductionClient } from '../src/production-client-ready.js';
 
 // The app abandons an activation at EARTH_STATE_ACTIVATION_TIMEOUT_MS and then
 // says why. Giving up first would replace that answer with a harness timeout.
@@ -45,18 +46,10 @@ async function main() {
           let readyError;
           try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-            // Both waits watch one activation -- the overlay lifts when it resolves
-            // and the refresh marker settles just after -- so they share one budget
-            // instead of each holding a full one. A per-wait timeout would let a
-            // single view outlast the job, and a timeout shorter than the app's own
-            // deadline would report a harness timeout instead of the app's answer.
-            const readyBy = Date.now() + READY_TIMEOUT_MS;
-            const remaining = () => Math.max(1, readyBy - Date.now());
-            await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: remaining() });
-            await page.waitForFunction(() => {
-              const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
-              return refresh === 'current' || refresh === 'failed';
-            }, undefined, { timeout: remaining() });
+            // Startup first activates the bundled globe, then the live bundle.
+            // Give each phase its own application-sized deadline: subtracting
+            // fallback loading time can expire while live activation is healthy.
+            await waitForProductionClient(page, READY_TIMEOUT_MS);
             await page.waitForTimeout(1_000);
           } catch (error) {
             readyError = `Production view did not become ready: ${error.message ?? String(error)}`;

@@ -70,3 +70,14 @@ test('touch/click toggles, outside press dismisses, and Escape dismisses', () =>
   assert.equal(root.dataset.provenanceOpen, 'false');
   disclosure.destroy();
 });
+
+test('Escape stays dismissed when hiding the hovered panel produces a pointerleave', () => {
+  const { ownerDocument, root, trigger, panel } = fixture();
+  dispatch(root, 'pointerenter');
+  dispatch(root, 'focusin', { target: trigger });
+  dispatch(ownerDocument, 'keydown', { key: 'Escape' });
+  dispatch(root, 'pointerleave');
+  assert.equal(panel.hidden, true);
+  dispatch(root, 'pointerenter');
+  assert.equal(panel.hidden, false);
+});

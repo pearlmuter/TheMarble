@@ -20,8 +20,9 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    # Three views, each allowed to outwait the app's 300s activation deadline.
-    timeout-minutes: 35
+    # Three views, each with sequential fallback and live activation budgets,
+    # plus navigation, feed verification and retained diagnostics.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
