@@ -6,7 +6,7 @@ A small, live, interactive Earth view for use as a Tauri window or as a standalo
 
 ## Viewing Earth
 
-Drag to orbit and scroll to zoom. The default camera stays in space while Earth
+Drag to orbit and scroll to zoom, up to map-equivalent zoom **5.35**. The default camera stays in space while Earth
 rotates underneath. Open the upper-left menu and enable **Follow this place** to
 keep the camera above the location currently in view as it moves through day and
 night. The switch stays inside the menu so the globe remains unobstructed.

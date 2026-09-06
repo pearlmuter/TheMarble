@@ -10,6 +10,10 @@ Let the user compare cloud relief interactively and report an objective map-styl
 - 1× preserves the underlying model's height-to-distance slope; 4× is less exaggerated than 34×. This is not a claim of measured cloud shape or calibrated radiative transfer. GMGSI uses estimated height/optical depth, and the existing relief lighting remains an approximation.
 - The debug menu shows fractional map-equivalent zoom, centre metres per CSS pixel, camera altitude, latitude/longitude, viewport size and field of view. Copying records these plus scene time, relief and active bundle. A selectable text fallback works when clipboard access is unavailable.
 
+## Chosen maximum zoom
+
+The user selected **5.35** as the maximum Earth map-equivalent zoom. The minimum camera distance is derived from that scale using the current CSS viewport height and effective field of view, so scrolling, pinching and resizing cannot exceed it. A resized window moves an over-close camera outward as needed. The existing atmosphere safety floor remains, and the special Moon-targeted reference view retains its own camera limits. The cloud relief controls and default remain unchanged.
+
 ## Zoom convention
 
 The camera looks at Earth's centre and panning is disabled. For centre-ray altitude `h`, effective vertical field of view `f`, and viewport CSS height `H`, the differential ground scale is `m = 2 h tan(f/2) / H`. The equivalent 256-pixel equatorial tile zoom is `z = log2(2 π R / (256 m))`, using the renderer's Earth radius (6378137 m).

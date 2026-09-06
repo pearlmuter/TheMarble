@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { orbitMapScale } from '../src/map-view-scale.js';
+import { MAX_EARTH_MAP_ZOOM, orbitDistanceForMapZoom, orbitMapScale } from '../src/map-view-scale.js';
 const input = { distanceEarthRadii: 3, verticalFovDegrees: 22, viewportHeightCssPixels: 1000 };
 const near = (actual, expected, epsilon = 1e-9) => assert.ok(Math.abs(actual - expected) < epsilon, `${actual} != ${expected}`);
+
+test('the chosen zoom cap resolves to the same scale across viewport sizes and fields of view', () => {
+  assert.equal(MAX_EARTH_MAP_ZOOM, 5.35);
+  for (const viewportHeightCssPixels of [390, 844, 1000, 2160]) {
+    for (const verticalFovDegrees of [22, 25, 50]) {
+      const geometry = { viewportHeightCssPixels, verticalFovDegrees };
+      const distanceEarthRadii = orbitDistanceForMapZoom({ ...geometry, zoom: MAX_EARTH_MAP_ZOOM });
+      near(orbitMapScale({ ...geometry, distanceEarthRadii }).zoom, 5.35);
+      assert.ok(orbitMapScale({ ...geometry, distanceEarthRadii: distanceEarthRadii + .1 }).zoom < 5.35);
+    }
+  }
+  assert.equal(orbitDistanceForMapZoom({ zoom: 5.35, verticalFovDegrees: 22, viewportHeightCssPixels: 0 }), undefined);
+});
 
 test('map zoom uses the 256-pixel equatorial tile convention', () => {
   const scale = orbitMapScale({ distanceEarthRadii: 1 + Math.PI, verticalFovDegrees: 90, viewportHeightCssPixels: 256 });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CLOUD_SAMPLING_GLSL, cloudRenderCoverage } from './cloud-sampling.js';
-import { orbitMapScale } from './map-view-scale.js';
+import { MAX_EARTH_MAP_ZOOM, orbitDistanceForMapZoom, orbitMapScale } from './map-view-scale.js';
 import { createViewDebug } from './view-debug.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
@@ -302,14 +302,29 @@ const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = .045;
 controls.enablePan = false;
-// The International Space Station orbits near 408 km, which on a unit Earth is
-// 1 + 408/6371. Descending to it is the closest a crewed viewpoint gets, and the
-// atmosphere shell at 1.02 stays below the camera, so its ray-march still runs
-// from outside. What the surface can actually resolve there is another matter:
-// the packaged Blue Marble is 5.4K, about 7.4 km per texel, so this altitude
-// magnifies each texel far past its detail. See #10 and #14.
+// Retain the atmosphere safety floor; Earth views also respect the map-scale cap.
 controls.minDistance = ISS_ORBIT_RADII;
 controls.maxDistance = 18;
+function updateCameraZoomLimit() {
+  if (controls.target.lengthSq() >= 1e-12) {
+    controls.minDistance = ISS_ORBIT_RADII;
+    controls.maxDistance = 18;
+    return;
+  }
+  const minimumDistance = orbitDistanceForMapZoom({
+    zoom: MAX_EARTH_MAP_ZOOM,
+    verticalFovDegrees: camera.getEffectiveFOV(),
+    viewportHeightCssPixels: canvas.clientHeight,
+  });
+  if (minimumDistance === undefined) return;
+  controls.minDistance = Math.max(ISS_ORBIT_RADII, minimumDistance);
+  controls.maxDistance = Math.max(18, controls.minDistance);
+  // Resizing or a reference pose can change the scale after OrbitControls runs.
+  if (camera.position.length() < controls.minDistance) {
+    camera.position.setLength(controls.minDistance);
+    camera.updateMatrixWorld();
+  }
+}
 // Zooming by a fixed factor crawls at altitude and lurches near the surface, so
 // scale the step to how far above the surface the camera already is.
 controls.zoomToCursor = false;
@@ -814,8 +829,9 @@ let updateFrame: () => void = () => undefined;
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
-  updateCameraClipping();
   updateFrame();
+  updateCameraZoomLimit();
+  updateCameraClipping();
   viewDebug.update(performance.now());
   presentFrame();
 }
