@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createAuroraEmission } from './aurora-emission.js';
+import { auroraMagneticField, auroraRayleighLuminance, AURORA_NIGHT_EXPOSURE, AURORA_PHYSICS_GLSL } from './aurora-physics.js';
 import { AURORA_WIDTH, AURORA_HEIGHT, auroraEmissionGrid } from './aurora-model.js';
 import type { AuroraForecast } from './aurora-model.js';
 import { AURORA_OUTER_RADIUS, AURORA_SHELL_GLSL } from './aurora-shell.js';
@@ -12,26 +14,27 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
   texture.generateMipmaps = false;
   texture.flipY = false;
   texture.needsUpdate = true;
+  const emission = createAuroraEmission(texture);
   const material = new THREE.ShaderMaterial({
     transparent: true, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     uniforms: {
-      auroraMap: { value: texture }, cameraLocal: { value: new THREE.Vector3() },
-      sunLocal: { value: new THREE.Vector3(1,0,0) }, time: { value: 0 }, latitudeFloor: { value: 0 }, activityGain: { value: 1 },
+      emissionMap: { value: texture }, axis: { value: new THREE.Vector3(0,1,0) }, noon: { value: new THREE.Vector3(1,0,0) }, dusk: { value: new THREE.Vector3(0,0,-1) }, cameraLocal: { value: new THREE.Vector3() },
+      sunLocal: { value: new THREE.Vector3(1,0,0) }, latitudeFloor: { value: 0 },
       transmittanceLut: { value: transmittance },
     },
     vertexShader: `varying vec3 bodyPosition; void main(){bodyPosition=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
     fragmentShader: `
       varying vec3 bodyPosition;
-      uniform vec3 cameraLocal, sunLocal;
-      uniform sampler2D auroraMap, transmittanceLut;
-      uniform float time, activityGain, latitudeFloor;
+      uniform vec3 cameraLocal, sunLocal, axis, noon, dusk;
+      uniform sampler2D emissionMap, transmittanceLut;
+      uniform float latitudeFloor;
       ${ATMOSPHERE_MODEL_GLSL}
       ${ATMOSPHERE_TRANSMITTANCE_GLSL}
       ${AURORA_SHELL_GLSL}
-      vec2 auroraUv(vec3 normal){
-        float longitude=fract(atan(-normal.z,normal.x)/6.28318530718+1.0);
-        float latitude=asin(clamp(normal.y,-1.0,1.0))/3.14159265359+.5;
-        return vec2((longitude*360.0+.5)/360.0,(latitude*180.0+.5)/181.0);
+      ${AURORA_PHYSICS_GLSL}
+      vec2 emissionUv(vec3 n){
+        float longitude=atan(dot(n,dusk),dot(n,noon));
+        return vec2(longitude/6.28318530718+.5,asin(clamp(dot(n,axis),-1.0,1.0))/3.14159265359+.5);
       }
       void main(){
         vec3 ray=normalize(bodyPosition-cameraLocal);
@@ -49,34 +52,27 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
           chordTransmission=halfChord*halfChord;
         }
         vec3 emission=vec3(0.0);
-        float stepLength=total/32.0;
-        for(int i=0;i<32;i++){
+        float stepLength=total/64.0;
+        for(int i=0;i<64;i++){
           float travelled=(float(i)+.5)*stepLength;
           float along=travelled<front?segments.x+travelled:segments.z+travelled-front;
           vec3 point=cameraLocal+ray*along;
           float radius=length(point), height=(radius-1.0)*6378.137;
           vec3 normal=point/radius;
-          // Percent probabilities guide activity; this is not a radiometric conversion.
-          float probability=texture2D(auroraMap,auroraUv(normal)).r*255.0/100.0;
-          float activity=clamp(probability*activityGain,0.0,1.0);
-          if(activity<.005) continue;
-          float night=1.0-smoothstep(-.16,.08,dot(normal,normalize(sunLocal)));
-          if(night<.001) continue;
-          float lon=atan(-normal.z,normal.x), lat=asin(normal.y);
-          float phase=lat*85.0+2.7*sin(lon*7.0+time*.035)+1.3*sin(lon*19.0+lat*13.0-time*.022);
-          float ribbons=pow(.5+.5*sin(phase),9.0);
-          float rays=.72+.28*sin(lon*160.0+sin(lon*37.0)+time*.18);
-          float structure=.5+.5*sin(lon*11.0+lat*17.0+time*.014);
-          float curtain=(.08+.92*ribbons)*rays*(.35+.65*structure);
-          float lower=smoothstep(85.0,103.0,height);
-          float green=lower*exp(-pow((height-128.0)/42.0,2.0));
-          float red=exp(-pow((height-285.0)/90.0,2.0))*.16;
-          float violet=exp(-pow((height-103.0)/11.0,2.0))*.07;
-          vec3 colour=vec3(.15,1.0,.26)*green+vec3(1.0,.055,.025)*red+vec3(.35,.12,1.0)*violet;
+          vec3 footpoint=auroraFootpoint(point,axis);
+          vec3 column=texture2D(emissionMap,emissionUv(footpoint)).rgb;
+          if(max(column.r,max(column.g,column.b))<.0001) continue;
+          // This is daylight contrast on our night-view display, not cessation
+          // of auroral excitation in sunlight.
+          float contrast=1.0-smoothstep(-.16,.08,dot(normal,sunLocal));
+          vec3 profile=vec3(auroraProfile(height,130.0,17.0),auroraProfile(height,260.0,60.0),auroraProfile(height,108.0,8.0));
+          vec3 luminance=column*profile*vec3(${auroraRayleighLuminance(1)},${auroraRayleighLuminance(1,630,.265)},${auroraRayleighLuminance(1,427.8,.011)});
+          // Approximate in-gamut line colours, each with unit photopic Y.
+          vec3 colour=vec3(.17,1.3468,.01)*luminance.r+vec3(4.7037,0.0,0.0)*luminance.g+vec3(.25,0.0,13.1143)*luminance.b;
           vec3 transmission=vec3(1.0);
           if(radius<ATMOSPHERE_RADIUS) transmission=atmosphereTransmittanceToTop(transmittanceLut,radius,dot(normal,-ray));
           else if(dot(point,ray)>0.0) transmission=chordTransmission;
-          emission+=transmission*colour*activity*curtain*night*stepLength*6378.137*.003;
+          emission+=transmission*colour*contrast*stepLength*6378.137*${AURORA_NIGHT_EXPOSURE.toFixed(1)};
         }
         gl_FragColor=vec4(emission,1.0);
       }`,
@@ -92,9 +88,9 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
     material.uniforms.cameraLocal.value.copy(camera.position).applyQuaternion(inverseBody);
   };
   return {
-    update(sun: THREE.Vector3, seconds: number, forecast: AuroraForecast | undefined, gain: number) {
+    update(renderer: THREE.WebGLRenderer, sun: THREE.Vector3, seconds: number, sceneTime: number, forecast: AuroraForecast | undefined, gain: number) {
       mesh.visible = !!forecast && gain > 0;
-      if (!mesh.visible) return;
+      if (!mesh.visible) { emission.reset(); return; }
       if (forecast !== installed) {
         const displayGrid = auroraEmissionGrid(forecast!);
         texture.image.data = displayGrid;
@@ -103,12 +99,19 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
         for (let i = 0; i < displayGrid.length; i++) {
           if (displayGrid[i] > 0) lowestLatitude = Math.min(lowestLatitude, Math.abs(Math.floor(i / 360) - 90));
         }
-        material.uniforms.latitudeFloor.value = Math.sin(Math.max(0, lowestLatitude - 1) * Math.PI / 180);
+        material.uniforms.latitudeFloor.value = Math.sin(Math.max(0, lowestLatitude - 16) * Math.PI / 180);
         installed = forecast;
       }
       material.uniforms.sunLocal.value.copy(sun);
-      material.uniforms.time.value = seconds % 10000;
-      material.uniforms.activityGain.value = gain;
+      const field=auroraMagneticField(sceneTime);
+      const axis=material.uniforms.axis.value as THREE.Vector3;
+      const noon=material.uniforms.noon.value as THREE.Vector3;
+      const dusk=material.uniforms.dusk.value as THREE.Vector3;
+      axis.fromArray(field.axis);
+      noon.copy(sun).addScaledVector(axis,-sun.dot(axis));
+      if(noon.lengthSq()<1e-8)noon.set(1,0,0).addScaledVector(axis,-axis.x);
+      noon.normalize();dusk.crossVectors(axis,noon).normalize();
+      material.uniforms.emissionMap.value=emission.update(renderer,axis,noon,dusk,field.equatorialNanoTesla,seconds,gain);
     },
   };
 }

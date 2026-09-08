@@ -22,7 +22,9 @@ Aurora**, choose **Simulate aurora · recorded example**, then **View northern
 aurora** or **View southern aurora** for a repeatable demonstration. The example
 uses a recorded 6 September 2026 forecast with activity amplified 8×; its label
 stays visible when the menu closes. Choose **Latest NOAA forecast** to return to
-the forecast overlay, or **Off** to hide aurora. Settings reset on reload.
+the forecast overlay, or **Off** to hide aurora. Settings reset on reload. **Aurora playback → Time-lapse · 20×** accelerates the
+simulated evolution and afterglow, with a persistent time-lapse label; it leaves
+the Earth clock and forecast timestamps unchanged.
 
 The September 2026 updates improve the Sun and atmospheric sunrise, cloud
 presentation, and polar ice:
@@ -47,9 +49,13 @@ source attribution, coverage and fallback information.
 
 - Aurora geography follows NOAA's one-degree forecast probability grid, refreshed
   every five minutes. The menu shows the observation and forecast-valid UTC times.
-  This is a forecast overlay, not live imagery: curtains, movement, colours and
-  brightness are simulated. Green emission is concentrated around 100–200 km,
-  with a faint higher red component. Earth hides the far side; daylight visibility
+  This is a forecast overlay, not live imagery. Curtains follow a centred IGRF-14
+  dipole and drift at a representative electric-field/magnetic-field velocity
+  scale. Green and red emissions have different response times. Estimated
+  particle flux is converted to column emission and integrated along the view
+  ray; the night-view exposure remains a display choice. This cannot recover
+  measured brightness or storm dynamics from the probability grid. See the
+  [physical model and limitations](docs/aurora-physics.md). Earth hides the far side; daylight visibility
   is reduced for display. Stale forecasts and forecasts unrelated to a fixed
   historical scene are hidden. A detached equatorial strip in the source grid is
   suppressed for display; the raw recorded data is preserved. See [aurora sources and validation](docs/aurora.md).
@@ -188,7 +194,7 @@ An incomplete pair, mismatched observation window, insufficient longwave coverag
 - The bundled fallback includes all twelve cloud-free 5.4K NASA Blue Marble Next Generation monthly surfaces from 2004. The renderer continuously interpolates adjacent months from the actual UTC calendar date, including a seamless December-to-January transition, while keeping only the active pair decoded. The oceans are shaded separately from the land with a low Fresnel reflectance, restrained GGX Sun glint, roughness, and atmospheric-sky reflection driven by the same astronomical Sun vector as the terminator.
 - The fixed-time visual checks for seasonal change, the month-midpoint handoff, the terminator, and the packaged fallback are recorded in [`docs/qa/issue-5/`](docs/qa/issue-5/README.md).
 - The live NOAA daylight and terminator checks are recorded in [`docs/qa/issue-6/`](docs/qa/issue-6/README.md).
-- That fallback also preserves high-resolution night lights, a globally complete elevated static cloud shell with neutral confidence, the lunar map, 16K Milky Way, and Hipparcos catalogue. Earth-state satellite processing remains server-side; the separate aurora overlay reads NOAA’s small public forecast grid directly. subsequent Earth-state production can replace these layers without changing the renderer's interface.
+- That fallback also preserves high-resolution night lights, a globally complete elevated static cloud shell with neutral confidence, the lunar map, 16K Milky Way, and Hipparcos catalogue. Earth-state satellite processing remains server-side; the separate aurora overlay reads NOAA’s small public forecast grid directly. Subsequent Earth-state production can replace these layers without changing the renderer's interface.
 - The atmosphere uses ray-marched Rayleigh and Mie single scattering, exponential density falloff, ozone extinction, forward aerosol scattering, and explicit Earth shadow. The same air-mass extinction warms low-angle sunlight on the surface, cloud deck, and solar disc. The implementation notes and primary sources are in [`docs/atmospheric-lighting-research.md`](docs/atmospheric-lighting-research.md).
 
 The principal Earth, night-light, and cloud maps ship under `public/`, so both the Tauri build and `dist` work without needing to download those large assets at runtime.

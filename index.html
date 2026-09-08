@@ -33,7 +33,13 @@
                 <option value="demo">Simulate aurora · recorded example</option>
                 <option value="off">Off</option>
               </select>
-              <p id="aurora-help">The forecast guides where aurora appears. Curtains, colour and motion are simulated. The recorded example amplifies activity for demonstration.</p>
+              <p id="aurora-help">NOAA guides the activity region. Curtains follow an approximate magnetic field; light output and motion are estimated from physical relationships. Night-view exposure makes the faint light readable. The recorded example amplifies activity.</p>
+              <label for="aurora-speed">Aurora playback</label>
+              <select id="aurora-speed" aria-describedby="aurora-speed-help">
+                <option value="1">Real time</option>
+                <option value="20">Time-lapse · 20×</option>
+              </select>
+              <p id="aurora-speed-help">Time-lapse accelerates simulated aurora evolution, including its afterglow. The Earth clock and forecast timestamps stay unchanged.</p>
               <div class="debug-presets">
                 <button type="button" data-aurora-view="1" disabled>View northern aurora</button>
                 <button type="button" data-aurora-view="-1" disabled>View southern aurora</button>
@@ -64,7 +70,7 @@
             <summary>About this view</summary>
             <p>This is a scientific illustration, not a live camera image. Sunlight scatters and is absorbed in a simplified Earth atmosphere. Brightness is adjusted so the Sun, stars, and night-side details remain readable together.</p>
             <p>Cloud relief is illustrative; cloud edges are gently smoothed for display. Polar cloud coverage is incomplete, and an undrawn area does not mean clear skies. Sea ice uses measured concentration where available, with ice-presence analysis elsewhere; these are not observations of individual floes.</p>
-            <p>Aurora is a <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast" target="_blank" rel="noopener noreferrer">NOAA SWPC forecast</a> illustration. Its curtains, motion and brightness are simulated; forecast times and demonstration controls are in Debug view.</p>
+            <p>Aurora is a <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast" target="_blank" rel="noopener noreferrer">NOAA SWPC forecast</a> illustration. Its field-aligned curtains and light output are physical approximations, with night-view exposure; forecast times and demonstration controls are in Debug view.</p>
             <p>Atmospheric conditions vary in reality. This model does not yet include the bending of light that shifts and flattens the Sun at the horizon, so it should not be used to teach exact apparent sunrise timing.</p>
           </details>
           <p id="clock" class="clock"></p>

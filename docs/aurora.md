@@ -4,11 +4,14 @@
 
 Add an aurora layer guided by NOAA SWPC's OVATION forecast, with a repeatable debug demonstration and optional north/south camera shortcuts. Keep controls in the upper-left Debug view. Retain the 5.35 zoom cap and existing Earth rendering. Publish after testing and review.
 
+The subsequent [physics approximation](aurora-physics.md) replaces the original
+geographic stripes with field-aligned emission and documents its assumptions.
+
 ## Scientific contract
 
 - The normal layer is explicitly **the latest forecast overlay**, with observation and forecast-valid UTC times. It is not an observation of aurora happening now. It does not change the globe clock. For a separately requested historical scene, hide unrelated current forecasts.
 - Geographic activity comes from NOAA's 360 × 181, one-degree longitude/latitude probability grid. Percentages constrain an illustrative emission envelope, not calibrated radiance. Curtains, motion and brightness are simulated.
-- Approximate green emission at 100–200 km, faint higher red at 200–400+ km, and a restrained lower violet fringe. Render above clouds with solid-Earth occlusion and stronger visibility against the dark hemisphere. Daylight suppression is a display approximation, not absence of daytime aurora. Fine magnetic geometry, refraction and absolute photometry are not solved.
+- Approximate green emission at 100–200 km, faint higher red at 200–400+ km, and a restrained lower violet fringe. Render above clouds with solid-Earth occlusion and stronger visibility against the dark hemisphere. Daylight suppression is a display approximation, not absence of daytime aurora. A centred dipole approximates magnetic geometry; higher harmonics, storm-time fields and full chemistry are not solved. Emission uses physical units with a separately chosen night-view exposure.
 - Debug mode uses a bundled NOAA forecast recorded on 2026-09-06, with activity amplified to make inspection repeatable. It is labelled as a recorded, amplified demonstration, never as a historical storm reconstruction. Keep a small demonstration indicator visible when the menu is closed.
 - Forecast refresh is independent of Earth loading and publication. Fetch the public CORS-enabled NOAA endpoint every five minutes with a timeout; validate grid shape, ranges, duplicate cells and timestamps. Hide stale/unavailable data rather than substitute a demo. A previously verified fresh forecast may survive a failed refresh, with that failure disclosed. Mode changes and late fetch completions cannot overwrite one another.
 - A forecast is fresh only when its observation is at most two hours old (five minutes future clock tolerance). Lead time must be 0–180 minutes. A fixed scene more than 15 minutes from both current time and forecast-valid time does not use the current overlay.

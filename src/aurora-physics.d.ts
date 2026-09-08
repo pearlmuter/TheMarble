@@ -1,0 +1,12 @@
+export function auroraMagneticField(time:number): {axis:number[]; equatorialNanoTesla:number; epochClamped:boolean};
+export const AURORA_REFERENCE_RADIUS:number;
+export const AURORA_GREEN_RESPONSE_SECONDS:number;
+export const AURORA_RED_RESPONSE_SECONDS:number;
+export const AURORA_GREEN_KR_PER_MW:number;
+export const AURORA_NIGHT_EXPOSURE:number;
+export function auroraEnergyFlux(probability:number,gain?:number):number;
+export function auroraRayleighLuminance(kiloRayleigh:number,wavelengthNm?:number,photopicEfficiency?:number):number;
+export function auroraResponse(previous:number,target:number,seconds:number,lifetime:number):number;
+export function auroraDipoleFootpoint(point:number[],axis:number[]):number[];
+export function auroraFieldStrength(radius:number,magneticLatitude:number,equatorialNanoTesla:number):number;
+export const AURORA_PHYSICS_GLSL:string;
