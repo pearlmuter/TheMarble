@@ -99,3 +99,10 @@ h1 { margin: 0; font-family: "Playfair Display", Georgia, serif; font-size: clam
 .debug-readings > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; padding: .2rem 0; }
 .debug-readings dd { margin: 0; color: #e0f1f8; }
 #debug-capture { width: 100%; resize: vertical; padding: .6rem; background: #091620; color: #d8edf7; border: 1px solid #587584; border-radius: .35rem; font: inherit; }
+
+.aurora-controls { padding: 1rem 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(164,202,222,.15); }
+.aurora-controls label { display: block; margin-bottom: .6rem; }
+.aurora-controls select { width: 100%; padding: .7rem; border: 1px solid #527482; border-radius: .3rem; background: #0b1c27; color: #e7f4f5; font: inherit; }
+.aurora-controls select:focus-visible { outline: 2px solid #a8dfec; outline-offset: 2px; }
+.debug-presets button:disabled { opacity: .45; cursor: default; }
+#aurora-demo-badge { position: absolute; left: 1rem; bottom: 1rem; z-index: 3; margin: 0; padding: .5rem .7rem; border-radius: .4rem; background: rgba(3,12,20,.8); color: #c6e8d8; font-size: .65rem; pointer-events: none; }
