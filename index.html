@@ -26,6 +26,20 @@
           </div>
           <details id="view-debug" class="view-model view-debug">
             <summary>Debug view</summary>
+            <div class="aurora-controls">
+              <label for="aurora-mode">Aurora</label>
+              <select id="aurora-mode" aria-describedby="aurora-help aurora-status">
+                <option value="forecast">Latest NOAA forecast</option>
+                <option value="demo">Simulate aurora · recorded example</option>
+                <option value="off">Off</option>
+              </select>
+              <p id="aurora-help">The forecast guides where aurora appears. Curtains, colour and motion are simulated. The recorded example amplifies activity for demonstration.</p>
+              <div class="debug-presets">
+                <button type="button" data-aurora-view="1" disabled>View northern aurora</button>
+                <button type="button" data-aurora-view="-1" disabled>View southern aurora</button>
+              </div>
+              <p id="aurora-status" role="status">Checking NOAA aurora forecast…</p>
+            </div>
             <label class="debug-slider-label" for="debug-relief">Cloud relief <output id="debug-relief-value" for="debug-relief">4×</output></label>
             <input id="debug-relief" type="range" min="0" max="40" step="0.25" value="4" aria-describedby="debug-relief-help" />
             <div class="debug-presets">
@@ -50,6 +64,7 @@
             <summary>About this view</summary>
             <p>This is a scientific illustration, not a live camera image. Sunlight scatters and is absorbed in a simplified Earth atmosphere. Brightness is adjusted so the Sun, stars, and night-side details remain readable together.</p>
             <p>Cloud relief is illustrative; cloud edges are gently smoothed for display. Polar cloud coverage is incomplete, and an undrawn area does not mean clear skies. Sea ice uses measured concentration where available, with ice-presence analysis elsewhere; these are not observations of individual floes.</p>
+            <p>Aurora is a <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast" target="_blank" rel="noopener noreferrer">NOAA SWPC forecast</a> illustration. Its curtains, motion and brightness are simulated; forecast times and demonstration controls are in Debug view.</p>
             <p>Atmospheric conditions vary in reality. This model does not yet include the bending of light that shifts and flattens the Sun at the horizon, so it should not be used to teach exact apparent sunrise timing.</p>
           </details>
           <p id="clock" class="clock"></p>
@@ -57,6 +72,7 @@
           <div id="provenance-sections" class="provenance-sections"></div>
         </section>
       </div>
+      <p id="aurora-demo-badge" hidden>Aurora demonstration · amplified</p>
       <p id="earth-state-summary" class="sr-only">TheMarble is loading a verified Earth state.</p>
       <div id="loading" class="loading" role="status" aria-label="Loading Earth"></div>
     </main>

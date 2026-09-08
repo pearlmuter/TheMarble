@@ -17,6 +17,13 @@ screen pixel. **Copy view readings** captures the settings and location for
 feedback. Zoom is a 256-pixel, equator-equivalent centre scale; +1 halves metres
 per pixel. Debug relief resets on reload. See [the scale convention and limits](docs/view-debug.md).
 
+Aurora uses the latest **NOAA SWPC OVATION forecast** by default. In **Debug view →
+Aurora**, choose **Simulate aurora · recorded example**, then **View northern
+aurora** or **View southern aurora** for a repeatable demonstration. The example
+uses a recorded 6 September 2026 forecast with activity amplified 8×; its label
+stays visible when the menu closes. Choose **Latest NOAA forecast** to return to
+the forecast overlay, or **Off** to hide aurora. Settings reset on reload.
+
 The September 2026 updates improve the Sun and atmospheric sunrise, cloud
 presentation, and polar ice:
 
@@ -38,6 +45,14 @@ TheMarble combines dated observations with a rendering model; it is not a live
 camera or a fully calibrated photograph. The menu exposes observation dates,
 source attribution, coverage and fallback information.
 
+- Aurora geography follows NOAA's one-degree forecast probability grid, refreshed
+  every five minutes. The menu shows the observation and forecast-valid UTC times.
+  This is a forecast overlay, not live imagery: curtains, movement, colours and
+  brightness are simulated. Green emission is concentrated around 100–200 km,
+  with a faint higher red component. Earth hides the far side; daylight visibility
+  is reduced for display. Stale forecasts and forecasts unrelated to a fixed
+  historical scene are hidden. A detached equatorial strip in the source grid is
+  suppressed for display; the raw recorded data is preserved. See [aurora sources and validation](docs/aurora.md).
 - Current production clouds come from NOAA GMGSI. Cloud-top relief and optical
   depth are illustrative estimates in this path, not retrieved measurements.
   Smoothing changes displayed detail without changing the source observations.
@@ -173,7 +188,7 @@ An incomplete pair, mismatched observation window, insufficient longwave coverag
 - The bundled fallback includes all twelve cloud-free 5.4K NASA Blue Marble Next Generation monthly surfaces from 2004. The renderer continuously interpolates adjacent months from the actual UTC calendar date, including a seamless December-to-January transition, while keeping only the active pair decoded. The oceans are shaded separately from the land with a low Fresnel reflectance, restrained GGX Sun glint, roughness, and atmospheric-sky reflection driven by the same astronomical Sun vector as the terminator.
 - The fixed-time visual checks for seasonal change, the month-midpoint handoff, the terminator, and the packaged fallback are recorded in [`docs/qa/issue-5/`](docs/qa/issue-5/README.md).
 - The live NOAA daylight and terminator checks are recorded in [`docs/qa/issue-6/`](docs/qa/issue-6/README.md).
-- That fallback also preserves high-resolution night lights, a globally complete elevated static cloud shell with neutral confidence, the lunar map, 16K Milky Way, and Hipparcos catalogue. The browser no longer retrieves or interprets scientific satellite products itself; subsequent Earth-state production can replace these layers without changing the renderer's interface.
+- That fallback also preserves high-resolution night lights, a globally complete elevated static cloud shell with neutral confidence, the lunar map, 16K Milky Way, and Hipparcos catalogue. Earth-state satellite processing remains server-side; the separate aurora overlay reads NOAA’s small public forecast grid directly. subsequent Earth-state production can replace these layers without changing the renderer's interface.
 - The atmosphere uses ray-marched Rayleigh and Mie single scattering, exponential density falloff, ozone extinction, forward aerosol scattering, and explicit Earth shadow. The same air-mass extinction warms low-angle sunlight on the surface, cloud deck, and solar disc. The implementation notes and primary sources are in [`docs/atmospheric-lighting-research.md`](docs/atmospheric-lighting-research.md).
 
 The principal Earth, night-light, and cloud maps ship under `public/`, so both the Tauri build and `dist` work without needing to download those large assets at runtime.
