@@ -40,3 +40,22 @@ cannot establish whether a detached low-latitude event actually occurred.
 ## Validation
 
 Check coordinate registration (Greenwich, dateline, poles, hemisphere), malformed/duplicate/missing values, freshness and scene-time gating, mode switching during fetches, stale/failed fetches, and bounded Earth-occluded ray intervals. Visually inspect both hemispheres, overhead and horizon views, daylight, demo off, zoom cap and mobile controls. Compare frame cost with aurora off/on, run all tests and the production build, and verify the deployed site.
+
+### Acceptance recorded 2026-09-08
+
+- Clean committed-tree production build and all **412 tests** pass, including
+  thirteen aurora tests for registration, completeness, malformed data, freshness,
+  mode/fetch races, failure recovery, Earth occlusion and the equatorial guard.
+- Chromium on Apple M1 Max/ANGLE Metal: northern and southern camera shortcuts,
+  recorded demo, current NOAA forecast, off mode, daylight, full-globe limb,
+  persistent demonstration label and 390-pixel mobile controls inspected. No
+  shader errors, page errors or lost graphics context; zoom still caps at 5.35.
+- NOAA's response was accessible from the browser with observation
+  `2026-09-08T15:40:00Z` and forecast-valid time `2026-09-08T16:36:00Z`.
+- Separate standards and spec reviews of the committed implementation found no
+  actionable findings. These checks validate an explicitly illustrative model,
+  not measured auroral morphology or absolute brightness. Native Tauri visual
+  acceptance and low-end GPU performance remain unmeasured.
+
+Browser captures and measurements are retained locally in `artifacts/aurora/`;
+these diagnostic files are not shipped with the website.
