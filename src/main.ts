@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CLOUD_SAMPLING_GLSL, cloudRenderCoverage } from './cloud-sampling.js';
 import { MAX_EARTH_MAP_ZOOM, orbitDistanceForMapZoom, orbitMapScale } from './map-view-scale.js';
 import { createAurora } from './aurora.js';
+import { createLightning } from './lightning.js';
 import { createViewDebug } from './view-debug.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SOLAR_DISC_FRAGMENT_SHADER } from './solar-disc.js';
@@ -357,6 +358,7 @@ const viewDebug = createViewDebug({
       fov: camera.getEffectiveFOV(), time: sceneNow().toISOString(),
       bundleId: earthStateSummary.dataset.bundleId ?? '',
       aurora: document.querySelector('#aurora-status')?.textContent ?? '',
+      lightning: document.querySelector('#lightning-status')?.textContent ?? '',
     };
   },
 });
@@ -1360,6 +1362,15 @@ const atmosphere = new THREE.Mesh(
   })
 );
 planet.add(atmosphere);
+const lightning = createLightning({
+  planet, cloudMaterial, transmittance: transmittanceLookup,
+  onView(direction) {
+    const distance = orbitDistanceForMapZoom({ zoom: 5.2, verticalFovDegrees: camera.getEffectiveFOV(), viewportHeightCssPixels: canvas.clientHeight }) ?? 3;
+    controls.target.set(0, 0, 0);
+    camera.position.fromArray(direction).applyQuaternion(planet.quaternion).multiplyScalar(Math.max(ISS_ORBIT_RADII, distance));
+    camera.lookAt(0, 0, 0); controls.update();
+  },
+});
 const aurora = createAurora({
   planet, renderer, transmittance: transmittanceLookup,
   onView(direction) {
@@ -1637,6 +1648,7 @@ updateFrame = () => {
   seasonalSurfaceController.update(now);
   cloudObservationController.update(now);
   updateCelestialScene(now);
+  lightning.update(now.getTime(), cloudMaterial.uniforms.sunLocalDirection.value, performance.now() / 1000);
   aurora.update(now.getTime(), cloudMaterial.uniforms.sunLocalDirection.value, performance.now() / 1000);
 };
 }

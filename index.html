@@ -46,6 +46,19 @@
               </div>
               <p id="aurora-status" role="status">Checking NOAA aurora forecast…</p>
             </div>
+            <div class="aurora-controls">
+              <label for="lightning-mode">Lightning</label>
+              <select id="lightning-mode" aria-describedby="lightning-help lightning-status">
+                <option value="live">Recent satellite observations</option>
+                <option value="demo">Recorded lightning demonstration</option>
+                <option value="off">Off</option>
+              </select>
+              <p id="lightning-help">Observed lightning flashes illuminate the clouds briefly. Glow, colour and apparent brightness are reconstructed; these are not exact ground-strike locations. Cloud imagery can be older than the flashes.</p>
+              <button id="lightning-view" type="button" disabled>View active storm</button>
+              <p id="lightning-status" role="status">Checking satellite observations…</p>
+              <p>Coverage is limited to the satellites’ observing areas and selected non-overlapping sectors. Missing observations do not mean no lightning. High latitudes and much of Asia and Oceania are not covered.</p>
+              <p>Sources: <a href="https://registry.opendata.aws/noaa-goes/" target="_blank" rel="noopener noreferrer">NOAA GOES GLM</a>; contains modified <a href="https://user.eumetsat.int/catalogue/EO%3AEUM%3ADAT%3A0691" target="_blank" rel="noopener noreferrer">EUMETSAT Meteosat LI data</a> under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> when available. Recording and off controls reset on reload.</p>
+            </div>
             <label class="debug-slider-label" for="debug-relief">Cloud relief <output id="debug-relief-value" for="debug-relief">4×</output></label>
             <input id="debug-relief" type="range" min="0" max="40" step="0.25" value="4" aria-describedby="debug-relief-help" />
             <div class="debug-presets">

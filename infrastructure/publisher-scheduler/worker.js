@@ -20,6 +20,8 @@ async function dispatch(env, cron) {
     publisherWorkflow: env.WORKFLOW,
     healthCron: env.HEALTH_CRON,
     healthWorkflow: env.HEALTH_WORKFLOW,
+    lightningCron: env.LIGHTNING_CRON,
+    lightningWorkflow: env.LIGHTNING_WORKFLOW,
   });
   const { url, init } = workflowDispatchRequest({
     repository: env.REPOSITORY,
@@ -54,6 +56,7 @@ export default {
       repository: env.REPOSITORY ?? null,
       workflow: env.WORKFLOW ?? null,
       healthWorkflow: env.HEALTH_WORKFLOW ?? null,
+      lightningWorkflow: env.LIGHTNING_WORKFLOW ?? null,
     }, { status: configured ? 200 : 503 });
   },
 };

@@ -36,12 +36,13 @@ export function describeDispatchOutcome(status, body) {
 }
 
 /**
- * One Worker, two schedules. Cloudflare reports which cron fired, so the trigger
+ * One Worker, separate schedules. Cloudflare reports which cron fired, so the trigger
  * picks the workflow. An unknown or absent cron pokes the publisher: a duplicate
  * poke reports `unchanged` and costs one API call, while a missed publish leaves
  * the globe stale.
  */
-export function workflowForCron(cron, { publisherWorkflow, healthCron, healthWorkflow }) {
+export function workflowForCron(cron, { publisherWorkflow, healthCron, healthWorkflow, lightningCron, lightningWorkflow }) {
+  if (lightningWorkflow && lightningCron && cron === lightningCron) return lightningWorkflow;
   if (healthWorkflow && healthCron && cron === healthCron) return healthWorkflow;
   return publisherWorkflow;
 }

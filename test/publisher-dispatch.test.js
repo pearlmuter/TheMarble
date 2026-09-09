@@ -59,3 +59,10 @@ test('a Worker configured without the health schedule still drives the publisher
   assert.equal(workflowForCron('*/10 * * * *', schedules), 'earth-state-clouds.yml');
   assert.equal(workflowForCron('7,37 * * * *', schedules), 'earth-state-clouds.yml');
 });
+
+test('lightning cadence leaves cloud and health dispatches intact',()=>{
+ const schedules={publisherWorkflow:'cloud.yml',healthCron:'25 * * * *',healthWorkflow:'health.yml',lightningCron:'*/5 * * * *',lightningWorkflow:'lightning.yml'};
+ assert.equal(workflowForCron('*/5 * * * *',schedules),'lightning.yml');
+ assert.equal(workflowForCron('*/10 * * * *',schedules),'cloud.yml');
+ assert.equal(workflowForCron('25 * * * *',schedules),'health.yml');
+});

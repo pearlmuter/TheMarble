@@ -26,6 +26,13 @@ the forecast overlay, or **Off** to hide aurora. Settings reset on reload. **Aur
 simulated evolution and afterglow, with a persistent time-lapse label; it leaves
 the Earth clock and forecast timestamps unchanged.
 
+Lightning uses recent satellite flash observations. **Debug view → Lightning**
+contains the live/off switch, **Recorded lightning demonstration**, and **View
+active storm**. Delay, source coverage, freshness and attribution appear only in
+Debug view, leaving the globe unobstructed. The recording repeats observed flashes
+at their original timing; it is not current activity. See [lightning data and
+rendering](docs/lightning.md) for access setup and scientific limits.
+
 The September 2026 updates improve the Sun and atmospheric sunrise, cloud
 presentation, and polar ice:
 
