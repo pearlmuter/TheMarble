@@ -13,13 +13,15 @@ compatibility_date = "2026-08-01"
 # poke arriving mid-run cancels the one already waiting. Half-hourly did exactly
 # that. :25 also keeps it clear of the hourly GitHub backstop at :07.
 [triggers]
-crons = ["*/10 * * * *", "25 * * * *"]
+crons = ["*/10 * * * *", "25 * * * *", "*/5 * * * *"]
 
 [vars]
 REPOSITORY = "pearlmuter/TheMarble"
 WORKFLOW = "earth-state-clouds.yml"
 HEALTH_WORKFLOW = "earth-production-health.yml"
 HEALTH_CRON = "25 * * * *"
+LIGHTNING_WORKFLOW = "lightning.yml"
+LIGHTNING_CRON = "*/5 * * * *"
 REF = "main"
 
 # GITHUB_TOKEN is a secret, set with `wrangler secret put GITHUB_TOKEN` or in the

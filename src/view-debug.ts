@@ -10,6 +10,7 @@ interface ViewReading {
   time: string;
   bundleId: string;
   aurora?: string;
+  lightning?: string;
 }
 
 export function createViewDebug({ root, defaultRelief, onRelief, readView }: {
@@ -72,6 +73,7 @@ export function createViewDebug({ root, defaultRelief, onRelief, readView }: {
       `Viewport: ${view.viewportWidth} × ${view.viewportHeight} CSS px; vertical FOV: ${view.fov.toFixed(2)}°`,
       `Earth state: ${view.bundleId || 'loading'}`,
       `Aurora: ${view.aurora || 'unavailable'}`,
+      `Lightning: ${view.lightning || 'unavailable'}`,
     ].join('\n');
     captured.hidden = false;
     try {

@@ -1,0 +1,49 @@
+name: Observed lightning
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '3,33 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: observed-lightning
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.THEMARBLE_ORIGIN_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.THEMARBLE_ORIGIN_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.THEMARBLE_ORIGIN_REGION }}
+      AWS_ENDPOINT_URL: ${{ vars.THEMARBLE_ORIGIN_ENDPOINT }}
+      BUCKET: ${{ vars.THEMARBLE_ORIGIN_BUCKET_URI }}
+      AWS_RETRY_MODE: adaptive
+      AWS_MAX_ATTEMPTS: '10'
+      EUMETSAT_CONSUMER_KEY: ${{ secrets.EUMETSAT_CONSUMER_KEY }}
+      EUMETSAT_CONSUMER_SECRET: ${{ secrets.EUMETSAT_CONSUMER_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-lightning.txt
+      - run: pip install -r requirements-lightning.txt
+      - run: python -m unittest discover -s test -p 'test_lightning_data.py'
+      - name: Collect observed flashes
+        run: python scripts/publish-lightning.py
+      - name: Publish lightning window
+        run: |
+          # This owns one separate key; never sync/delete the shared site/feed.
+          aws s3 cp artifacts/lightning/published/latest.json "$BUCKET/lightning/latest.json" \
+            --cache-control 'public, max-age=30, must-revalidate' --content-type application/json --no-progress
+      - name: Verify delivery
+        run: |
+          curl --fail --retry 3 --max-time 30 "${{ vars.THEMARBLE_CDN_ORIGIN }}lightning/latest.json" -o /tmp/lightning.json
+          python - <<'PY'
+          import json,time
+          d=json.load(open('/tmp/lightning.json'))
+          assert d['version']==1 and abs(time.time()*1000-d['publishedAt'])<180000
+          assert any(s['status']=='available' for s in d['sources']), 'No satellite source is available'
+          PY
