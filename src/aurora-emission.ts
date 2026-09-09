@@ -39,8 +39,10 @@ export function createAuroraEmission(source: THREE.Texture) {
         float field=strength*sqrt(1.0+3.0*s*s)/pow(AURORA_REFERENCE,3.0);
         float velocity=.025/(field*1e-9)/1000.0; // km/s
         float drift=velocity*time/(6488.137*max(.12,abs(c)));
-        // Two convection cells reverse direction across magnetic noon/midnight.
-        float advected=longitude+drift*sin(longitude);
+        // Exact azimuthal backtrace at the representative E/B speed.
+        // Longitude derivative stays one: no growing Euler-map fold. The
+        // actual electric-field direction is not supplied by the forecast.
+        float advected=longitude+drift*(latitude<0.0?-1.0:1.0);
         vec2 around=vec2(cos(advected),sin(advected));
         // Domain-warped magnetic-latitude contours: elongated arcs, with local
         // folds and breaks instead of evenly spaced geographic sine stripes.
@@ -70,7 +72,7 @@ export function createAuroraEmission(source: THREE.Texture) {
   let lastTime: number | undefined, lastGain: number | undefined;
   return {
     update(renderer: THREE.WebGLRenderer, axis: THREE.Vector3, noon: THREE.Vector3, dusk: THREE.Vector3, strength: number, seconds: number, gain: number) {
-      const reset=lastTime===undefined || lastGain!==gain || seconds-lastTime>2 || seconds<lastTime;
+      const reset=lastTime===undefined || lastGain!==gain || seconds<lastTime;
       const dt=lastTime===undefined?0:seconds-lastTime;
       if(!reset && dt<.05)return previous.texture;
       material.uniforms.axis.value.copy(axis);material.uniforms.noon.value.copy(noon);material.uniforms.dusk.value.copy(dusk);

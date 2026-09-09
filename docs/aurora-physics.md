@@ -35,9 +35,10 @@ Earth occlusion, public forecast refresh, demo disclosure and zoom 5.35.
   Sources: https://science.nasa.gov/sun/auroras/ and
   https://ntrs.nasa.gov/api/citations/19680020298/downloads/19680020298.pdf
 - Fine structure remains stochastic, with local curved arcs, diffuse emission,
-  patchy brightening and multiple scales. Drift follows an illustrative 25 mV/m
-  convection field divided by local dipole strength (E/B). This supplies a
-  plausible velocity scale; E is assumed, not measured. Earth’s field does not
+  patchy brightening and multiple scales. Azimuthal drift follows an illustrative 25 mV/m
+  electric field divided by local dipole strength (E/B), using an exact angular
+  backtrace rather than a growing Euler displacement. This supplies a
+  plausible velocity scale; E and its azimuthal drift direction are assumed, not measured. Earth’s field does not
   itself supply the aurora’s energy. NOAA already incorporates solar-wind forcing.
 - Integrate green excitation with a 0.7 s response and a more diffuse red component
   with a representative 30 s effective response (radiative lifetime shortened
@@ -77,3 +78,11 @@ time-lapse disclosure, off mode, mobile controls and the retained 5.35 cap.
 At the same polar viewpoint on Apple M1 Max/ANGLE Metal, the mean of 120 frame
 intervals was 8.33 ms with the model on and 8.33 ms with it off. This measures
 displayed cadence on this machine, not GPU execution time or low-end performance.
+
+
+History survives positive elapsed-time jumps, including slow 20× frames, using
+analytic exponential retention. Forecast refreshes retain a conservative latitude
+bound covering both the new source and old afterglow. The bound only tightens
+when the aurora history is explicitly reset, so it cannot clip a retreating oval's
+red light. Azimuthal drift has a unit longitude derivative for any elapsed time;
+it is a representative shear flow, not a solved two-cell convection pattern.

@@ -87,3 +87,13 @@ export function auroraEmissionGrid(forecast) {
   for (let i = 0; i < grid.length; i++) if (!connected[i]) grid[i] = 0;
   return grid;
 }
+
+
+// Include all activity that may still be present in the emission history.
+// Bounds can widen during a run; only an explicit history reset can tighten them.
+export function auroraLatitudeFloor(previous, grid) {
+  let lowestLatitude=90;
+  for(let i=0;i<grid.length;i++)if(grid[i]>0)lowestLatitude=Math.min(lowestLatitude,Math.abs(Math.floor(i/360)-90));
+  const next=Math.sin(Math.max(0,lowestLatitude-16)*Math.PI/180);
+  return previous===undefined?next:Math.min(previous,next);
+}

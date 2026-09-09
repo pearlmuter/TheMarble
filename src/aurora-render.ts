@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createAuroraEmission } from './aurora-emission.js';
 import { auroraMagneticField, auroraRayleighLuminance, AURORA_NIGHT_EXPOSURE, AURORA_PHYSICS_GLSL } from './aurora-physics.js';
-import { AURORA_WIDTH, AURORA_HEIGHT, auroraEmissionGrid } from './aurora-model.js';
+import { AURORA_WIDTH, AURORA_HEIGHT, auroraEmissionGrid, auroraLatitudeFloor } from './aurora-model.js';
 import type { AuroraForecast } from './aurora-model.js';
 import { AURORA_OUTER_RADIUS, AURORA_SHELL_GLSL } from './aurora-shell.js';
 import { ATMOSPHERE_MODEL_GLSL, ATMOSPHERE_TRANSMITTANCE_GLSL } from './atmosphere-model.js';
@@ -82,6 +82,7 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
   mesh.renderOrder = 10;
   planet.add(mesh);
   let installed: AuroraForecast | undefined;
+  let latitudeFloor: number | undefined;
   const inverseBody = new THREE.Quaternion();
   mesh.onBeforeRender = (_renderer, _scene, camera) => {
     inverseBody.copy(planet.quaternion).invert();
@@ -90,16 +91,13 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
   return {
     update(renderer: THREE.WebGLRenderer, sun: THREE.Vector3, seconds: number, sceneTime: number, forecast: AuroraForecast | undefined, gain: number) {
       mesh.visible = !!forecast && gain > 0;
-      if (!mesh.visible) { emission.reset(); return; }
+      if (!mesh.visible) { emission.reset(); installed=undefined; latitudeFloor=undefined; return; }
       if (forecast !== installed) {
         const displayGrid = auroraEmissionGrid(forecast!);
         texture.image.data = displayGrid;
         texture.needsUpdate = true;
-        let lowestLatitude = 90;
-        for (let i = 0; i < displayGrid.length; i++) {
-          if (displayGrid[i] > 0) lowestLatitude = Math.min(lowestLatitude, Math.abs(Math.floor(i / 360) - 90));
-        }
-        material.uniforms.latitudeFloor.value = Math.sin(Math.max(0, lowestLatitude - 16) * Math.PI / 180);
+        latitudeFloor=auroraLatitudeFloor(latitudeFloor,displayGrid);
+        material.uniforms.latitudeFloor.value=latitudeFloor;
         installed = forecast;
       }
       material.uniforms.sunLocal.value.copy(sun);
