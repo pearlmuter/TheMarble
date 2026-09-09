@@ -27,7 +27,7 @@ Earth occlusion, public forecast refresh, demo disclosure and zoom 5.35.
 - Integrate normalized altitude profiles through the emitting volume. Convert
   kR to radiance with 10¹³ photons/(m² s), hc/λ and 1/(4π), then to photopic
   luminance. A 1 kR 557.7 nm column is about 0.00019 cd/m². No extra inverse-square
-  dimming of a resolved emitting surface. Green peaks near 120 km, red higher;
+  dimming of a resolved emitting surface. The model's green profile peaks at 130 km, red higher;
   prompt blue/violet remains restrained. Altitude widths and line ratios are
   representative, not solved chemistry or measured profiles. The assumed red
   and nitrogen yields are 0.08 and 0.12 kR/(mW/m²), respectively; their
