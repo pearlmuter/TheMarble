@@ -56,3 +56,20 @@ transmission and Earth occlusion apply. Daylight contrast is reduced. There are
 no giant drawn bolts, artificial ground impacts, or additional synthetic strikes.
 The visible envelope is approximate (60–1500 ms); sub-flash pulse timing and exact
 brightness cannot be recovered from these flash summaries.
+
+## Validation status
+
+NOAA decoding was exercised against current GOES-19 and GOES-18 files, including
+packed unsigned energy/area and time offsets. Six Python regressions cover
+packing (both byte orders), time units, quality rejection, geographic ownership
+and missing LI BODY intervals. Browser checks exercise the actual recorded NOAA
+sample, live-source failure, off mode, mobile layout and zoom 5.20 below the 5.35
+cap. A GPU readback fixture produces zero emitted light behind Earth and reduced
+daylight output, without GL errors. Playback tests include duplicate refreshes,
+expired windows, historical scene clocks and sub-second backwards adjustments.
+
+**EUMETSAT remains unverified against an authenticated product.** The adapter is
+implemented using the documented LFL fields and official EUMDAC client, but the
+repository currently has no EUMETSAT credentials. Configuring secrets must be
+followed by a successful real LI decode and served-feed check before its live
+compatibility can be claimed. NOAA operates independently meanwhile.
