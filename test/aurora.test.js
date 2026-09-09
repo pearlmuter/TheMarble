@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseAuroraForecast, auroraEmissionGrid, auroraForecastUsable, auroraGridUv, auroraViewDirection, AURORA_MAX_AGE_MS } from '../src/aurora-model.js';
+import { parseAuroraForecast, auroraEmissionGrid, auroraLatitudeFloor, auroraForecastUsable, auroraGridUv, auroraViewDirection, AURORA_MAX_AGE_MS } from '../src/aurora-model.js';
 import { createAuroraController } from '../src/aurora-controller.js';
 import { auroraRaySegments, AURORA_INNER_RADIUS, AURORA_OUTER_RADIUS } from '../src/aurora-shell.js';
 const now = Date.parse('2026-09-06T13:00:00Z');
@@ -106,4 +106,16 @@ test('display keeps continuous equatorward expansion including across the longit
   const grid = new Uint8Array(65160);
   for(let lat=0;lat<=10;lat++)grid[(lat+90)*360+(lat%2?359:0)]=42;
   assert.deepEqual(auroraEmissionGrid({...demo,grid}),grid);
+});
+
+test('latitude culling preserves a retreating or vanished forecast while its afterglow survives',()=>{
+ const grid=new Uint8Array(65160);grid[150*360]=50;
+ const first=auroraLatitudeFloor(undefined,grid);
+ const empty=new Uint8Array(65160);
+ assert.equal(auroraLatitudeFloor(first,empty),first);
+ empty[170*360]=50;
+ assert.equal(auroraLatitudeFloor(first,empty),first);
+ assert.ok(auroraLatitudeFloor(undefined,empty)>first);
+ grid[140*360]=50;
+ assert.ok(auroraLatitudeFloor(first,grid)<first);
 });

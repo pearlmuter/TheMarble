@@ -1361,7 +1361,7 @@ const atmosphere = new THREE.Mesh(
 );
 planet.add(atmosphere);
 const aurora = createAurora({
-  planet, transmittance: transmittanceLookup,
+  planet, renderer, transmittance: transmittanceLookup,
   onView(direction) {
     const distance = orbitDistanceForMapZoom({ zoom: 5.05, verticalFovDegrees: camera.getEffectiveFOV(), viewportHeightCssPixels: canvas.clientHeight }) ?? 3;
     controls.target.set(0, 0, 0);

@@ -9,3 +9,5 @@ export function auroraForecastUsable(forecast: AuroraForecast | undefined, now: 
 export function auroraGridUv(direction: number[]): number[];
 export function auroraViewDirection(forecast: AuroraForecast | undefined, hemisphere: number, sun: number[]): number[];
 export function auroraEmissionGrid(forecast: AuroraForecast): Uint8Array;
+
+export function auroraLatitudeFloor(previous:number|undefined,grid:Uint8Array):number;
