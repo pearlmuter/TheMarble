@@ -5,7 +5,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
-from lightning_data import decoded, times, read_glm, in_sector
+from lightning_data import decoded, times, read_glm, in_sector, li_body_window
 
 class LightningDataTests(unittest.TestCase):
     def test_unsigned_packing_masks_fill_before_scale(self):
@@ -13,6 +13,19 @@ class LightningDataTests(unittest.TestCase):
             v=d.create_dataset('v',data=np.array([0,-32768,-1],dtype='i2'))
             v.attrs['_Unsigned']='true';v.attrs['_FillValue']=-1;v.attrs['scale_factor']=.5;v.attrs['add_offset']=-5
             a=decoded(v);self.assertEqual(a[0],-5);self.assertEqual(a[1],16379);self.assertTrue(np.isnan(a[2]))
+    def test_big_endian_unsigned_packing(self):
+        with h5py.File(io.BytesIO(), 'w') as d:
+            v=d.create_dataset('v',data=np.array([1,258,-32768,-1],dtype='>i2'))
+            v.attrs['_Unsigned']='true';v.attrs['_FillValue']=-1
+            a=decoded(v);self.assertEqual(a[:3].tolist(),[1,258,32768]);self.assertTrue(np.isnan(a[3]))
+    def test_li_body_windows_do_not_fill_missing_parts_of_an_archive(self):
+        from lightning_data import timestamp
+        start=timestamp('2026-09-09T09:00:00Z');end=start+600000
+        first=li_body_window('X_BODY_OPE_20260909090000_20260909090010_N.nc',start,end)
+        third=li_body_window('X_BODY_OPE_20260909090020_20260909090030_N.nc',start,end)
+        self.assertEqual(first,(start,start+10000));self.assertEqual(third,(start+20000,start+30000))
+        self.assertFalse(any(a <= start+15000 < b for a,b in [first,third]))
+        self.assertRaises(ValueError,li_body_window,'BODY_unknown.nc',start,end)
     def test_source_time_units_not_file_arrival(self):
         with h5py.File(io.BytesIO(), 'w') as d:
             v=d.create_dataset('t',data=[.25]);v.attrs['units']='seconds since 1970-01-01 00:00:00.000'

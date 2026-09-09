@@ -10,3 +10,5 @@ export function lightningSourceState(feed:LightningFeed,source:LightningSource,n
 export function flashEnvelope(age:number,duration:number):number;
 export function activeFlashes(source:LightningSource,clock:number):ActiveFlash[];
 export function lightningDirection(latitude:number,longitude:number):number[];
+
+export function createLightningClock():(now:number)=>{now:number;blocked:boolean};

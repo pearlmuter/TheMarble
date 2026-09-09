@@ -20,7 +20,7 @@ def decoded(variable):
     if '_FillValue' in variable.attrs:
         invalid |= raw == np.asarray(variable.attrs['_FillValue']).flat[0]
     if text(variable.attrs.get('_Unsigned', '')).lower() == 'true' and raw.dtype.kind == 'i':
-        raw = raw.view(np.dtype(f'u{raw.dtype.itemsize}'))
+        raw = raw.view(np.dtype(raw.dtype.str.replace('i', 'u', 1)))
     values = raw.astype(float)
     values = values * np.asarray(variable.attrs.get('scale_factor', 1)).flat[0] + np.asarray(variable.attrs.get('add_offset', 0)).flat[0]
     return np.where(invalid, np.nan, values)
@@ -63,6 +63,16 @@ def read_glm(path, source):
             raise ValueError('Unexpected GLM optical units')
         events = rows(source, str(round(start)), decoded(d['flash_id']), first, decoded(d['flash_lat']), decoded(d['flash_lon']), last-first, decoded(d['flash_area'])/1e6, decoded(d['flash_energy']), good)
         return {'start': start, 'end': end, 'events': events}
+
+
+def li_body_window(entry, product_start, product_end):
+    match = re.search(r'_(\d{14})_(\d{14})_', entry)
+    if not match:
+        raise ValueError('LI BODY entry has no observation window')
+    start, end = [datetime.strptime(t, '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc).timestamp()*1000 for t in match.groups()]
+    if not product_start <= start < end <= product_end:
+        raise ValueError('LI BODY interval is outside its archive')
+    return start, end
 
 
 def read_li(path, product, start, end):

@@ -11,7 +11,7 @@ from pathlib import Path
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
-from lightning_data import read_glm, read_li, timestamp
+from lightning_data import read_glm, read_li, timestamp, li_body_window
 
 
 def fetch(url):
@@ -23,7 +23,7 @@ def fetch(url):
 
 
 def cached(cache, key, download, decode):
-    path = cache / (hashlib.sha256(key.encode()).hexdigest() + '.json')
+    path = cache / (hashlib.sha256(('decoder-v2:'+key).encode()).hexdigest() + '.json')
     if path.exists():
         return json.loads(path.read_text())
     result = decode(io.BytesIO(download()))
@@ -83,7 +83,8 @@ def eumetsat(now, cache):
                     if len(data) > 200_000_000:
                         raise ValueError('LI file exceeds size limit')
                     return data
-            frames.append(cached(cache, str(product)+entry, download, lambda data: read_li(data, str(round(start)), start, end)))
+            body_start, body_end = li_body_window(entry, start, end)
+            frames.append(cached(cache, str(product)+entry, download, lambda data: read_li(data, str(round(body_start)), body_start, body_end)))
     if not frames:
         raise ValueError('No LI body entries')
     return package('mtg', frames, 1200000, 'Contains modified EUMETSAT Meteosat LI data; CC BY 4.0', 'LI narrow-band radiance; native product units')

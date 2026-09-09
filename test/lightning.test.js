@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLightning, lightningSourceState, activeFlashes, flashEnvelope, lightningDirection } from '../src/lightning-model.js';
+import { parseLightning, lightningSourceState, activeFlashes, flashEnvelope, lightningDirection, createLightningClock } from '../src/lightning-model.js';
 const now=Date.UTC(2026,8,9,12),delay=600000;
 const packet=()=>({version:1,publishedAt:now,sources:['mtg','goes19','goes18'].map(id=>({id,status:'available',delayMs:delay,intervals:[[now-delay-20000,now-delay+20000]],events:[['one',now-delay-100,20,-80,500,100,1e-13]]}))});
 test('observed timing survives refreshes and flashes are not re-triggered on arrival',()=>{
@@ -32,4 +32,14 @@ test('light has finite duration and geographic coordinates match the Earth frame
  assert.equal(flashEnvelope(-1,500),0);assert.equal(flashEnvelope(1600,30000),0);assert.ok(flashEnvelope(250,500)>0);
  for(let age=0;age<1600;age++)assert.ok(flashEnvelope(age,1200)>=0&&flashEnvelope(age,1200)<=1);
  assert.deepEqual(lightningDirection(0,0),[1,0,-0]);assert.ok(Math.abs(lightningDirection(0,90)[2]+1)<1e-10);assert.equal(lightningDirection(90,0)[1],1);
+});
+
+test('even a sub-second backwards clock adjustment cannot replay live flashes',()=>{
+ const clock=createLightningClock();
+ assert.equal(clock(1000).blocked,false);
+ assert.equal(clock(800).blocked,true);
+ assert.equal(clock(950).blocked,true);
+ assert.equal(clock(1001).blocked,false);
+ assert.equal(clock(1100).blocked,false);
+ assert.equal(clock(200).blocked,true);
 });

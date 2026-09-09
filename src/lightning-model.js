@@ -59,3 +59,13 @@ export function lightningDirection(latitude, longitude) {
   const lat=latitude*Math.PI/180, lon=longitude*Math.PI/180;
   return [Math.cos(lat)*Math.cos(lon),Math.sin(lat),-Math.cos(lat)*Math.sin(lon)];
 }
+
+// Never revisit an earlier live instant after any backwards wall-clock change.
+export function createLightningClock() {
+  let latest=-Infinity;
+  return (now) => {
+    const blocked=now<latest;
+    latest=Math.max(latest,now);
+    return {now,blocked};
+  };
+}

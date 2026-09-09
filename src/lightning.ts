@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import recorded from './lightning-demo.json';
-import { parseLightning, lightningSourceState, activeFlashes, lightningDirection, LIGHTNING_REFRESH_MS } from './lightning-model.js';
+import { parseLightning, lightningSourceState, activeFlashes, lightningDirection, createLightningClock, LIGHTNING_REFRESH_MS } from './lightning-model.js';
 import type { LightningFeed, ActiveFlash } from './lightning-model.js';
 import { createLightningLayer } from './lightning-render.js';
 
@@ -15,8 +15,8 @@ export function createLightning({planet,cloudMaterial,transmittance,onView}:{pla
   const status=document.querySelector<HTMLElement>('#lightning-status')!;
   const view=document.querySelector<HTMLButtonElement>('#lightning-view')!;
   let feed:LightningFeed|undefined,pending=false,error=false,lastStatus=-Infinity,demoStarted=performance.now();
-  let latestSceneTime=Date.now(),previousNow=Date.now(),current:ActiveFlash[]=[];
-  let replayFloor=-Infinity;
+  let latestSceneTime=Date.now(),current:ActiveFlash[]=[];
+  const sampleClock=createLightningClock();
   const refresh=async()=>{
     if(pending || select.value!=='live')return;
     pending=true;
@@ -28,7 +28,7 @@ export function createLightning({planet,cloudMaterial,transmittance,onView}:{pla
       error=false;
     }catch{error=true;}finally{pending=false;lastStatus=-Infinity;}
   };
-  select.addEventListener('change',()=>{demoStarted=performance.now();replayFloor=Date.now();lastStatus=-Infinity;if(select.value==='live')void refresh();});
+  select.addEventListener('change',()=>{demoStarted=performance.now();lastStatus=-Infinity;if(select.value==='live')void refresh();});
   view.addEventListener('click',()=>{
     const candidates=select.value==='demo'?demoSource.events:feed?.sources.flatMap(source=>{
       const state=lightningSourceState(feed!,source,Date.now(),latestSceneTime);
@@ -44,16 +44,13 @@ export function createLightning({planet,cloudMaterial,transmittance,onView}:{pla
   });
   void refresh();window.setInterval(()=>void refresh(),LIGHTNING_REFRESH_MS);
   return {update(sceneTime:number,sun:THREE.Vector3,seconds:number){
-    const now=Date.now();latestSceneTime=sceneTime;
-    // A backwards system-clock jump must not replay observations already shown.
-    if(now<previousNow-1000)replayFloor=previousNow;
-    previousNow=now;
+    const {now,blocked}=sampleClock(Date.now());latestSceneTime=sceneTime;
     current=[];
     if(select.value==='demo'){
       const [start,end]=demoSource.intervals[0];
       const clock=start+(performance.now()-demoStarted)%(end-start);
       current=activeFlashes(demoSource,clock);
-    }else if(select.value==='live'&&feed&&now>=replayFloor){
+    }else if(select.value==='live'&&feed&&!blocked){
       for(const source of feed.sources){const state=lightningSourceState(feed,source,now,sceneTime);if(state.enabled)current.push(...activeFlashes(source,state.clock));}
     }
     layer.update(current,sun);
@@ -61,11 +58,11 @@ export function createLightning({planet,cloudMaterial,transmittance,onView}:{pla
     const sourceStates=feed?.sources.map(source=>{
       const state=lightningSourceState(feed!,source,now,sceneTime);
       const last=Math.max(0,...source.intervals.map(i=>i[1]));
-      return `${coverage[source.id]}: ${source.status==='unconfigured'?'account not configured':source.status!=='available'?'source unavailable':state.enabled?'playing observed flashes':'waiting for matching fresh observations'}. Playback delay ${source.delayMs/60000} min.${last?' Latest observation window ends '+utc(last)+'.':''}`;
+      return `${coverage[source.id]}: ${source.status==='unconfigured'?'account not configured':source.status!=='available'?'source unavailable':state.enabled&&!blocked?'playing observed flashes':'waiting for matching fresh observations'}. Playback delay ${source.delayMs/60000} min.${last?' Latest observation window ends '+utc(last)+'.':''}`;
     }) ?? [];
     status.textContent=select.value==='off'?'Lightning is off.':select.value==='demo'
       ? `Recorded NOAA demonstration, ${utc(demoSource.intervals[0][0])}; repeats the same 20 seconds at original speed. Not current conditions. Cloud glow is reconstructed.`
-      : `${error?'Refresh failed; only still-valid observations can play. ':''}${!feed?'Checking satellite observations…':sourceStates.join('\n')}${Math.abs(sceneTime-now)>60000?' Hidden: Earth clock does not match the current time.':''}`;
+      : `${error?'Refresh failed; only still-valid observations can play. ':''}${!feed?'Checking satellite observations…':sourceStates.join('\n')}${blocked?' Hidden until the system clock catches up.':''}${Math.abs(sceneTime-now)>60000?' Hidden: Earth clock does not match the current time.':''}`;
     view.disabled=select.value==='off'||(select.value==='live'&&!feed?.sources.some(s=>lightningSourceState(feed!,s,now,sceneTime).enabled && s.events.length>0));
     status.dataset.mode=select.value;status.dataset.active=String(current.length);
   }};
