@@ -78,6 +78,12 @@ npm test
 npm run build
 ```
 
+The scene checks return immediate, non-retryable 404s for live feed requests
+(including same-origin feeds), await completed fallback activation, and use the bundled Earth preview
+plus the recorded aurora demonstration, so asynchronous data arrivals cannot
+change the measured scene or legitimately update provenance mid-test. The canvas
+comparison requires the browser to grant MSAA in its first context.
+
 The browser checks write reports into ignored `artifacts/render-efficiency/`.
 The aurora check accepts a baseline Git revision and compiles its actual shader
 for an in-place comparison. Revisit its tolerance intentionally if a subsequent

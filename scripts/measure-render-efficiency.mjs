@@ -1,3 +1,4 @@
+import {installBundledEarthFixture,waitForBundledEarth} from './lib/render-test-fixture.mjs';
 import {chromium} from 'playwright';import{writeFile,mkdir}from'node:fs/promises';import assert from'node:assert/strict';
 const label=process.argv[2]||'current';
 const url=process.env.RENDER_TEST_URL||'http://127.0.0.1:5186/';
@@ -5,6 +6,8 @@ await mkdir('artifacts/render-efficiency',{recursive:true});
 const browser=await chromium.launch({headless:true,args:['--use-angle=default','--enable-unsafe-swiftshader','--ignore-gpu-blocklist']});
 try{
  const page=await browser.newPage({viewport:{width:1512,height:982},deviceScaleFactor:2});const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE.WebGLProgram|GL_INVALID|Shader Error/.test(m.text()))errors.push(m.text());});
+ // Keep asynchronous production-feed arrivals out of this fixed-input regression.
+ await installBundledEarthFixture(page,url);
  await page.route('**/src/main.ts*',async route=>{const response=await route.fetch();let body=await response.text();body=body.replace('function animate() {',`const probe={updates:[],presents:[],mutations:0}; window.__perf=probe;
   new MutationObserver(records=>{probe.mutations+=records.length;}).observe(provenancePanel,{childList:true,subtree:true,characterData:true});
   function animate() {`);
@@ -14,7 +17,7 @@ try{
  // These timings include queued animation work and readback, not isolated GPU time.
  body=body.replace('startScene();',`window.__finishProbe=async()=>{const gl=renderer.getContext();const out=[];for(let i=0;i<30;i++){await new Promise(requestAnimationFrame);gl.finish();const t=performance.now();presentFrame();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));out.push(performance.now()-t);}return{samples:out,renderer:gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info').UNMASKED_RENDERER_WEBGL),pixels:renderer.domElement.width*renderer.domElement.height};};startScene();`);
  await route.fulfill({response,body});});
- await page.goto(url+'?time=2026-09-09T09:20:00Z&view=night');await page.waitForSelector('#loading[aria-hidden="true"]',{timeout:180000});
+ await page.goto(url+'?time=2026-09-09T09:20:00Z&view=night');await waitForBundledEarth(page);
  await page.waitForTimeout(1000);
  const cdp=await page.context().newCDPSession(page);await cdp.send('Performance.enable');
  const measure=async()=>{

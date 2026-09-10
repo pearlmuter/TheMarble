@@ -1,3 +1,4 @@
+import {installBundledEarthFixture,waitForBundledEarth} from './lib/render-test-fixture.mjs';
 import {chromium} from 'playwright';
 import {writeFile,mkdir} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
@@ -15,6 +16,8 @@ const fragment=Function(...Object.keys(constants),'return `'+original.match(/fra
 const browser=await chromium.launch({headless:true,args:['--use-angle=default','--enable-unsafe-swiftshader','--ignore-gpu-blocklist']});
 try{
  const page=await browser.newPage({viewport:{width:1000,height:800},deviceScaleFactor:2});const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE.WebGLProgram|GL_INVALID|Shader Error/.test(m.text()))errors.push(m.text());});
+ // Keep asynchronous production-feed arrivals out of this fixed-input regression.
+ await installBundledEarthFixture(page,url);
  await page.route('**/src/main.ts*',async route=>{const response=await route.fetch();let body=await response.text();assert.ok(body.includes('updateFrame = () => {'));body=body.replace('requestAnimationFrame(animate);','requestAnimationFrame(animate);if(window.__pauseRender)return;');body=body.replace('updateFrame = () => {',`window.__benchAurora=async(baseline)=>{
  window.__pauseRender=true;
  const mesh=planet.children.find(o=>o.renderOrder===10);const current=mesh.material;const old=current.clone();old.fragmentShader=baseline;old.uniforms=current.uniforms;
@@ -33,7 +36,7 @@ try{
  return {maximum,mean:sum/a.length,changed,overOne,channels:a.length,error:gl.getError()};
  };
  updateFrame = () => {`);await route.fulfill({response,body});});
- await page.goto(url+'?time=2026-09-09T09:20:00Z&view=night');await page.waitForSelector('#loading[aria-hidden="true"]',{timeout:180000});
+ await page.goto(url+'?time=2026-09-09T09:20:00Z&view=night');await waitForBundledEarth(page);
  await page.locator('#provenance-trigger').click();await page.locator('#view-debug summary').click();await page.locator('#aurora-mode').selectOption('demo');
  const results=[];
  for(const hemisphere of ['1','-1']){
