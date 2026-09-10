@@ -25,6 +25,10 @@ Each draw ends in a one-pixel readback, so timings include completion overhead.
 | Solar bloom when the Sun is visible | up to 2.1 ms |
 | Star field and Milky Way | small, view-dependent; roughly 0.1–1.3 ms |
 
+Repeating the check with verified live Earth data gave approximately 2.5–3.4 ms
+for atmosphere, 0.6–2.1 ms for clouds, 1.0–2.5 ms for surface shading, and again
+12.8 ms for the close-up aurora. The ranking is consistent with the bundled run.
+
 These are indicative differences, not independent percentages to add together.
 Inactive-layer differences sometimes fall within timing noise. Quiet aurora or
 other camera positions need not have the demonstration's cost. Higher resolution
@@ -58,6 +62,7 @@ time, last completed resource-fetch time, and the activation budget. The optiona
 The production site never installs this capture scheduler.
 
 ```sh
+node scripts/measure-render-layers.mjs --live
 npm run smoke:production -- --app-url http://127.0.0.1:5187/ --software-rendering true --output artifacts/production-render-diagnostics/local-smoke
 node --test test/capture-frame-pacing.test.js test/production-visual-smoke.test.js
 ```
