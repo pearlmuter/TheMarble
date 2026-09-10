@@ -53,7 +53,7 @@ export async function runEarthProductionVisualSmoke({ appUrl, checkedAt, capture
     bundleIds: [...new Set(bundleIds)],
     artifacts,
     failures,
-    views: captures.map(({ name, bundleId, runtimeSource, refresh, refreshReason, consoleErrors, pageErrors }) => ({
+    views: captures.map(({ name, bundleId, runtimeSource, refresh, refreshReason, consoleErrors, pageErrors, diagnostics }) => ({
       name,
       bundleId,
       runtimeSource,
@@ -61,6 +61,7 @@ export async function runEarthProductionVisualSmoke({ appUrl, checkedAt, capture
       refreshReason,
       consoleErrors: consoleErrors ?? [],
       pageErrors: pageErrors ?? [],
+      ...(diagnostics ? { diagnostics } : {}),
     })),
   };
 }

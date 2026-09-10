@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { EARTH_STATE_ACTIVATION_TIMEOUT_MS } from '../src/earth-state.js';
 import { runEarthProductionVisualSmoke } from '../src/production-visual-smoke.js';
 import { waitForProductionClient } from '../src/production-client-ready.js';
+import { installCaptureFramePacing } from './lib/capture-frame-pacing.mjs';
 
 // The app abandons an activation at EARTH_STATE_ACTIVATION_TIMEOUT_MS and then
 // says why. Giving up first would replace that answer with a harness timeout.
@@ -28,7 +29,10 @@ async function main() {
   const checkedAt = checkedAtDate.toISOString().replace('.000Z', 'Z');
   const outputDirectory = resolve(options.output ?? 'artifacts/production-health/visual-smoke');
   await mkdir(outputDirectory, { recursive: true });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: options['software-rendering'] === 'true' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : [],
+  });
   let report;
   try {
     report = await runEarthProductionVisualSmoke({
@@ -36,6 +40,11 @@ async function main() {
       checkedAt,
       captureView: async ({ url }) => {
         const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+        // This job captures stills on a GPU-less runner. Continuous full-size
+        // software rendering competes with decoding/uploading the live bundle.
+        // Keep every pixel and shader, but pace redraws during loading only.
+        await page.addInitScript(installCaptureFramePacing, 4);
+        const started = Date.now();
         const consoleErrors = [];
         const pageErrors = [];
         page.on('console', message => {
@@ -50,10 +59,24 @@ async function main() {
             // Give each phase its own application-sized deadline: subtracting
             // fallback loading time can expire while live activation is healthy.
             await waitForProductionClient(page, READY_TIMEOUT_MS);
-            await page.waitForTimeout(1_000);
           } catch (error) {
             readyError = `Production view did not become ready: ${error.message ?? String(error)}`;
           }
+          const readinessMs = Date.now() - started;
+          await page.evaluate(() => window.__captureResumeFrames?.());
+          await page.waitForTimeout(1_000);
+          const diagnostics = await page.evaluate(() => {
+            const canvas = document.querySelector('#globe');
+            const gl = canvas?.getContext('webgl2') ?? canvas?.getContext('webgl');
+            const extension = gl?.getExtension('WEBGL_debug_renderer_info');
+            const fetches = performance.getEntriesByType('resource').filter(entry => entry.initiatorType === 'fetch');
+            return {
+              renderer: extension ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL) : 'unavailable',
+              width: canvas?.width, height: canvas?.height,
+              fetchCount: fetches.length,
+              lastFetchCompletedMs: Math.max(0, ...fetches.map(entry => entry.responseEnd)),
+            };
+          }).catch(error => ({ diagnosticError: error.message }));
           const currentness = await page.locator('#earth-state-summary').evaluate(element => ({
             bundleId: element.getAttribute('data-bundle-id') ?? '',
             runtimeSource: element.getAttribute('data-runtime-source') ?? '',
@@ -77,6 +100,7 @@ async function main() {
             ...currentness,
             consoleErrors,
             pageErrors,
+            diagnostics: { ...diagnostics, readinessMs, loadingFramesPerSecond: 4, activationBudgetMs: EARTH_STATE_ACTIVATION_TIMEOUT_MS },
             screenshot: await page.screenshot({ type: 'png' }),
           };
         } finally {

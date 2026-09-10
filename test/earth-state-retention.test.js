@@ -119,3 +119,11 @@ test('an unrecognised object sharing the store is never deleted', () => {
   });
   assert.deepEqual(result.removeAssets, []);
 });
+
+test('minimum retention uses chronological order across timestamp precisions', () => {
+  const old = bundle('01');
+  const second = { ...bundle('02'), publishedAt: '2026-08-02T12:00:00Z' };
+  const later = { ...bundle('03'), publishedAt: '2026-08-02T12:00:00.500Z' };
+  const result = plan([old, second, later], { currentBundleId: old.bundleId, minimumBundles: 1, keepDays: 1 });
+  assert.deepEqual(result.retainBundles.map(item => item.bundleId), [old.bundleId, later.bundleId]);
+});
