@@ -70,3 +70,26 @@ node --test test/capture-frame-pacing.test.js test/production-visual-smoke.test.
 The app URL must be built/configured against the real production latest pointer.
 A passing capture requires all three views to expose a verified remote bundle;
 rendering only the packaged fallback is never a successful production check.
+
+GitHub run [34507085368](https://github.com/pearlmuter/TheMarble/actions/runs/34507085368)
+verified all three captures with SwiftShader at 1600 × 1000 and the original
+300-second activation allowance. Readiness including fallback startup was 234,
+291 and 296 seconds for day, terminator and night. All reached remote/current
+data with no page or console errors. The overall run failed a separate freshness
+gate because cloud publication had stopped earlier that day.
+
+## Publication stopped on a whole-second timestamp
+
+Cloud run [34508673843](https://github.com/pearlmuter/TheMarble/actions/runs/34508673843)
+failed during retention, before uploading the latest pointer. The directory
+`2026-09-10T12-51-12Z-ef89aca2a76c4d07` was parsed using a fixed 24-character
+slice, accidentally including part of the hash in the publication time. This
+made the pruner refuse to run. Successive runs inherited the same directory and
+failed again, leaving the public bundle over six hours old.
+
+Retention now parses the complete timestamp prefix with or without milliseconds
+and sorts instants numerically, since lexicographic order is incorrect across
+mixed precisions. CLI regression tests reproduce the exact failing directory,
+check chronological retention, preserve the current pointer's bundle and shared
+website/data assets, and verify that malformed timestamps still stop all deletion.
+No freshness threshold or deletion guard is relaxed.

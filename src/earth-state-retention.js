@@ -43,7 +43,7 @@ export function planEarthStateRetention({
       throw new Error(`Bundle ${bundle.bundleId} has an unreadable publication time (${bundle.publishedAt}); refusing to prune`);
     }
   }
-  const ordered = [...bundles].sort((left, right) => left.publishedAt.localeCompare(right.publishedAt));
+  const ordered = [...bundles].sort((left, right) => Date.parse(left.publishedAt) - Date.parse(right.publishedAt));
   const cutoff = nowMs - keepDays * DAY_MS;
   const newest = new Set(ordered.slice(-Math.max(1, minimumBundles)).map(bundle => bundle.bundleId));
   const retainBundles = ordered.filter(bundle => bundle.bundleId === currentBundleId

@@ -40,11 +40,15 @@ async function readStoredBundles(storeDirectory) {
     const manifestPath = join(bundlesRoot, entry.name, 'manifest.json');
     try {
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      // ISO publication instants may omit milliseconds at an exact second.
+      // Match the complete time key, never a fixed-width slice into the hash.
+      const timeKey = entry.name.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:\.\d{3})?Z)-/);
+      if (!timeKey) throw new Error(`Bundle directory ${entry.name} has an unreadable publication time; refusing to prune`);
       bundles.push({
         bundleId: manifest.bundleId,
         path: `bundles/${entry.name}`,
         // The publisher writes its time key as the ISO instant with ':' replaced by '-'.
-        publishedAt: entry.name.slice(0, 24).replace(/T(\d\d)-(\d\d)-/, 'T$1:$2:'),
+        publishedAt: timeKey[1].replace(/T(\d\d)-(\d\d)-/, 'T$1:$2:'),
         assetHrefs: collectAssetHrefs(manifest),
       });
     } catch (error) {
