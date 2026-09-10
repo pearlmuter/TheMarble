@@ -32,9 +32,19 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
       ${ATMOSPHERE_TRANSMITTANCE_GLSL}
       ${AURORA_SHELL_GLSL}
       ${AURORA_PHYSICS_GLSL}
-      vec2 emissionUv(vec3 n){
-        float longitude=atan(dot(n,dusk),dot(n,noon));
-        return vec2(longitude/6.28318530718+.5,asin(clamp(dot(n,axis),-1.0,1.0))/3.14159265359+.5);
+      vec2 emissionUv(vec3 point,vec3 normal,float radius){
+        float mu=dot(normal,axis), c2=max(0.0,1.0-mu*mu);
+        // A dipole field line preserves magnetic longitude. Compute its
+        // reference latitude directly, without reconstructing and projecting
+        // the three-dimensional footpoint at every integration sample.
+        if(c2<.000001){
+          vec3 footpoint=auroraFootpoint(point,axis);
+          return vec2(atan(dot(footpoint,dusk),dot(footpoint,noon))/6.28318530718+.5,
+                      asin(clamp(dot(footpoint,axis),-1.0,1.0))/3.14159265359+.5);
+        }
+        float referenceMu=(mu>=0.0?1.0:-1.0)*sqrt(max(0.0,1.0-clamp(AURORA_REFERENCE/radius*c2,0.0,1.0)));
+        float longitude=atan(dot(normal,dusk),dot(normal,noon));
+        return vec2(longitude/6.28318530718+.5,asin(referenceMu)/3.14159265359+.5);
       }
       void main(){
         vec3 ray=normalize(bodyPosition-cameraLocal);
@@ -45,6 +55,11 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
         float maxY=max(max(abs((cameraLocal+ray*segments.x).y),abs((cameraLocal+ray*segments.y).y)),
                        max(abs((cameraLocal+ray*segments.z).y),abs((cameraLocal+ray*segments.w).y)));
         if(maxY/AURORA_INNER<latitudeFloor) discard;
+        // Projection onto the Sun direction is linear along each interval.
+        // If even its lowest endpoint exceeds the maximum shell radius times
+        // the daylight cutoff, every sample has exactly zero display contrast.
+        vec4 sunDistances=vec4(dot(cameraLocal,sunLocal))+segments*dot(ray,sunLocal);
+        if(min(min(sunDistances.x,sunDistances.y),min(sunDistances.z,sunDistances.w))>=.08*AURORA_OUTER) discard;
         float impact=length(cross(cameraLocal,ray));
         vec3 chordTransmission=vec3(1.0);
         if(impact<ATMOSPHERE_RADIUS&&impact>=GROUND_RADIUS){
@@ -59,12 +74,15 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
           vec3 point=cameraLocal+ray*along;
           float radius=length(point), height=(radius-1.0)*6378.137;
           vec3 normal=point/radius;
-          vec3 footpoint=auroraFootpoint(point,axis);
-          vec3 column=texture2D(emissionMap,emissionUv(footpoint)).rgb;
+          // The existing display contrast is exactly zero on this side of the
+          // daylight cutoff. Skip the expensive emission lookup in that case.
+          float sunCosine=dot(normal,sunLocal);
+          if(sunCosine>=.08) continue;
+          vec3 column=texture2D(emissionMap,emissionUv(point,normal,radius)).rgb;
           if(max(column.r,max(column.g,column.b))<.0001) continue;
           // This is daylight contrast on our night-view display, not cessation
           // of auroral excitation in sunlight.
-          float contrast=1.0-smoothstep(-.16,.08,dot(normal,sunLocal));
+          float contrast=1.0-smoothstep(-.16,.08,sunCosine);
           vec3 profile=vec3(auroraProfile(height,130.0,17.0),auroraProfile(height,260.0,60.0),auroraProfile(height,108.0,8.0));
           vec3 luminance=column*profile*vec3(${auroraRayleighLuminance(1)},${auroraRayleighLuminance(1,630,.265)},${auroraRayleighLuminance(1,427.8,.011)});
           // Approximate in-gamut line colours, each with unit photopic Y.

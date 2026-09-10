@@ -143,7 +143,9 @@ function sceneNow() {
   return new Date();
 }
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+// All scene geometry is drawn into sceneTarget. The canvas receives only a
+// screen-filling presentation quad, so canvas MSAA only adds a redundant resolve.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1440,6 +1442,11 @@ function applyCelestialRotation(object: THREE.Object3D, matrix: readonly number[
 
 const takeInitialCameraPosition = createOneTimeInertialCameraPlacement(fixedSceneView);
 const takeGoldenCameraPose = goldenScene ? createOneTimeOrbitalGoldenCameraPlacement(goldenScene) : null;
+// The menu clock displays seconds. Reuse its expensive locale formatters and
+// only format again when that displayed second changes (including time jumps).
+const clockFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'medium' });
+const zoneFormatter = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' });
+let displayedClockSecond: number | undefined;
 function updateCelestialScene(now: Date) {
   const frame = celestialSceneFrameAt(now);
   const solar = frame.astronomy.sun;
@@ -1486,9 +1493,14 @@ function updateCelestialScene(now: Date) {
   skyExposure = THREE.MathUtils.lerp(skyExposure, photograph.exposure.milkyWay, photograph.sun.inFrame ? .045 : .012);
   milkyWayMaterial.uniforms.exposure.value = skyExposure * MILKY_WAY_LINEAR_EXPOSURE_CORRECTION;
   if (starMaterial) starMaterial.uniforms.exposure.value = photograph.exposure.stars * STAR_LINEAR_EXPOSURE_CORRECTION;
-  const zone=new Intl.DateTimeFormat(undefined,{timeZoneName:'short'}).formatToParts(now).find(part=>part.type==='timeZoneName')?.value ?? 'local';
-  clock.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'full',timeStyle:'medium'}).format(now)+` ${zone}`;
-  sunStatus.textContent=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${activeEarthStateStatus} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
+  const clockSecond = Math.floor(now.getTime() / 1000);
+  if (clockSecond !== displayedClockSecond) {
+    const zone = zoneFormatter.formatToParts(now).find(part => part.type === 'timeZoneName')?.value ?? 'local';
+    clock.textContent = clockFormatter.format(now) + ` ${zone}`;
+    displayedClockSecond = clockSecond;
+  }
+  const sunText=`Sun over ${Math.abs(solar.subsolarLatitudeDegrees).toFixed(1)}°${solar.subsolarLatitudeDegrees>=0?'N':'S'}, ${Math.abs(solar.subsolarLongitudeDegrees).toFixed(1)}°${solar.subsolarLongitudeDegrees>=0?'E':'W'} · ${activeEarthStateStatus} · Earth rotates beneath an inertial EQJ sky · Stars: ESA Hipparcos-2 · Sky: ESA/Gaia/DPAC · CDS HiPS/hips2fits${goldenScene ? ` · Golden scene: ${goldenScene.id}` : ''}`;
+  if (sunStatus.textContent !== sunText) sunStatus.textContent = sunText;
   renderEarthStateProvenance(now);
 }
 
