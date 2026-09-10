@@ -60,9 +60,10 @@ export function createLightning({planet,cloudMaterial,transmittance,onView}:{pla
       const last=Math.max(0,...source.intervals.map(i=>i[1]));
       return `${coverage[source.id]}: ${source.status==='unconfigured'?'account not configured':source.status!=='available'?'source unavailable':state.enabled&&!blocked?'playing observed flashes':'waiting for matching fresh observations'}. Playback delay ${source.delayMs/60000} min.${last?' Latest observation window ends '+utc(last)+'.':''}`;
     }) ?? [];
-    status.textContent=select.value==='off'?'Lightning is off.':select.value==='demo'
+    const statusText=select.value==='off'?'Lightning is off.':select.value==='demo'
       ? `Recorded NOAA demonstration, ${utc(demoSource.intervals[0][0])}; repeats the same 20 seconds at original speed. Not current conditions. Cloud glow is reconstructed.`
       : `${error?'Refresh failed; only still-valid observations can play. ':''}${!feed?'Checking satellite observations…':sourceStates.join('\n')}${blocked?' Hidden until the system clock catches up.':''}${Math.abs(sceneTime-now)>60000?' Hidden: Earth clock does not match the current time.':''}`;
+    if(status.textContent!==statusText)status.textContent=statusText;
     view.disabled=select.value==='off'||(select.value==='live'&&!feed?.sources.some(s=>lightningSourceState(feed!,s,now,sceneTime).enabled && s.events.length>0));
     status.dataset.mode=select.value;status.dataset.active=String(current.length);
   }};

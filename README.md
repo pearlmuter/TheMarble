@@ -185,6 +185,11 @@ An incomplete pair, mismatched observation window, insufficient longwave coverag
 
 ## Rendering and supported data paths
 
+The renderer avoids redundant menu updates and canvas multisampling, and reuses
+the dipole geometry when sampling aurora. Texture resolution, lighting detail,
+and animation cadence are preserved. See the [performance measurements and
+image comparisons](docs/render-efficiency.md).
+
 - The sunlight position is calculated locally from the current UTC time and date, producing the right seasonal tilt and day/night terminator.
 - The solar disc uses the Sun's physical radius and current astronomical distance. The opening camera is placed just outside the Earth-Sun occultation cone, so the true-sized Sun appears immediately beside the atmospheric limb without being pinned to the screen.
 - The Moon position is calculated from its current approximate orbital coordinates.
