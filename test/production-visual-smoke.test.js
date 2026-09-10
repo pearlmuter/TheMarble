@@ -17,6 +17,7 @@ test('visual smoke renders fixed day, terminator, and night views of one current
         refresh: 'current',
         consoleErrors: [],
         pageErrors: [],
+        diagnostics: { renderer: 'SwiftShader', readinessMs: 22000, width: 1600, height: 1000 },
       };
     },
     async retainArtifact(path, bytes) { artifacts.set(path, bytes); },
@@ -29,6 +30,7 @@ test('visual smoke renders fixed day, terminator, and night views of one current
   assert.equal(report.bundleId, 'earth-current');
   assert.deepEqual(report.artifacts, ['day.png', 'terminator.png', 'night.png']);
   assert.deepEqual([...artifacts.keys()], report.artifacts);
+  assert.deepEqual(report.views[0].diagnostics, { renderer: 'SwiftShader', readinessMs: 22000, width: 1600, height: 1000 });
 });
 
 test('visual smoke retains every diagnostic image and fails on fallback, stale, mixed, or errored views', async () => {
