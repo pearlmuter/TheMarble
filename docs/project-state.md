@@ -10,6 +10,29 @@ Read [`../README.md`](../README.md) for what the system *does*, and
 [`web-integration.md`](web-integration.md) for how it is delivered. This file
 covers only what is done, what is not, and what will bite you.
 
+## Production follow-up — 2026-09-10
+
+This newer check supersedes the historical production diagnosis below. PR
+[#42](https://github.com/pearlmuter/TheMarble/pull/42) repaired two independent
+failures: software-rendered screenshot checks competing with data activation,
+and a whole-second timestamp that stopped retention and cloud publication.
+The deployed activation limit remains **300 seconds**; only the diagnostic
+browser paces loading redraws. Website resolution, shaders and cadence are
+unchanged by that repair.
+
+Cloud publication [34510132809](https://github.com/pearlmuter/TheMarble/actions/runs/34510132809)
+and its next scheduled run
+[34510708233](https://github.com/pearlmuter/TheMarble/actions/runs/34510708233)
+succeeded. The served bundle advanced to the 17:00 UTC cloud hour. Site deployment
+[34510131163](https://github.com/pearlmuter/TheMarble/actions/runs/34510131163)
+also succeeded, and a direct browser check reached verified remote/current data
+without page errors. The latest daily cryosphere and lightning runs checked at
+17:51 UTC were successful.
+
+See [the measured graphics costs and failure diagnosis](production-render-diagnostics.md).
+Fast startup does not imply low sustained GPU load; the closest aurora view was
+the largest measured layer cost. The terminator is already calculated locally.
+
 ## Sun and camera update
 
 The 2026-09-05 update replaces the solar glare sprites, shares the

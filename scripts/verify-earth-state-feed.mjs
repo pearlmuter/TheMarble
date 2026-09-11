@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { evaluateEarthStateDelivery } from '../src/earth-state-delivery.js';
 import { evaluateEarthStateFeedAcceptance } from '../src/earth-state-feed-acceptance.js';
+import { observeDegradedClient } from './lib/degraded-client-observation.mjs';
 import { representativeEarthStateAssetHref } from '../src/earth-state-feed-orchestration.js';
 
 function parseArguments(argv) {
@@ -34,23 +35,7 @@ async function degradedObservation(appUrl, latestUrl) {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    // A corrupt latest response must leave the previously verified globe visible.
-    await page.route(url => url.href.startsWith(latestUrl.replace(/latest\.json$/, 'latest')), route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: '{"schemaVersion":1,"bundleId":"corrupt"',
-    }));
-    await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-    await page.waitForSelector('#loading[aria-hidden="true"]', { timeout: 120_000 });
-    await page.waitForFunction(() => {
-      const refresh = document.querySelector('#earth-state-summary')?.getAttribute('data-refresh');
-      return refresh === 'current' || refresh === 'failed';
-    }, undefined, { timeout: 120_000 });
-    return await page.locator('#earth-state-summary').evaluate(element => ({
-      bundleId: element.getAttribute('data-bundle-id') ?? '',
-      runtimeSource: element.getAttribute('data-runtime-source') ?? '',
-      refresh: element.getAttribute('data-refresh') ?? '',
-    }));
+    return await observeDegradedClient(page, { appUrl, latestUrl });
   } finally {
     await browser.close();
   }
@@ -80,12 +65,15 @@ async function main() {
   const policy = options.policy
     ? JSON.parse(await readFile(options.policy, 'utf8')).acceptance
     : undefined;
+  const degraded = manifest && options['app-url']
+    ? await degradedObservation(options['app-url'], latestUrl)
+    : undefined;
   const acceptance = manifest
     ? evaluateEarthStateFeedAcceptance({
       manifest,
       checkedAt,
       policy,
-      degraded: options['app-url'] ? await degradedObservation(options['app-url'], latestUrl) : undefined,
+      degraded,
     })
     : { ok: false, failures: ['The origin did not serve a decodable Earth-state manifest'] };
 
@@ -96,6 +84,7 @@ async function main() {
     ok: delivery.ok && acceptance.ok,
     delivery,
     acceptance,
+    ...(degraded ? { degraded } : {}),
   };
   if (options.report) {
     await mkdir(dirname(resolve(options.report)), { recursive: true });

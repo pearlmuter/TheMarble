@@ -59,7 +59,9 @@ test('the delivery verification probes the origin and the client behaviour a deg
   const source = await read('scripts/verify-earth-state-feed.mjs');
   assert.match(source, /evaluateEarthStateDelivery/);
   assert.match(source, /evaluateEarthStateFeedAcceptance/);
-  assert.match(source, /page\.route/);
+  assert.match(source, /observeDegradedClient\(page/);
+  const observation = await read('scripts/lib/degraded-client-observation.mjs');
+  assert.match(observation, /page\.route/);
   // An object store returns cross-origin headers only when asked as a browser asks.
   assert.match(source, /headers: origin \? \{ origin \} : \{\}/);
   assert.match(source, /if \(!report\.ok\) process\.exitCode = 1/);
