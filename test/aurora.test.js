@@ -1,13 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseAuroraForecast, auroraEmissionGrid, auroraLatitudeFloor, auroraForecastUsable, auroraGridUv, auroraViewDirection, AURORA_MAX_AGE_MS } from '../src/aurora-model.js';
+import { parseAuroraForecast, auroraEmissionGrid, auroraLatitudeFloor, auroraForecastUsable, auroraGridUv, auroraViewDirection, AURORA_MAX_AGE_MS, auroraPatternNeedsUpdate } from '../src/aurora-model.js';
 import { createAuroraController } from '../src/aurora-controller.js';
 import { auroraRaySegments, AURORA_INNER_RADIUS, AURORA_OUTER_RADIUS } from '../src/aurora-shell.js';
 const now = Date.parse('2026-09-06T13:00:00Z');
 const recorded = JSON.parse(readFileSync(new URL('../src/aurora-demo.json', import.meta.url)));
 function document() { return { 'Observation Time': recorded.observationTime, 'Forecast Time': recorded.forecastTime, coordinates: recorded.grid.map((p,i) => [i%360, Math.floor(i/360)-90,p]) }; }
 const demo = parseAuroraForecast(document());
+
+test('cached pattern holds through ordinary frames and refreshes after a minute or clock rewind', () => {
+  assert.equal(auroraPatternNeedsUpdate(undefined, 0), true);
+  for (let frame = 0; frame < 3600; frame++) assert.equal(auroraPatternNeedsUpdate(10, 10 + frame / 60), false);
+  assert.equal(auroraPatternNeedsUpdate(10, 70), true);
+  assert.equal(auroraPatternNeedsUpdate(10, 500), true);
+  assert.equal(auroraPatternNeedsUpdate(10, 0), true);
+});
+
+test('finite emission layers preserve overhead column energy and finite limb brightening', () => {
+  for (const [peak, sigma] of [[130, 17], [260, 60], [108, 8]]) {
+    const thickness = Math.sqrt(12) * sigma;
+    const inner = 1 + (peak - thickness / 2) / 6378.137;
+    const outer = 1 + (peak + thickness / 2) / 6378.137;
+    const column = segments => segments.reduce((sum, [a, b]) => sum + b - a, 0) * 6378.137 / thickness;
+    const overhead = auroraRaySegments([0, 0, 3], [0, 0, -1], inner, outer);
+    assert.equal(overhead.length, 1, 'Earth blocks the far layer');
+    assert.ok(Math.abs(column(overhead) - 1) < 1e-10);
+    const impact = inner + 1e-5;
+    const limb = auroraRaySegments([impact, 0, 3], [0, 0, -1], inner, outer);
+    const expected = 2 * Math.sqrt(outer * outer - impact * impact) * 6378.137 / thickness;
+    assert.ok(Math.abs(column(limb) - expected) < 1e-9);
+    assert.ok(expected > 10 && expected < 100);
+    assert.deepEqual(auroraRaySegments([outer + .001, 0, 3], [0, 0, -1], inner, outer), []);
+    assert.ok(Math.abs(thickness * thickness / 12 - sigma * sigma) < 1e-9);
+  }
+});
 
 test('recorded NOAA grid survives compaction and preserves both hemispheres', () => {
   assert.equal(demo.grid.length, 65160);

@@ -69,7 +69,8 @@ export function createAurora({ planet, renderer, transmittance, onView }: {
         : state.forecast ? `Aurora hidden: forecast is stale or does not match this scene time. ${timing}`
         : state.error ? `Aurora unavailable: ${state.error}. Retrying automatically.` : 'Checking NOAA aurora forecast…';
       const epoch=auroraMagneticField(sceneTime).epochClamped?' Magnetic field date is outside 2025–2030; the nearest model epoch is used.':'';
-      const description=message+epoch;
+      const cadence=state.enabled?' Emission layers refresh once per simulation minute (every 3 seconds at 20×); shapes and brightness are estimates.':'';
+      const description=message+cadence+epoch;
       if (status.textContent !== description) status.textContent = description;
       status.dataset.mode = state.mode;
       status.dataset.available = String(state.enabled);

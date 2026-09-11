@@ -24,7 +24,7 @@ Earth occlusion, public forecast refresh, demo disclosure and zoom 5.35.
 - Use an approximate 557.7 nm green yield of 1.23 kR per mW/m², representative
   of roughly 3 keV precipitation; this is not a measured electron spectrum.
   Source: https://doi.org/10.1029/2011JA017094
-- Integrate normalized altitude profiles through the emitting volume. Convert
+- Approximate the emitting volume with three finite, uniform-density layers. Convert
   kR to radiance with 10¹³ photons/(m² s), hc/λ and 1/(4π), then to photopic
   luminance. A 1 kR 557.7 nm column is about 0.00019 cd/m². No extra inverse-square
   dimming of a resolved emitting surface. The model's green profile peaks at 130 km, red higher;
@@ -40,49 +40,53 @@ Earth occlusion, public forecast refresh, demo disclosure and zoom 5.35.
   backtrace rather than a growing Euler displacement. This supplies a
   plausible velocity scale; E and its azimuthal drift direction are assumed, not measured. Earth’s field does not
   itself supply the aurora’s energy. NOAA already incorporates solar-wind forcing.
-- Integrate green excitation with a 0.7 s response and a more diffuse red component
+- The emission generator retains a 0.7 s green response and a more diffuse red component
   with a representative 30 s effective response (radiative lifetime shortened
   by collisional losses). Nitrogen is prompt. No arbitrary animation time wrapping.
+  With minute snapshots these are coarse history weights, not resolved second-scale dynamics.
   Green lifetime context: https://pwg.gsfc.nasa.gov/Education/aurora.htm
 - Display exposure is explicitly a night-view rendering choice, separate from
   the physical-unit emission proxy. The rest of TheMarble is not a calibrated
   radiometric camera. Daylight contrast suppression remains an approximation.
 
-## Acceptance
+## Simpler display — September 2026
 
-Verify magnetic pole/field strength, dipole invariant at multiple altitudes and
-both hemispheres, radiance conversion, integrated profile normalization,
-frame-rate-independent decay, no emitted green column above 1.23 times the inferred flux
-from the bounded procedural structure, and existing state/occlusion
-checks. Inspect overhead/limb/day, both hemispheres, motion over time, off/on
-frame cadence and mobile. Preserve raw source data. Update README and debug
-explanation, review, build/test clean committed files, publish and verify live.
+The requested display updates its emission texture once per 60 simulation seconds.
+At normal speed that means once a minute; debug 20× playback refreshes every three
+seconds. New forecast objects, gain changes, re-enabling and time rewinds refresh
+immediately. Camera projection and daylight contrast update every displayed frame.
+The magnetic texture basis is cached with the texture to avoid coordinate drift.
+Source polling remains every five minutes. This deliberately omits rapid auroral
+motion; it must not be presented as a real-time reconstruction of observed curtains.
 
+The previous renderer took 64 samples per pixel through the volume. The replacement
+uses exact intersections with three finite spherical layers, at most six emission
+lookups per pixel. The green layer is centred at 130 km, red at 260 km and
+blue/violet at 108 km. Thickness is sqrt(12) times each previous Gaussian's standard
+deviation (17, 60 and 8 km), preserving column energy and vertical variance.
+Chord length produces finite limb brightening. Ground intersections block far-side
+light, while magnetic field-line mapping and atmospheric transmission remain.
 
-### Validation
+Uniform layers approximate the altitude profile; they do not reproduce a Gaussian's
+soft tails or finely resolved curtain depth. Long oblique paths use midpoint samples
+and therefore approximate variations along the path. The display is intended for
+orbital globe views. Brightness remains an uncertain forecast-derived proxy with
+chosen exposure, not calibrated observed luminosity. Source or gain changes reset
+history immediately; regular minute updates retain coarse exponential history.
 
-Independent unit checks cover IGRF pole quadrant, approximately 30/60 µT
-surface equatorial/polar field, inverse-cube field strength, E/B velocity scale,
-field-line invariant in both hemispheres at 110–450 km, epoch limits, the
-probability/flux relation and 1 kR luminance conversion. The normalized vertical
-profiles integrate to within 0.5% of unity over 85–500 km; a tangent column
-brightens from path length without a painted halo.
+## Validation
 
-An isolated GPU fixture reads actual floating-point emission buffers. With a
-uniform 5 mW/m² input, green stays below the 6.15 kR bound. After setting input
-to zero, the one-second green/red retention agrees with exp(−1/0.7) and
-exp(−1/30), within half-float precision. No shader errors or context loss.
+Unit checks cover magnetic geometry, field strength, flux/luminance conversion,
+forecast state, ground occlusion and the emission generator's response. New checks
+verify minute cadence, time rewinds, each finite layer's vertical normalization and
+variance, finite tangent brightening and rays missing the emitting layer.
 
-Browser checks include both hemispheres, overhead and limb, daylight, the 20×
-time-lapse disclosure, off mode, mobile controls and the retained 5.35 cap.
-At the same polar viewpoint on Apple M1 Max/ANGLE Metal, the mean of 120 frame
-intervals was 8.33 ms with the model on and 8.33 ms with it off. This measures
-displayed cadence on this machine, not GPU execution time or low-end performance.
-
-
-History survives positive elapsed-time jumps, including slow 20× frames, using
-analytic exponential retention. Forecast refreshes retain a conservative latitude
-bound covering both the new source and old afterglow. The bound only tightens
-when the aurora history is explicitly reset, so it cannot clip a retreating oval's
-red light. Azimuthal drift has a unit longitude derivative for any elapsed time;
-it is a representative shear flow, not a solved two-cell convection pattern.
+Run `node scripts/verify-simple-aurora.mjs 4f3b2d7b4d3a1266366e6b2783f67ffaceed8a74`
+against the local Vite server on port 5186. It compares the old and new shaders on
+identical cached emission, captures close/globe/limb views in both hemispheres,
+checks WebGL errors and counts actual emission draws across minute boundaries and
+mode/source changes. It also alternates synchronized full-scene timing samples.
+At 1000 × 800 CSS pixels and DPR 2 on Apple M1 Max, close polar views fell from
+roughly 13 ms to 6 ms per complete scene draw. This is a local rendering measurement,
+not a promise about battery life, fan behaviour or other GPUs. The simplification
+leaves Earth textures and output resolution unchanged.
