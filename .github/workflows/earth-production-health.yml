@@ -20,9 +20,10 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    # Three views, each with sequential fallback and live activation budgets,
-    # plus navigation, feed verification and retained diagnostics.
-    timeout-minutes: 45
+    # Three views plus a separate corrupt-feed browser, each with sequential
+    # startup/refresh allowances. Leave time for navigation, build, probes and
+    # diagnostics even when all four checks exhaust their bounded waits.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -93,3 +93,23 @@ mixed precisions. CLI regression tests reproduce the exact failing directory,
 check chronological retention, preserve the current pointer's bundle and shared
 website/data assets, and verify that malformed timestamps still stop all deletion.
 No freshness threshold or deletion guard is relaxed.
+
+## Remaining fallback-check timeout — 2026-09-11
+
+The post-merge recovery run
+[34510428776](https://github.com/pearlmuter/TheMarble/actions/runs/34510428776)
+and the next morning's run
+[34567611694](https://github.com/pearlmuter/TheMarble/actions/runs/34567611694)
+both passed all three captures and the freshness evaluation, but failed the
+separate corrupt-feed fallback browser. That browser still had a hardcoded
+120-second startup deadline and unpaced software rendering. Its timeout prevented
+the delivery report from being written. A continued GitHub step may display a
+success conclusion even when its command outcome failed; the final enforcement
+step correctly kept these runs red.
+
+The fallback browser now uses the same sequential application-sized startup
+allowances and 4 Hz loading pacing as the capture browser. Browser errors become
+explicit failed observations retained in the delivery report. A blank globe or
+an incorrectly successful refresh still fails acceptance; no notification or
+health-policy setting is disabled. Regression tests exercise a valid 140-second
+startup and a genuine startup failure through the actual observation function.
