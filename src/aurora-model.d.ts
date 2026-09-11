@@ -11,3 +11,5 @@ export function auroraViewDirection(forecast: AuroraForecast | undefined, hemisp
 export function auroraEmissionGrid(forecast: AuroraForecast): Uint8Array;
 
 export function auroraLatitudeFloor(previous:number|undefined,grid:Uint8Array):number;
+export const AURORA_PATTERN_INTERVAL_SECONDS: number;
+export function auroraPatternNeedsUpdate(previousTime: number | undefined, time: number): boolean;

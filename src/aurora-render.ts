@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createAuroraEmission } from './aurora-emission.js';
 import { auroraMagneticField, auroraRayleighLuminance, AURORA_NIGHT_EXPOSURE, AURORA_PHYSICS_GLSL } from './aurora-physics.js';
-import { AURORA_WIDTH, AURORA_HEIGHT, auroraEmissionGrid, auroraLatitudeFloor } from './aurora-model.js';
+import { AURORA_WIDTH, AURORA_HEIGHT, auroraEmissionGrid, auroraLatitudeFloor, auroraPatternNeedsUpdate } from './aurora-model.js';
 import type { AuroraForecast } from './aurora-model.js';
 import { AURORA_OUTER_RADIUS, AURORA_SHELL_GLSL } from './aurora-shell.js';
 import { ATMOSPHERE_MODEL_GLSL, ATMOSPHERE_TRANSMITTANCE_GLSL } from './atmosphere-model.js';
@@ -46,6 +46,32 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
         float longitude=atan(dot(normal,dusk),dot(normal,noon));
         return vec2(longitude/6.28318530718+.5,asin(referenceMu)/3.14159265359+.5);
       }
+      vec3 layerSegment(vec3 ray,vec2 segment,float channel,float thickness,vec3 chordTransmission){
+        float lengthKm=(segment.y-segment.x)*6378.137;
+        if(lengthKm<=0.0)return vec3(0.0);
+        vec3 point=cameraLocal+ray*(segment.x+segment.y)*.5;
+        float radius=length(point);vec3 normal=point/radius;
+        float sunCosine=dot(normal,sunLocal);
+        if(sunCosine>=.08)return vec3(0.0);
+        vec3 column=texture2D(emissionMap,emissionUv(point,normal,radius)).rgb;
+        float amount=channel<.5?column.r:(channel<1.5?column.g:column.b);
+        vec3 colour=channel<.5?vec3(.17,1.3468,.01)*${auroraRayleighLuminance(1)}:
+          (channel<1.5?vec3(4.7037,0.0,0.0)*${auroraRayleighLuminance(1,630,.265)}:
+          vec3(.25,0.0,13.1143)*${auroraRayleighLuminance(1,427.8,.011)});
+        vec3 transmission=vec3(1.0);
+        if(radius<ATMOSPHERE_RADIUS) transmission=atmosphereTransmittanceToTop(transmittanceLut,radius,dot(normal,-ray));
+        else if(dot(point,ray)>0.0) transmission=chordTransmission;
+        return transmission*colour*amount*(1.0-smoothstep(-.16,.08,sunCosine))*lengthKm/thickness*${AURORA_NIGHT_EXPOSURE.toFixed(1)};
+      }
+      vec3 emissionLayer(vec3 ray,float peak,float width,float channel,vec3 chordTransmission){
+        // A finite layer preserves the original vertical column and variance.
+        // Its exact chord length gives finite limb brightening without ray marching.
+        float thickness=3.46410161514*width;
+        vec4 segment=auroraLayerSegments(cameraLocal,ray,
+          1.0+(peak-thickness*.5)/6378.137,1.0+(peak+thickness*.5)/6378.137);
+        return layerSegment(ray,segment.xy,channel,thickness,chordTransmission)
+          +layerSegment(ray,segment.zw,channel,thickness,chordTransmission);
+      }
       void main(){
         vec3 ray=normalize(bodyPosition-cameraLocal);
         vec4 segments=auroraSegments(cameraLocal,ray);
@@ -66,32 +92,9 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
           vec3 halfChord=atmosphereTransmittanceToTop(transmittanceLut,impact,0.0);
           chordTransmission=halfChord*halfChord;
         }
-        vec3 emission=vec3(0.0);
-        float stepLength=total/64.0;
-        for(int i=0;i<64;i++){
-          float travelled=(float(i)+.5)*stepLength;
-          float along=travelled<front?segments.x+travelled:segments.z+travelled-front;
-          vec3 point=cameraLocal+ray*along;
-          float radius=length(point), height=(radius-1.0)*6378.137;
-          vec3 normal=point/radius;
-          // The existing display contrast is exactly zero on this side of the
-          // daylight cutoff. Skip the expensive emission lookup in that case.
-          float sunCosine=dot(normal,sunLocal);
-          if(sunCosine>=.08) continue;
-          vec3 column=texture2D(emissionMap,emissionUv(point,normal,radius)).rgb;
-          if(max(column.r,max(column.g,column.b))<.0001) continue;
-          // This is daylight contrast on our night-view display, not cessation
-          // of auroral excitation in sunlight.
-          float contrast=1.0-smoothstep(-.16,.08,sunCosine);
-          vec3 profile=vec3(auroraProfile(height,130.0,17.0),auroraProfile(height,260.0,60.0),auroraProfile(height,108.0,8.0));
-          vec3 luminance=column*profile*vec3(${auroraRayleighLuminance(1)},${auroraRayleighLuminance(1,630,.265)},${auroraRayleighLuminance(1,427.8,.011)});
-          // Approximate in-gamut line colours, each with unit photopic Y.
-          vec3 colour=vec3(.17,1.3468,.01)*luminance.r+vec3(4.7037,0.0,0.0)*luminance.g+vec3(.25,0.0,13.1143)*luminance.b;
-          vec3 transmission=vec3(1.0);
-          if(radius<ATMOSPHERE_RADIUS) transmission=atmosphereTransmittanceToTop(transmittanceLut,radius,dot(normal,-ray));
-          else if(dot(point,ray)>0.0) transmission=chordTransmission;
-          emission+=transmission*colour*contrast*stepLength*6378.137*${AURORA_NIGHT_EXPOSURE.toFixed(1)};
-        }
+        vec3 emission=emissionLayer(ray,130.0,17.0,0.0,chordTransmission)
+          +emissionLayer(ray,260.0,60.0,1.0,chordTransmission)
+          +emissionLayer(ray,108.0,8.0,2.0,chordTransmission);
         gl_FragColor=vec4(emission,1.0);
       }`,
   });
@@ -101,6 +104,8 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
   planet.add(mesh);
   let installed: AuroraForecast | undefined;
   let latitudeFloor: number | undefined;
+  let patternTime: number | undefined;
+  let patternGain: number | undefined;
   const inverseBody = new THREE.Quaternion();
   mesh.onBeforeRender = (_renderer, _scene, camera) => {
     inverseBody.copy(planet.quaternion).invert();
@@ -109,8 +114,12 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
   return {
     update(renderer: THREE.WebGLRenderer, sun: THREE.Vector3, seconds: number, sceneTime: number, forecast: AuroraForecast | undefined, gain: number) {
       mesh.visible = !!forecast && gain > 0;
-      if (!mesh.visible) { emission.reset(); installed=undefined; latitudeFloor=undefined; return; }
-      if (forecast !== installed) {
+      if (!mesh.visible) { emission.reset(); installed=undefined; latitudeFloor=undefined; patternTime=undefined; return; }
+      material.uniforms.sunLocal.value.copy(sun);
+      const sourceChanged = forecast !== installed;
+      const settingsChanged = gain !== patternGain;
+      if (!sourceChanged && !settingsChanged && !auroraPatternNeedsUpdate(patternTime, seconds)) return;
+      if (sourceChanged) {
         const displayGrid = auroraEmissionGrid(forecast!);
         texture.image.data = displayGrid;
         texture.needsUpdate = true;
@@ -118,7 +127,9 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
         material.uniforms.latitudeFloor.value=latitudeFloor;
         installed = forecast;
       }
-      material.uniforms.sunLocal.value.copy(sun);
+      // Keep the texture and its magnetic coordinate basis together between
+      // minute snapshots. Camera projection and daylight contrast still update.
+      if (sourceChanged || settingsChanged || patternTime === undefined || seconds < patternTime) emission.reset();
       const field=auroraMagneticField(sceneTime);
       const axis=material.uniforms.axis.value as THREE.Vector3;
       const noon=material.uniforms.noon.value as THREE.Vector3;
@@ -128,6 +139,8 @@ export function createAuroraLayer(planet: THREE.Group, transmittance: THREE.Text
       if(noon.lengthSq()<1e-8)noon.set(1,0,0).addScaledVector(axis,-axis.x);
       noon.normalize();dusk.crossVectors(axis,noon).normalize();
       material.uniforms.emissionMap.value=emission.update(renderer,axis,noon,dusk,field.equatorialNanoTesla,seconds,gain);
+      patternTime = seconds;
+      patternGain = gain;
     },
   };
 }

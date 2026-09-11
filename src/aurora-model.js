@@ -97,3 +97,8 @@ export function auroraLatitudeFloor(previous, grid) {
   const next=Math.sin(Math.max(0,lowestLatitude-16)*Math.PI/180);
   return previous===undefined?next:Math.min(previous,next);
 }
+// Simulation seconds: the debug 20× playback advances this cadence as well.
+export const AURORA_PATTERN_INTERVAL_SECONDS = 60;
+export function auroraPatternNeedsUpdate(previousTime, time) {
+  return previousTime === undefined || time < previousTime || time - previousTime >= AURORA_PATTERN_INTERVAL_SECONDS;
+}

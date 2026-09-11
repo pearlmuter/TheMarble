@@ -23,7 +23,7 @@ aurora** or **View southern aurora** for a repeatable demonstration. The example
 uses a recorded 6 September 2026 forecast with activity amplified 8×; its label
 stays visible when the menu closes. Choose **Latest NOAA forecast** to return to
 the forecast overlay, or **Off** to hide aurora. Settings reset on reload. **Aurora playback → Time-lapse · 20×** accelerates the
-simulated evolution and afterglow, with a persistent time-lapse label; it leaves
+minute-by-minute pattern snapshots (one update every three seconds), with a persistent time-lapse label; it leaves
 the Earth clock and forecast timestamps unchanged.
 
 Lightning uses recent satellite flash observations. **Debug view → Lightning**
@@ -58,9 +58,10 @@ source attribution, coverage and fallback information.
   every five minutes. The menu shows the observation and forecast-valid UTC times.
   This is a forecast overlay, not live imagery. Curtains follow a centred IGRF-14
   dipole and drift at a representative electric-field/magnetic-field velocity
-  scale. Green and red emissions have different response times. Estimated
-  particle flux is converted to column emission and integrated along the view
-  ray; the night-view exposure remains a display choice. This cannot recover
+  scale. The pattern is cached for one simulation minute; camera movement stays
+  smooth. Three finite emission layers replace expensive volume ray marching,
+  preserving vertical column energy and approximate altitude spread. Estimated
+  particle flux sets their column emission, with finite limb brightening; the night-view exposure remains a display choice. This cannot recover
   measured brightness or storm dynamics from the probability grid. See the
   [physical model and limitations](docs/aurora-physics.md). Earth hides the far side; daylight visibility
   is reduced for display. Stale forecasts and forecasts unrelated to a fixed
