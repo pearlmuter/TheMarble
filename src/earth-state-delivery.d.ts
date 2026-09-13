@@ -4,6 +4,8 @@ export interface EarthStateDeliveryProbe {
   url: string;
   status: number;
   headers: Record<string, string | undefined>;
+  /** Why the origin never answered, when it never answered. */
+  unreachable?: string;
 }
 
 export interface EarthStateDeliveryReport {

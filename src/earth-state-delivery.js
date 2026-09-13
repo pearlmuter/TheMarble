@@ -93,6 +93,12 @@ export function evaluateEarthStateDelivery({ origin, clientOrigins, probes, chec
     const classification = classifyEarthStateDeliveryPath(path);
     evaluated.push({ path, classification, status: probe.status });
     if (insecure) continue;
+    // A probe that never received a response carries why, so an origin that goes
+    // silent is reported as a delivery failure rather than as a status of zero.
+    if (probe.unreachable) {
+      problems.push({ path, reason: `${path} could not be read from the origin (${probe.unreachable})` });
+      continue;
+    }
     if (probe.status !== 200) {
       problems.push({ path, reason: `${path} answered ${probe.status} instead of 200` });
       continue;
