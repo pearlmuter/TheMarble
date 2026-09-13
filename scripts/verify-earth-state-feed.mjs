@@ -16,16 +16,39 @@ function parseArguments(argv) {
   return options;
 }
 
+const PROBE_ATTEMPTS = 3;
+const PROBE_TIMEOUT_MS = 30_000;
+
 async function probe(url, origin) {
-  const response = await fetch(url, {
-    redirect: 'follow',
-    // Object stores return the cross-origin headers only when asked as a browser asks.
-    headers: origin ? { origin } : {},
-    signal: AbortSignal.timeout(60_000),
-  });
-  const headers = Object.fromEntries([...response.headers.entries()]);
-  const body = response.ok && (headers['content-type'] ?? '').includes('json') ? await response.json() : undefined;
-  return { probe: { url, status: response.status, headers }, body };
+  // The edge occasionally answers with headers and then delivers nothing: the read
+  // times out having received zero of the bytes it announced, and the same URL is
+  // served in under a second moments later. A read that never started is not a
+  // verdict about delivery, so the transport is retried. Every response the origin
+  // does return is handed to the delivery rules untouched, whatever its status.
+  let failure;
+  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        redirect: 'follow',
+        // Object stores return the cross-origin headers only when asked as a browser asks.
+        headers: origin ? { origin } : {},
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+      const headers = Object.fromEntries([...response.headers.entries()]);
+      const body = response.ok && (headers['content-type'] ?? '').includes('json') ? await response.json() : undefined;
+      return { probe: { url, status: response.status, headers }, body };
+    } catch (error) {
+      failure = error;
+      if (attempt < PROBE_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, attempt * 2_000));
+    }
+  }
+  // A path the origin never answered is a delivery failure, and it is reported as one
+  // rather than as a stack trace, so the retained report still names the boundary.
+  // fetch reports a network fault as a bare "fetch failed"; the cause carries which one.
+  const cause = failure?.cause?.code ?? failure?.cause?.message;
+  const unreachable = `${failure?.name ?? 'Error'}: ${failure?.message ?? 'the origin did not answer'}`
+    + (cause ? ` (${cause})` : '');
+  return { probe: { url, status: 0, headers: {}, unreachable }, body: undefined };
 }
 
 async function degradedObservation(appUrl, latestUrl) {

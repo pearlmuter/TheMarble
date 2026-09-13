@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { parse } from 'yaml';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const readJson = async path => JSON.parse(await read(path));
@@ -65,6 +66,34 @@ test('the delivery verification probes the origin and the client behaviour a deg
   // An object store returns cross-origin headers only when asked as a browser asks.
   assert.match(source, /headers: origin \? \{ origin \} : \{\}/);
   assert.match(source, /if \(!report\.ok\) process\.exitCode = 1/);
+});
+
+test('a read the edge stalls is retried, and an origin that stays silent is still reported as delivery', async () => {
+  const source = await read('scripts/verify-earth-state-feed.mjs');
+  // The published feed is megabytes of JSON, and the edge has answered with headers
+  // and then sent none of it, timing out a probe against bytes that were served in
+  // under a second on the next attempt. One stalled socket is not a delivery verdict.
+  assert.match(source, /for \(let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt \+= 1\)/);
+  assert.ok(/const PROBE_ATTEMPTS = ([2-9])/.exec(source)?.[1] >= '2', 'a probe must survive one stalled read');
+  // The retry must not swallow the failure: an origin that never answers has to
+  // reach the delivery rules as a problem, so the retained report names the boundary
+  // instead of the run ending on an uncaught timeout with nothing written.
+  assert.match(source, /status: 0, headers: \{\}, unreachable/);
+  assert.doesNotMatch(source, /signal: AbortSignal\.timeout\(60_000\)/);
+});
+
+test('the lightning delivery check abandons a stalled read rather than spending its whole budget on it', async () => {
+  const workflow = parse(await read('.github/workflows/lightning.yml'));
+  const verify = workflow.jobs.publish.steps.find(step => step.name === 'Verify delivery');
+  assert.ok(verify, 'the lightning publication must verify what the CDN serves');
+  // A connection that announces the body and then sends nothing used to burn the
+  // full --max-time on every attempt; --speed-time ends it in ten seconds instead.
+  assert.match(verify.run, /--speed-limit \d+ --speed-time \d+/);
+  // The assertion below the fetch requires the served document to be under three
+  // minutes old, so the retries have to finish inside that window to mean anything.
+  const retryMaxTime = Number(/--retry-max-time (\d+)/.exec(verify.run)?.[1]);
+  assert.ok(retryMaxTime > 0 && retryMaxTime < 180, 'the retry window must fit inside the freshness the check asserts');
+  assert.match(verify.run, /publishedAt'\]\)<180000/);
 });
 
 test('local visual acceptance publishes a real state and opens the app against it', async () => {

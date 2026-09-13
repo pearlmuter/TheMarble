@@ -154,3 +154,26 @@ test('the emitted pointer headers keep a client from caching a superseded Earth'
   const asset = earthStateDeliveryHeaders('assets/abc.ktx2', 'image/ktx2');
   assert.match(asset['cache-control'], /immutable/);
 });
+
+test('a path the origin never answered is named as unreachable, not as a status of zero', () => {
+  // The edge has answered with headers and then delivered nothing until the read
+  // timed out. Once the retries are spent that is a delivery failure, and it has to
+  // read as one: a bare status of 0 tells an operator nothing about which boundary
+  // broke, and the run that produced it ended on an uncaught timeout with no report.
+  const report = evaluate({
+    pointer: {
+      url: 'https://earth.themarble.test/earth-state/latest.json',
+      status: 0,
+      headers: {},
+      unreachable: 'TimeoutError: The operation was aborted due to timeout',
+    },
+  });
+  assert.equal(report.ok, false);
+  const problem = report.problems.find(entry => entry.path === 'latest.json');
+  assert.match(problem.reason, /could not be read from the origin/);
+  assert.match(problem.reason, /TimeoutError/);
+  assert.doesNotMatch(problem.reason, /answered 0/);
+  // The paths that did answer are still judged, so one silent path does not hide
+  // a second fault behind it.
+  assert.deepEqual(report.problems.map(entry => entry.path), ['latest.json']);
+});

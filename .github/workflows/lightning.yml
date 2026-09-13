@@ -40,7 +40,13 @@ jobs:
             --cache-control 'public, max-age=30, must-revalidate' --content-type application/json --no-progress
       - name: Verify delivery
         run: |
-          curl --fail --retry 3 --max-time 30 "${{ vars.THEMARBLE_CDN_ORIGIN }}lightning/latest.json" -o /tmp/lightning.json
+          # The edge sometimes answers with headers and then sends nothing. --max-time
+          # alone spends its whole budget on a connection that never delivers a byte,
+          # so a stalled read is abandoned after ten seconds instead and retried; the
+          # retry window stays well inside the freshness the assertion below demands.
+          curl --fail --retry 4 --retry-delay 2 --retry-max-time 90 \
+            --speed-limit 1024 --speed-time 10 --max-time 30 \
+            "${{ vars.THEMARBLE_CDN_ORIGIN }}lightning/latest.json" -o /tmp/lightning.json
           python - <<'PY'
           import json,time
           d=json.load(open('/tmp/lightning.json'))
