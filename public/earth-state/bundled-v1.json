@@ -152,14 +152,14 @@
     "milkyWay": {
       "datasetId": "gaia-edr3-all-sky",
       "semantics": "equatorial all-sky color-flux panorama registered to the inertial stellar frame",
-      "dimensions": { "width": 16384, "height": 8192 },
+      "dimensions": { "width": 8192, "height": 4096 },
       "colorSpace": "srgb",
       "asset": {
-        "href": "/milky-way-gaia-edr3-16k.jpg",
+        "href": "/milky-way-gaia-edr3-8k.jpg",
         "mediaType": "image/jpeg",
-        "byteLength": 49346977,
+        "byteLength": 13646795,
         "immutable": true,
-        "checksum": { "algorithm": "sha256", "value": "15102ef7b5b575320d2fbddf0603612d259c93d1b03847dfd519e47eb972e0e0" }
+        "checksum": { "algorithm": "sha256", "value": "50b24c05bfbb2bb59c7a9e4c8bd9b71a32cfc3ca2bbc5c0e6bd5588f0c248600" }
       }
     },
     "starCatalog": {
