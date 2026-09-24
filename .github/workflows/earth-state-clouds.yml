@@ -104,11 +104,21 @@ jobs:
               --cache-control 'public, max-age=30, must-revalidate' --content-type application/json
           done
       # Only once the pointer names retained bytes may superseded ones be dropped.
+      #
+      # A bundle is a directory; an asset is a single object. `rm --recursive` on an
+      # object key lists it as a prefix, matches nothing and succeeds, so pruned assets
+      # used to stay on the origin, come back with the next reconcile and be pruned
+      # again. The list grew every run until this step took ten minutes, longer than
+      # the cadence, and the queued cloud runs starved the daily cryosphere run out of
+      # the shared concurrency group. A failure here is now visible, not swallowed.
       - name: Drop pruned keys from the origin
         run: |
           while IFS= read -r key; do
-            [ -n "$key" ] || continue
-            aws s3 rm "$BUCKET/$key" --recursive --only-show-errors || true
+            case "$key" in
+              '') continue ;;
+              bundles/*) aws s3 rm "$BUCKET/$key/" --recursive --only-show-errors ;;
+              *) aws s3 rm "$BUCKET/$key" --only-show-errors ;;
+            esac
           done < artifacts/earth-state-feed/pruned-keys.txt
       - name: Verify the served feed
         run: >-

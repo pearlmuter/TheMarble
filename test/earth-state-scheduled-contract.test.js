@@ -56,6 +56,16 @@ test('every scheduled publication inherits the served state, uploads assets befo
   }
 });
 
+test('pruned assets are deleted as objects, and only bundles as prefixes', async () => {
+  const workflow = await readYaml('.github/workflows/earth-state-clouds.yml');
+  const drop = workflow.jobs.publish.steps.find(step => step.name === 'Drop pruned keys from the origin');
+  // `rm --recursive` on an object key deletes nothing and succeeds, so pruned assets
+  // came back with every reconcile until this step outlasted the ten-minute cadence.
+  assert.match(drop.run, /bundles\/\*\) aws s3 rm "\$BUCKET\/\$key\/" --recursive/);
+  assert.match(drop.run, /\*\) aws s3 rm "\$BUCKET\/\$key" --only-show-errors ;;/);
+  assert.doesNotMatch(drop.run, /\|\| true/);
+});
+
 test('the feed commands and acceptance thresholds are versioned with the app', async () => {
   const packageDocument = await readJson('package.json');
   const policy = await readJson('config/earth-production-policy.json');
