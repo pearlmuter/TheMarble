@@ -472,6 +472,9 @@ test('a seasonal surface contract activates all 12 immutable monthly states cohe
       loadedUrls.push(url);
       return loaded(`loaded:${url}`);
     },
+    // 1 August sits past July's midpoint, so the surface in view mixes July into
+    // August and every other month stays unfetched.
+    now: () => Date.UTC(2026, 7, 1),
   });
 
   const activated = await activator.activate('https://example.test/states/fixture/manifest.json');
@@ -482,8 +485,52 @@ test('a seasonal surface contract activates all 12 immutable monthly states cohe
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
   );
   assert.equal(activated.seasonalLayers.surfaceAlbedo[0].value, activated.layers.surfaceAlbedo);
-  assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /surface-12\.png$/);
-  assert.equal(loadedUrls.length, 18);
+
+  const byMonth = month => activated.seasonalLayers.surfaceAlbedo[month - 1];
+  assert.match(byMonth(7).value, /surface-07\.png$/);
+  assert.match(byMonth(8).value, /surface-08\.png$/);
+
+  // The bundle's own assets plus the bracketing pair, not all twelve months:
+  // eleven seasonal fetches during activation have become two.
+  assert.equal(loadedUrls.length, 9);
+  assert.equal(loadedUrls.filter(url => /surface-\d\d\.png$/.test(url)).length, 2);
+
+  // Every other month is a loader that still verifies against its reference.
+  for (const month of [2, 3, 4, 5, 6, 9, 10, 11, 12]) {
+    assert.equal(byMonth(month).value, undefined);
+    assert.equal(typeof byMonth(month).load, 'function');
+  }
+  assert.match(await byMonth(12).load(), /surface-12\.png$/);
+  assert.equal(loadedUrls.length, 10);
+});
+
+test('a deferred seasonal month verifies its bytes on the rollover that fetches it', async () => {
+  const manifest = fixtureManifest();
+  manifest.layers.surfaceAlbedo.seasonalCycle = {
+    interpolation: 'linear',
+    frames: Array.from({ length: 12 }, (_, index) => ({
+      month: index + 1,
+      datasetId: 'earth',
+      asset: index === 0
+        ? manifest.layers.surfaceAlbedo.asset
+        : { ...manifest.layers.surfaceAlbedo.asset, href: `./surface-${String(index + 1).padStart(2, '0')}.png` },
+    })),
+  };
+  const activator = createEarthStateActivator({
+    loadDocument: async () => jsonDocumentFixture(manifest),
+    loadAsset: async ({ url }) => (/surface-12\.png$/.test(url)
+      ? { value: 'corrupt', bytes: new Uint8Array([1, 2, 3]) }
+      : loaded(`loaded:${url}`)),
+    now: () => Date.UTC(2026, 7, 1),
+  });
+
+  // A corrupt December does not prevent activation, because December is not in
+  // view -- but the rollover that reaches for it must still refuse the bytes.
+  const activated = await activator.activate('https://example.test/states/fixture/manifest.json');
+  await assert.rejects(
+    activated.seasonalLayers.surfaceAlbedo[11].load(),
+    /seasonalLayers\.surfaceAlbedo\.12/,
+  );
 });
 
 test('a seasonal surface contract rejects a missing or duplicated calendar month', async () => {
@@ -615,6 +662,9 @@ test('the bundled manifest activates every asset required by the current scene',
       assert.equal(createHash('sha256').update(bytes).digest('hex'), descriptor.asset.checksum.value);
       return { value: url, bytes };
     },
+    // December brackets with January here, so the year boundary is the pair the
+    // bundled fallback fetches.
+    now: () => Date.UTC(2026, 11, 31),
   });
 
   const activated = await activator.activate('https://themarble.local/earth-state/bundled-v1.json');
@@ -623,11 +673,16 @@ test('the bundled manifest activates every asset required by the current scene',
   assert.match(activated.layers.surfaceAlbedo, /bmng-2004-01-5400\.jpg$/);
   assert.equal(activated.seasonalLayers.surfaceAlbedo.length, 12);
   assert.match(activated.seasonalLayers.surfaceAlbedo[11].value, /bmng-2004-12-5400\.jpg$/);
+  // Every month the fallback ships stays loadable and passes its own checksum,
+  // including the ten activation now leaves until a rollover asks for them.
+  for (const frame of activated.seasonalLayers.surfaceAlbedo) {
+    if (frame.load) assert.match(await frame.load(), /bmng-2004-\d\d-5400\.jpg$/);
+  }
   assert.match(activated.layers.nightLights, /earth-lights-3km\.jpg$/);
   assert.match(activated.layers.cloudOpacity, /fair-clouds-4k\.png$/);
   assert.match(activated.layers.cloudDensity, /cloud-density-static-neutral\.png$/);
   assert.match(activated.resources.moonAlbedo, /moon-1024\.jpg$/);
-  assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-16k\.jpg$/);
+  assert.match(activated.resources.milkyWay, /milky-way-gaia-edr3-8k\.jpg$/);
   assert.match(activated.resources.starCatalog, /hipparcos-bright\.json$/);
 });
 

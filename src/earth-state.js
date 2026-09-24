@@ -1,5 +1,6 @@
 import { earthStateSha256 } from './earth-state-codec.js';
 import { isRollingSurfaceProduct } from './rolling-surface-products.js';
+import { selectSeasonalSurfaceFrames } from './seasonal-surface.js';
 
 export const EARTH_STATE_REQUIRED_LAYERS = ['surfaceAlbedo', 'nightLights', 'cloudOpacity', 'cloudDensity'];
 export const EARTH_STATE_CRYOSPHERE_LAYERS = ['snowCover', 'seaIce'];
@@ -442,7 +443,7 @@ function requireEntries(manifest, groupName, names, supportedNames = names) {
  */
 export const EARTH_STATE_ACTIVATION_TIMEOUT_MS = 300_000;
 
-export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs = EARTH_STATE_ACTIVATION_TIMEOUT_MS }) {
+export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs = EARTH_STATE_ACTIVATION_TIMEOUT_MS, now = () => Date.now() }) {
   let current;
 
   const withinDeadline = async operation => {
@@ -480,9 +481,19 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
       loadEntries(manifest.resources, 'resource'),
     ]);
 
+    // The surface shader mixes exactly two monthly frames, the pair bracketing
+    // the scene's own date. Activation therefore fetches that pair and leaves
+    // the other ten months as loaders the seasonal controller calls when it
+    // rolls over -- ten fetches of roughly 1.8 MB each that used to run
+    // sequentially inside the activation deadline for a surface no viewer could
+    // be shown yet. A rollover fetch that fails is already survivable: the
+    // controller keeps the installed pair, reports through `onError`, and
+    // retries after its cooldown.
     const seasonalLayers = {};
     const seasonalSurface = manifest.layers.surfaceAlbedo;
     if (seasonalSurface.seasonalCycle) {
+      const selection = selectSeasonalSurfaceFrames(new Date(now()));
+      const bracketing = new Set([selection.fromMonth, selection.toMonth]);
       const frames = [];
       for (const frame of seasonalSurface.seasonalCycle.frames) {
         if (sameAssetReference(seasonalSurface.asset, frame.asset)) {
@@ -493,9 +504,18 @@ export function createEarthStateActivator({ loadDocument, loadAsset, timeoutMs =
         delete descriptor.seasonalCycle;
         const url = new URL(frame.asset.href, baseUrl).href;
         const request = { name: 'surfaceAlbedo', role: 'seasonal-layer-frame', month: frame.month, descriptor, url };
-        const loaded = await loadAsset(request, { signal });
-        const value = await verifyLoadedAsset(loaded, frame.asset, `seasonalLayers.surfaceAlbedo.${frame.month}`);
-        frames.push({ month: frame.month, value });
+        // A rollover happens long after activation, so a deferred frame must not
+        // capture the activation signal that bounds this deadline.
+        const load = async ({ signal: loadSignal } = {}) => verifyLoadedAsset(
+          await loadAsset(request, { signal: loadSignal }),
+          frame.asset,
+          `seasonalLayers.surfaceAlbedo.${frame.month}`,
+        );
+        if (!bracketing.has(frame.month)) {
+          frames.push({ month: frame.month, load });
+          continue;
+        }
+        frames.push({ month: frame.month, value: await load({ signal }) });
       }
       seasonalLayers.surfaceAlbedo = frames;
     }

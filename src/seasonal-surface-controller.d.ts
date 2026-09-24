@@ -1,4 +1,11 @@
-export type SeasonalFrame<Source> = { month: number; value: Source };
+/**
+ * A month's surface, which may not have been fetched yet. The controller only
+ * ever decodes the bracketing pair, so months it has not reached arrive with a
+ * `load` the rollover calls instead of a `value`.
+ */
+export type SeasonalFrame<Source> =
+  | { month: number; value: Source; load?: undefined }
+  | { month: number; value?: undefined; load: (options?: { signal?: AbortSignal }) => Promise<Source> };
 export type SeasonalPair<Texture, Source> = {
   fromMonth: number;
   toMonth: number;

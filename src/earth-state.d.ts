@@ -239,11 +239,20 @@ export type EarthStateAssetRequest = {
   url: string;
 };
 
+/**
+ * One calendar month of the seasonal surface. Activation fetches only the pair
+ * bracketing the scene date and gives every other month a `load`, so the ten
+ * months no viewer can see yet stay off the activation critical path.
+ */
+export type SeasonalSurfaceFrame<LoadedAsset> =
+  | { month: number; value: LoadedAsset; load?: undefined }
+  | { month: number; value?: undefined; load: (options?: { signal?: AbortSignal }) => Promise<LoadedAsset> };
+
 export interface ActivatedEarthState<LoadedAsset> {
   manifest: EarthStateManifest;
   layers: Record<typeof EARTH_STATE_REQUIRED_LAYERS[number], LoadedAsset> & Partial<Record<typeof EARTH_STATE_OPTIONAL_LAYERS[number], LoadedAsset>>;
   resources: Record<EarthStateResourceName, LoadedAsset>;
-  seasonalLayers: { surfaceAlbedo?: Array<{ month: number; value: LoadedAsset }> };
+  seasonalLayers: { surfaceAlbedo?: Array<SeasonalSurfaceFrame<LoadedAsset>> };
   cloudSequence?: Omit<EarthStateCloudSequence, 'frames'> & {
     frames: [Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', LoadedAsset>> }, Omit<EarthStateCloudFrame, 'layers'> & { layers: Record<'cloudOpacity' | 'cloudDensity', LoadedAsset> & Partial<Record<'cloudPhysics' | 'cloudAge' | 'cloudProvenance', LoadedAsset>> }];
   };
@@ -258,6 +267,8 @@ export interface EarthStateActivator<LoadedAsset> {
 
 export function createEarthStateActivator<LoadedAsset>(adapters: {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
-  loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
+  loadAsset(request: EarthStateAssetRequest, options: { signal?: AbortSignal }): Promise<{ value: LoadedAsset; bytes: Uint8Array }>;
   timeoutMs?: number;
+  /** Chooses which seasonal pair activation fetches; the rest load on rollover. */
+  now?: () => number;
 }): EarthStateActivator<LoadedAsset>;

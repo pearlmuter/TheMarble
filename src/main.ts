@@ -45,7 +45,7 @@ import { isHipparcosPayload, validateEarthStateScene } from './earth-state-scene
 import type { HipparcosPayload } from './earth-state-scene.js';
 import { selectEarthSurfaceForRendering } from './earth-surface-selection.js';
 import { createEarthStateActivator, EARTH_STATE_OPTIONAL_LAYERS, EARTH_STATE_REQUIRED_LAYERS, EARTH_STATE_REQUIRED_RESOURCES } from './earth-state.js';
-import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName } from './earth-state.js';
+import type { ActivatedEarthState, EarthStateAssetRequest, EarthStateLayerName, EarthStateLoadedDocument, EarthStateResourceName, SeasonalSurfaceFrame } from './earth-state.js';
 import { buildEarthStateProvenancePresentation, summarizeEarthStateRefreshFailure } from './earth-state-provenance.js';
 import type { EarthStateRuntimeProvenance } from './earth-state-provenance.js';
 import { createProvenanceDisclosure } from './provenance-disclosure.js';
@@ -76,7 +76,9 @@ type EarthStatePresentationQualification = {
 };
 type SceneEarthStateLoaders = {
   loadDocument(url: string, options: { signal: AbortSignal }): Promise<EarthStateLoadedDocument>;
-  loadAsset(request: EarthStateAssetRequest, options: { signal: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
+  // A seasonal rollover fetches long after activation, with no deadline signal
+  // to carry, so an asset load has to be able to run unsignalled.
+  loadAsset(request: EarthStateAssetRequest, options: { signal?: AbortSignal }): Promise<{ value: LoadedSceneAsset; bytes: Uint8Array }>;
 };
 
 function isCloudDensityPayload(value: unknown): value is CloudDensityPayload {
@@ -397,7 +399,7 @@ const previewResources: Record<EarthStateResourceName, LoadedSceneAsset> = {
 let applyVerifiedLayer: (name: EarthStateLayerName, asset: LoadedSceneAsset) => void = () => undefined;
 let applyVerifiedResource: (name: EarthStateResourceName, asset: LoadedSceneAsset) => void = () => undefined;
 let seasonalSurfaceController: {
-  prepare(options: { frames: Array<{ month: number; value: LoadedSceneAsset }>; date: Date; fallbackTexture?: THREE.Texture }): Promise<PreparedSeasonalSurface>;
+  prepare(options: { frames: Array<SeasonalSurfaceFrame<LoadedSceneAsset>>; date: Date; fallbackTexture?: THREE.Texture }): Promise<PreparedSeasonalSurface>;
   activate(prepared: PreparedSeasonalSurface): void;
   update(date: Date): void;
 };
@@ -526,7 +528,7 @@ function shouldDeferSceneTexture(request: EarthStateAssetRequest) {
       && request.descriptor.seasonalCycle && !request.descriptor.rollingComposite);
 }
 
-async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal: AbortSignal) {
+async function loadNetworkSceneAsset(request: EarthStateAssetRequest, signal?: AbortSignal) {
   const { descriptor, url } = request;
   const response = await fetchEarthStateAsset(url, {
     fetch: (target: string, options: { signal?: AbortSignal }) => fetch(target, options),
@@ -1509,10 +1511,14 @@ function disposeReplacedTexture(previous: THREE.Texture, replacement: THREE.Text
   if (previous !== replacement) previous.dispose();
 }
 
-async function decodeSeasonalFrame(frame: { month: number; value: LoadedSceneAsset }) {
-  if (frame.value instanceof THREE.Texture) return frame.value;
-  if (!isDeferredSceneTexture(frame.value)) throw new Error(`Earth-state seasonal frame ${frame.month} is not a texture source`);
-  const loaded = await decodeSceneAsset(frame.value.request, frame.value.bytes, frame.value.mediaType);
+async function decodeSeasonalFrame(frame: SeasonalSurfaceFrame<LoadedSceneAsset>) {
+  // Only the pair bracketing the scene date is fetched during activation. Any
+  // other month arrives with a loader instead, and is fetched the first time a
+  // rollover asks for it.
+  const value = frame.value ?? await frame.load();
+  if (value instanceof THREE.Texture) return value;
+  if (!isDeferredSceneTexture(value)) throw new Error(`Earth-state seasonal frame ${frame.month} is not a texture source`);
+  const loaded = await decodeSceneAsset(value.request, value.bytes, value.mediaType);
   return requireTexture(loaded.value, `surfaceAlbedo month ${frame.month}`);
 }
 

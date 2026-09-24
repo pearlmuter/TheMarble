@@ -22,13 +22,18 @@ The pointer is baked in at build time from `VITE_EARTH_STATE_LATEST_URL`
 
 ## The site and the feed share one origin
 
-The site is **not** on Cloudflare Pages. The 16K Milky Way texture is 47 MB and
-Pages refuses any file over 25 MiB. R2 has no such limit, so `dist/` is uploaded
-into `themarble-earth-state` — the same bucket the feed is published to — and
-both are served from `https://themarble.emildanielsen.no/`.
+The site is **not** on Cloudflare Pages. `dist/` is uploaded into
+`themarble-earth-state` — the same bucket the feed is published to — and both
+are served from `https://themarble.emildanielsen.no/`.
 
 That is a deliberate choice with a payoff: the browser reads `latest.json`
 same-origin, so the hot path involves no CORS preflight and no second TLS origin.
+
+The original reason was a hard one: Pages refuses any file over 25 MiB and the
+Milky Way panorama was 47 MB. That constraint is gone — the panorama now ships
+at 8192×4096 and 13.65 MB, and nothing in `dist/` exceeds 25 MiB. The
+same-origin payoff above is what keeps the site on R2, so this is now a choice
+rather than a forced move.
 
 ### Origin layout
 
@@ -40,6 +45,62 @@ same-origin, so the hot path involves no CORS preflight and no second TLS origin
 | `/latest.json`, `/latest-presentations.json` | publisher | `max-age=30, must-revalidate` |
 | `/bundles/<bundle-id>/manifest.json` | publisher | `max-age=31536000, immutable` |
 | `/assets/<sha256>.<ext>` | publisher | `max-age=31536000, immutable` |
+
+## What a first view downloads
+
+Measured against the deployed site with an empty cache, before and after the
+September 2026 weight work:
+
+| | Requests | Transferred |
+| --- | --- | --- |
+| Before | 23 | 85.3 MB |
+| After | 13 | 33.2 MB |
+
+Two things accounted for all of it, and neither cost any visible detail.
+
+**The all-sky panorama was 58% of a first view on its own.** It now ships at
+8192×4096 and 13.65 MB instead of 16384×8192 and 49.35 MB. The sky sphere is
+drawn at a fixed 22° vertical field of view and composited at 0.08 exposure
+beneath a separately drawn Hipparcos catalogue, so it carries diffuse galactic
+glow rather than point sources. Re-rendering the three fixed smoke views at a
+pinned scene time puts the whole change at 1–2 levels out of 255 on at most
+0.003% of pixels — at or below the 8-bit quantisation step. See
+[`../scripts/build-milky-way-panorama.py`](../scripts/build-milky-way-panorama.py),
+which records the derivation and why quality, not being the lever, was left high.
+
+**Eleven of the twelve monthly surfaces were fetched before anything could show
+them.** The surface shader mixes exactly two frames, the pair bracketing the
+scene date, so activation now fetches that pair and leaves the other ten months
+as loaders the seasonal controller calls when it rolls over. That is ~17 MB and
+ten sequential fetches removed from the activation critical path — the same path
+whose deadline the production monitor was failing on. A rollover fetch that
+fails was already survivable: the controller keeps the installed pair, reports
+through `onError`, and retries after its cooldown.
+
+### The edge is not caching any of it
+
+Every asset under `/assets/<sha256>.<ext>` is served with
+`cache-control: public, max-age=31536000, immutable` — and comes back
+`cf-cache-status: DYNAMIC`, meaning Cloudflare holds none of it and every
+request is a live R2 origin pull. That is the same condition behind the stalled
+delivery probes that
+[`../scripts/verify-earth-state-feed.mjs`](../scripts/verify-earth-state-feed.mjs)
+now retries: the edge answers with headers, including a Content-Length, and then
+sends none of the megabytes it announced. A Cache Rule over `/assets/*` and
+`/bundles/*` marking them eligible for cache and honouring origin TTL would make
+these paths hits. The origin headers are already correct; nothing in this
+repository can set that rule.
+
+### The panorama is still delivered twice
+
+`resources.milkyWay` in the published bundle carries sha256
+`15102ef7…`, which is byte-for-byte the panorama the site used to ship at
+`/milky-way-gaia-edr3-16k.jpg`. Same bytes, two URLs, so a first view fetched
+both. The site half is fixed above; the bundle half is not, because the
+publisher inherits `resources` from the previously published manifest
+(`resolveEarthStateBaseManifest`) and will carry the 16K asset forward until
+something re-seeds it. Until then a remote activation still pulls 49.35 MB of
+sky that the fallback has already drawn.
 
 ## Two writers, one `/assets/` prefix
 
